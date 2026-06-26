@@ -80,12 +80,16 @@ createRoot(document.getElementById("root")!).render(
   </trpc.Provider>
 );
 
-// Register the service worker so the app is installable to the phone home screen
-// (required for Android "Add to Home Screen"). iOS installs via Safari Share sheet.
+// One-time cleanup: a previous build registered a caching service worker that
+// could serve a stale/empty app shell on mobile ("No picks available yet").
+// Unregister any existing service worker and purge its caches so every device
+// always loads fresh code + live data. The app stays installable to the home
+// screen via the web manifest alone (no SW required for Add to Home Screen).
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // Registration failure is non-fatal; the app still works without offline support.
-    });
-  });
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
+  }).catch(() => {});
+}
+if (typeof caches !== "undefined" && caches.keys) {
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k))).catch(() => {});
 }

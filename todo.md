@@ -68,3 +68,14 @@
 - [x] Create private GitHub repo "lifestyle-design-studio" (PropertyPete1, private)
 - [x] Push dashboard code to the repo (165 files on main)
 - [x] Deploy and hand over install instructions — published to repostdash-qirdbvnd.manus.space
+
+## Bug: Blank screen on mobile (Jun 26)
+- [ ] Investigate blank screen on mobile (likely service worker caching stale/empty shell, or SW interfering with auth)
+- [ ] Fix and redeploy; verify on mobile
+
+## Bug: Mobile shows "No picks available yet" (Jun 26) — UPDATED
+- [x] Re-diagnosed: app shell renders fine on mobile; picks empty => owner not authenticated on phone (session not carrying) OR picks.today returns empty when unauthenticated
+- [x] Confirmed: data is fine server-side (2 confirmed picks for today, valid videos + thumbnails); API correctly returns UNAUTHORIZED when not logged in
+- [x] Root cause: service worker cached stale/empty app shell on mobile
+- [x] Removed SW caching: self-destroying sw.js + auto-unregister/cache-purge on load
+- [ ] Verify on mobile after redeploy
