@@ -47,3 +47,24 @@
 - [x] History: readable on narrow screens (single-line date)
 - [x] Bottom padding so content clears the mobile tab bar (Home, History, Library)
 - [x] Verified all pages at 375px viewport
+
+## Multi-Account Posting (Meta Graph API) — CANCELLED by user (Jun 26)
+- [~] Cancelled: requires a one-time Meta/Facebook login to generate a Graph API token, which the user cannot currently do. No code changes were made to the live app for this. Can be revisited later if Meta access is restored.
+- Note: No partial multi-account code was committed; dashboard remains single-account (@lifestyledesignrealtytexas).
+
+## Auto-Pilot Toggle (auto-confirm)
+- [ ] Add autoPilot boolean to app_settings (DB)
+- [ ] Backend: getSettings/setAutoPilot procedures (owner-only)
+- [ ] When auto-pilot ON, picks.today auto-confirms both picks (creates reposts, marks confirmed/queued)
+- [ ] Auto-Pilot toggle UI on dashboard with clear on/off state + explanation
+- [ ] Note: Instagram connector still shows a final confirm card at post time (Meta rule) — document workaround
+- [ ] Test + deploy
+
+## App Logo + PWA + GitHub (Jun 26)
+- [x] Design a cool "Lifestyle Design Studio" app icon/logo (square, home-screen ready) — house emblem (Option 2) selected
+- [x] Generate PWA icon sizes (192, 512, apple-touch 180, favicon 32)
+- [x] Add manifest.webmanifest + apple-touch-icon + theme-color meta + app title "Lifestyle Design Studio"
+- [ ] Verify "Add to Home Screen" works on phone (installable PWA)
+- [ ] Create private GitHub repo "lifestyle-design-studio"
+- [ ] Push dashboard code to the repo
+- [ ] Deploy and hand over install instructions
