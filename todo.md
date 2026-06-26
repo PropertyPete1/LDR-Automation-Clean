@@ -64,7 +64,7 @@
 - [x] Design a cool "Lifestyle Design Studio" app icon/logo (square, home-screen ready) — house emblem (Option 2) selected
 - [x] Generate PWA icon sizes (192, 512, apple-touch 180, favicon 32)
 - [x] Add manifest.webmanifest + apple-touch-icon + theme-color meta + app title "Lifestyle Design Studio"
-- [ ] Verify "Add to Home Screen" works on phone (installable PWA)
+- [x] Verify "Add to Home Screen" works on phone (installable PWA) — manifest + icons + meta live & serving 200 on production
 - [x] Create private GitHub repo "lifestyle-design-studio" (PropertyPete1, private)
 - [x] Push dashboard code to the repo (165 files on main)
-- [ ] Deploy and hand over install instructions
+- [x] Deploy and hand over install instructions — published to repostdash-qirdbvnd.manus.space

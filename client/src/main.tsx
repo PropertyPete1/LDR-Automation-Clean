@@ -79,3 +79,13 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </trpc.Provider>
 );
+
+// Register the service worker so the app is installable to the phone home screen
+// (required for Android "Add to Home Screen"). iOS installs via Safari Share sheet.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Registration failure is non-fatal; the app still works without offline support.
+    });
+  });
+}
