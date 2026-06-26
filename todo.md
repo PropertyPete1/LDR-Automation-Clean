@@ -39,3 +39,11 @@
 - [x] Vitest for caption refresh (hashtags/CTA preserved)
 - [x] Vitest for confirm flow (repost creation + idempotency)
 - [x] Vitest for auth logout
+
+## Mobile Responsiveness
+- [x] Mobile top bar + bottom tab bar nav (sidebar hidden on small screens)
+- [x] Daily Picks cards: stack thumbnail/caption vertically on mobile
+- [x] Library grid: 2-up on phone, touch-friendly tiles
+- [x] History: readable on narrow screens (single-line date)
+- [x] Bottom padding so content clears the mobile tab bar (Home, History, Library)
+- [x] Verified all pages at 375px viewport

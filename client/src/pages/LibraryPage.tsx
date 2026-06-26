@@ -20,7 +20,7 @@ export default function LibraryPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 sm:py-12">
+    <div className="mx-auto w-full max-w-6xl px-5 py-8 pb-28 sm:px-8 sm:py-12 sm:pb-12">
       <header className="mb-6">
         <h1 className="font-display text-4xl sm:text-5xl">Video Library</h1>
         <p className="mt-3 max-w-xl text-sm text-muted-foreground">

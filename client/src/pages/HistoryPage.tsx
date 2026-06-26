@@ -7,7 +7,7 @@ export default function HistoryPage() {
   const { data, isLoading } = trpc.history.list.useQuery();
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-12">
+    <div className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12 sm:pb-12">
       <header className="mb-8">
         <h1 className="font-display text-4xl sm:text-5xl">Rotation History</h1>
         <p className="mt-3 max-w-xl text-sm text-muted-foreground">
@@ -46,7 +46,7 @@ export default function HistoryPage() {
                   <span className="font-medium">{CITY_LABEL[r.city]}</span>
                 </div>
                 <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span>{formatDateNice((r.scheduledFor as number) || r.confirmedAt)}</span>
+                  <span className="whitespace-nowrap">{formatDateNice((r.scheduledFor as number) || r.confirmedAt)}</span>
                   <span className="flex items-center gap-1">
                     <Eye className="h-3 w-3" /> {formatViews(r.viewsAtRepost)}
                   </span>

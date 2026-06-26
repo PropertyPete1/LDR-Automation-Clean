@@ -210,7 +210,7 @@ export default function Home() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-12">
+    <div className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12 sm:pb-12">
       <header className="mb-8">
         <p className="text-xs uppercase tracking-luxe text-muted-foreground">{today}</p>
         <h1 className="mt-2 font-display text-4xl sm:text-5xl">Today&apos;s Picks</h1>
