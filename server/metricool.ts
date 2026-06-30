@@ -44,6 +44,8 @@ export interface CreatePostResult {
   postId?: number;
   error?: string;
   raw?: unknown;
+  /** Human-readable list of the networks this post was sent to, e.g. "Instagram, TikTok, YouTube, LinkedIn". */
+  platforms?: string;
 }
 
 /**
@@ -66,6 +68,7 @@ export async function getConnectedNetworks(): Promise<MetricoolNetwork[]> {
     tiktok: "TIKTOK",
     facebook: "FACEBOOK",
     youtube: "YOUTUBE",
+    linkedin: "LINKEDIN",
     linkedinCompany: "LINKEDIN",
     threads: "THREADS",
     bluesky: "BLUESKY",
@@ -109,11 +112,18 @@ export async function createScheduledPost(opts: CreatePostOptions): Promise<Crea
     providers = networks.map(n => ({ ...n, status: "PENDING" }));
   } else {
     const connected = await getConnectedNetworks();
-    // Post to video-friendly platforms that are confirmed connected for this brand:
-    // Instagram, TikTok, YouTube (Facebook is NOT connected in Metricool for this brand)
-    const videoNetworks = connected.filter(n =>
-      ["INSTAGRAM", "TIKTOK", "YOUTUBE"].includes(n.network)
-    );
+    // Post to every video-friendly platform connected for this brand:
+    // Instagram, TikTok, YouTube, and LinkedIn. (Facebook is NOT connected for this brand.)
+    // De-dupe in case the profile reports both a personal and company LinkedIn.
+    const allowed = ["INSTAGRAM", "TIKTOK", "YOUTUBE", "LINKEDIN"];
+    const seen = new Set<string>();
+    const videoNetworks = connected.filter(n => {
+      if (!allowed.includes(n.network)) return false;
+      const k = `${n.network}:${n.id}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     providers = videoNetworks.map(n => ({ ...n, status: "PENDING" }));
   }
 
@@ -140,6 +150,11 @@ export async function createScheduledPost(opts: CreatePostOptions): Promise<Crea
     // TikTok-specific: public post
     tiktokData: {
       privacyOption: "PUBLIC_TO_EVERYONE",
+    },
+    // LinkedIn-specific: publish as a public document/video post
+    linkedinData: {
+      publishImagesAsPDF: false,
+      documentTitle: "",
     },
   };
 
@@ -169,9 +184,22 @@ export async function createScheduledPost(opts: CreatePostOptions): Promise<Crea
     (raw as Record<string, unknown>)?.id ??
     ((raw as Record<string, unknown>)?.data as Record<string, unknown>)?.id;
 
+  const niceNames: Record<string, string> = {
+    INSTAGRAM: "Instagram",
+    TIKTOK: "TikTok",
+    YOUTUBE: "YouTube",
+    LINKEDIN: "LinkedIn",
+    FACEBOOK: "Facebook",
+  };
+  const platforms = providers
+    .map(p => niceNames[p.network] ?? p.network)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join(", ");
+
   return {
     ok: true,
     postId: typeof postId === "number" ? postId : undefined,
     raw,
+    platforms,
   };
 }

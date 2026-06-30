@@ -155,5 +155,20 @@
 - [x] Verify type-check clean + all 26 tests pass
 - [x] Runtime simulation with real DB captions: video 22 correctly flagged as duplicate (isDup=true)
 - [x] Delete today's stale bad SA pick (id 90001, video 22) so it regenerates with fixed logic
-- [ ] Commit + push to GitHub, save checkpoint, deploy
-- [ ] After deploy: verify SA pick regenerates as a genuinely different property
+- [x] Commit + push to GitHub (e0eb4e4), save checkpoint (e0eb4e46)
+- [x] Verify SA pick regenerated as a genuinely different property (videoId 22 -> videoId 25, postId 17857030872602130; dev logs show video 22 skipped)
+- [ ] User to click Publish to deploy fix to production
+
+## Phone install (PWA) + LinkedIn target (Jun 30)
+- [x] Add LinkedIn to Metricool posting targets (was IG/TikTok/YouTube only) + de-dupe networks
+- [x] Map both linkedin (personal urn) and linkedinCompany fields to LINKEDIN
+- [x] Add linkedinData block + dynamic platforms label in publishNow response
+- [x] Add LinkedIn connectivity assertion to metricool.test.ts (verified live: IG, TikTok, YouTube, LinkedIn connected)
+- [x] Verify prod manifest + icons + iOS meta tags serve correctly (all HTTP 200)
+- [x] Add InstallAppButton: Android native prompt + iOS Add-to-Home-Screen instructions, hidden when already installed
+- [x] Mount install button in mobile top bar
+- [x] Type-check (clean) + tests (27 pass) + mobile layout verify
+- [x] Adaptive iOS/Android instruction sheet; button shows on all phone-class devices
+- [x] Extract pure installDetect helpers + 8 unit tests (verified: iPhone/iPadOS/Android show, desktop only with prompt, hidden when installed)
+- [x] Include client tests in vitest config (35 tests total pass)
+- [ ] Checkpoint, push to GitHub, hand off with install steps

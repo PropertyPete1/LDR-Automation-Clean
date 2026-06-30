@@ -11,4 +11,11 @@ describe("Metricool API", () => {
     expect(instagram).toBeDefined();
     expect(instagram?.id).toBeTruthy();
   }, 15000);
+
+  it("should include LinkedIn now that it is connected", async () => {
+    const networks = await getConnectedNetworks();
+    const linkedin = networks.find(n => n.network === "LINKEDIN");
+    expect(linkedin).toBeDefined();
+    expect(linkedin?.id).toBeTruthy();
+  }, 15000);
 });

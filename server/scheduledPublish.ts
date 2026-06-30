@@ -132,7 +132,7 @@ export async function publishNowHandler(req: Request, res: Response) {
         ok: true,
         status: "posted",
         metricoolPostId,
-        platforms: "Instagram, TikTok, YouTube",
+        platforms: result.platforms ?? "connected Metricool networks",
       });
     } else {
       const errMsg = result.error ?? "Metricool publish failed";
