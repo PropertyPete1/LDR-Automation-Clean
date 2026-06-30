@@ -7,4 +7,7 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  metricoolApiToken: process.env.METRICOOL_API_TOKEN ?? "",
+  metricoolBlogId: parseInt(process.env.METRICOOL_BLOG_ID ?? "0", 10),
+  metricoolUserId: parseInt(process.env.METRICOOL_USER_ID ?? "0", 10),
 };

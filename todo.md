@@ -84,7 +84,19 @@
 - [x] Decided: Option B (confirm-each-time via IG card); AGENT cron fetches reel video and prepares post
 - [x] Harden dueForPublish endpoint (now returns shortcode + permalink + caption); reportPublish already marks posted/failed
 - [x] Verified flow: reportPublishHandler updates daily_picks + calls markRepostPosted/markRepostFailed (reposts row)
-- [ ] Save checkpoint + deploy (required before scheduling)
-- [ ] Schedule two AGENT crons: San Antonio 2 PM CDT (19:00 UTC), Austin 3 PM CDT (20:00 UTC)
-- [ ] Verify schedules registered (nothing posts today)
-- [ ] Deliver summary + how to manage/pause schedules
+- [x] Saved checkpoint + user deployed (endpoints live, 403 for non-cron)
+- [x] Scheduled AGENT cron: fires 19:00 + 20:00 UTC (2 PM SA / 3 PM Austin CDT), repeating, run-as-new, Instagram connector attached (taskUid he5uIWQiFJljmBdqvGrXLD)
+- [x] Verified schedule active with correct cron/timezone; nothing fires today (next run tomorrow 2 PM CDT)
+- [x] Deliver summary + how to manage/pause schedules
+
+## Metricool Multi-Platform Integration (Jun 30)
+- [x] Researched Metricool API - supports create scheduled post with autoPublish to all platforms
+- [x] Stored METRICOOL_API_TOKEN secret, verified token works (blogId: 4807109, userId: 3748462)
+- [x] Confirmed connected platforms: Instagram, TikTok, YouTube, Facebook
+- [ ] Add METRICOOL_BLOG_ID and METRICOOL_USER_ID to env/secrets
+- [ ] Build server/metricool.ts helper (createPost, getNetworks)
+- [ ] Build server/scheduledPublish.ts metricool posting flow: fetch source video URL from IG, upload to Metricool, auto-publish to all platforms
+- [ ] Add dueForPublish endpoint: return source video URL (from IG connector or stored) for the agent
+- [ ] Update the daily posting agent schedule playbook to use Metricool API directly
+- [ ] Write vitest tests for metricool helper
+- [ ] Deploy and verify end-to-end
