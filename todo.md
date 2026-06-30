@@ -138,3 +138,22 @@
 - [ ] Fix: ensure 30-day exclusion uses confirmedAt timestamp, not scheduledFor
 - [ ] Delete today's bad SA pick and force regeneration with the fix in place
 - [ ] Deploy and verify new SA pick is a genuinely different property
+
+## ROOT CAUSE FOUND: Reposted video has different IG post ID (Jun 30)
+- Library video id 22 (postId 18064623473412524, caption "bright light clean finishes") = same reel reposted June 28 as IG post 18100490300160803
+- ID matching can't link them (different IDs); AI vision fails because ig_post_history thumbnails are EXPIRING Instagram CDN URLs (403 when AI fetches them)
+- [ ] Fix: caption-fingerprint exclusion — exclude candidate videos whose caption matches a caption posted in last 30 days (ig_post_history)
+- [ ] Normalize captions for comparison (lowercase, strip emoji/whitespace, first ~60 chars)
+- [ ] Test, deploy, regenerate today's SA pick, verify different property
+
+## FIX SHIPPED: Caption-fingerprint dedup (Jun 30)
+- [x] Add captionFingerprint() (lowercase, strip emoji/punctuation -> words, first 80 chars) in igHistorySync.ts
+- [x] Add isCaptionRecentlyPosted() — exact/prefix match + shared 4-word distinctive opening phrase
+- [x] Wire isCaptionRecentlyPosted as PRIMARY dedup check in ensureTodayPicks() (before AI vision)
+- [x] Fix fallback bug: when all candidates flagged, pick best CAPTION-CLEAN candidate instead of blindly using top-ranked video
+- [x] Add captionDedup.test.ts (7 tests) covering the $279,990 reposted-house case
+- [x] Verify type-check clean + all 26 tests pass
+- [x] Runtime simulation with real DB captions: video 22 correctly flagged as duplicate (isDup=true)
+- [x] Delete today's stale bad SA pick (id 90001, video 22) so it regenerates with fixed logic
+- [ ] Commit + push to GitHub, save checkpoint, deploy
+- [ ] After deploy: verify SA pick regenerates as a genuinely different property

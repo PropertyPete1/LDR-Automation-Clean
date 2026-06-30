@@ -6,7 +6,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { ownerProcedure, publicProcedure, router } from "./_core/trpc";
 import { refreshCaption } from "./captionRefresh";
 import * as db from "./db";
-import { getRecentIgHistory, isVisuallyDuplicate, syncIgPostHistory } from "./igHistorySync";
+import { getRecentIgHistory, isCaptionRecentlyPosted, isVisuallyDuplicate, syncIgPostHistory } from "./igHistorySync";
 import {
   defaultScheduleMs,
   getCdtPickDate,
@@ -18,8 +18,8 @@ const citySchema = z.enum(["austin", "san_antonio"]);
 /**
  * Ensure today's two picks (Austin + SA) exist, generating them if missing.
  * Idempotent: if rows already exist for the pick date, they are returned as-is.
- * Uses AI visual deduplication to skip candidates that show the same property
- * as any post made in the last 30 days — even if the post ID is different.
+ * Dedup is caption-fingerprint first (catches reposts under new IG IDs), then
+ * AI visual check, skipping any candidate shown in the last 30 days.
  */
 async function ensureTodayPicks(pickDate: string) {
   const existing = await db.getDailyPicks(pickDate);
@@ -46,7 +46,14 @@ async function ensureTodayPicks(pickDate: string) {
       triedIds.add(result.video.postId);
       attempts++;
 
-      // AI visual dedup: skip if same property was posted in last 30 days
+      // Caption-fingerprint dedup (PRIMARY): catches the same reel reposted
+      // under a different IG post ID. Captions are stable; IG CDN thumbnails expire.
+      if (isCaptionRecentlyPosted(result.video.caption, recentIgHistory)) {
+        console.log(`[Dedup] Skipping ${result.video.postId} (${city}) — caption matches a post from the last 30 days`);
+        continue;
+      }
+
+      // AI visual dedup (SECONDARY): skip if same property was posted in last 30 days
       const thumbUrl = result.video.thumbnailUrl;
       if (thumbUrl && recentIgHistory.length > 0) {
         const isDup = await isVisuallyDuplicate(
@@ -65,9 +72,24 @@ async function ensureTodayPicks(pickDate: string) {
     }
 
     if (!picked) {
-      // Fallback: if all candidates were flagged as duplicates, use the top-ranked one anyway
-      console.warn(`[AI Dedup] All ${attempts} candidates for ${city} flagged as duplicates — using top-ranked fallback`);
-      picked = selectForCity(lib, lastRepost, chosenToday);
+      // Fallback: every candidate we tried was flagged. Instead of blindly using
+      // the top-ranked video (which would re-post a duplicate), pick the best
+      // candidate whose caption was NOT posted in the last 30 days.
+      console.warn(`[Dedup] All ${attempts} candidates for ${city} flagged — searching for best caption-clean fallback`);
+      const fallbackExcluded = new Set(chosenToday);
+      let fb: Awaited<ReturnType<typeof selectForCity>> | null = null;
+      for (let i = 0; i < lib.length; i++) {
+        const cand = selectForCity(lib, lastRepost, fallbackExcluded);
+        if (!cand) break;
+        if (!isCaptionRecentlyPosted(cand.video.caption, recentIgHistory)) {
+          fb = cand;
+          break;
+        }
+        fallbackExcluded.add(cand.video.postId);
+      }
+      // If literally every video matches a recent caption, only then accept the
+      // top-ranked one (better to post something than nothing).
+      picked = fb ?? selectForCity(lib, lastRepost, chosenToday);
     }
     if (!picked) continue;
 

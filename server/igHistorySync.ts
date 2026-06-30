@@ -61,6 +61,65 @@ export async function syncIgPostHistory(recentPosts: IgPost[]): Promise<void> {
 }
 
 /**
+ * Normalize a caption into a stable fingerprint for comparison.
+ * Strips emoji, punctuation, and whitespace; lowercases; keeps the first
+ * ~80 meaningful characters. Two captions with the same fingerprint are
+ * treated as the same reel (handles reposts that get a new IG post ID).
+ */
+export function captionFingerprint(caption: string | null | undefined): string {
+  if (!caption) return "";
+  return caption
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ") // emoji/punctuation/symbols/hashtags -> space
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
+/**
+ * Returns true if the candidate caption matches (by fingerprint) any caption
+ * posted within the last 30 days. This is the reliable signal for "same reel
+ * reposted under a different ID" — captions are stable, IG CDN thumbnails are not.
+ */
+/**
+ * Number of leading normalized words that, if shared, indicate the same reel.
+ * A 4-word distinctive opening (e.g. "bright light clean finishes") reliably
+ * identifies a reel even when the rest of the caption is lightly edited on repost.
+ */
+const SHARED_PREFIX_WORDS = 4;
+
+function leadingWords(caption: string | null | undefined): string[] {
+  return captionFingerprint(caption).split(" ").filter(Boolean);
+}
+
+export function isCaptionRecentlyPosted(
+  candidateCaption: string | null | undefined,
+  recentPosts: Array<{ captionSnippet: string | null }>
+): boolean {
+  const fp = captionFingerprint(candidateCaption);
+  if (fp.length < 12) return false; // too short to be a reliable fingerprint
+  const candWords = leadingWords(candidateCaption);
+  for (const p of recentPosts) {
+    const pfp = captionFingerprint(p.captionSnippet);
+    if (pfp.length < 12) continue;
+    // Exact / prefix match (captions can be truncated by IG).
+    if (fp === pfp || fp.startsWith(pfp) || pfp.startsWith(fp)) return true;
+    // Shared leading phrase: the same reel's caption typically opens with the
+    // same distinctive hook even if the rest is edited on repost. Match if the
+    // first SHARED_PREFIX_WORDS words are identical in order.
+    const histWords = leadingWords(p.captionSnippet);
+    if (candWords.length >= SHARED_PREFIX_WORDS && histWords.length >= SHARED_PREFIX_WORDS) {
+      let same = true;
+      for (let i = 0; i < SHARED_PREFIX_WORDS; i++) {
+        if (candWords[i] !== histWords[i]) { same = false; break; }
+      }
+      if (same) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Get all ig_post_history entries within the last 30 days.
  */
 export async function getRecentIgHistory(nowMs: number = Date.now()) {
