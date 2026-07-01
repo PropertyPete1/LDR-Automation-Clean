@@ -44,7 +44,20 @@ export function registerOAuthRoutes(app: Express) {
       const cookieOptions = getSessionCookieOptions(req);
       res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
-      res.redirect(302, "/");
+      // Mobile fallback: some mobile browsers (Safari ITP, iOS WebViews, strict
+      // cross-site cookie policies) drop the SameSite=None session cookie on the
+      // XHR to /api/trpc even though the top-level navigation carried it. That
+      // makes owner-only procedures (e.g. picks.today) 401 while public ones
+      // (auth.me) still resolve, producing a dashboard that renders but shows
+      // "No picks available yet".
+      //
+      // To make auth cookie-independent, we also hand the token to the client via
+      // the URL fragment. Fragments are never sent to the server and never logged
+      // by proxies/CDNs. The client reads it once, moves it into localStorage, and
+      // strips it from the URL. From then on the tRPC client attaches it as a
+      // Bearer header on every request, so auth works with or without the cookie.
+      const encoded = encodeURIComponent(sessionToken);
+      res.redirect(302, `/#session=${encoded}`);
     } catch (error) {
       console.error("[OAuth] Callback failed", error);
       res.status(500).json({ error: "OAuth callback failed" });

@@ -6,7 +6,12 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
+import { captureSessionTokenFromUrl, getSessionToken } from "@/lib/sessionToken";
 import "./index.css";
+
+// Capture the OAuth session token from the URL fragment (mobile cookie-independent
+// auth) BEFORE React mounts, so the very first tRPC requests can attach it.
+captureSessionTokenFromUrl();
 
 const queryClient = new QueryClient();
 
@@ -43,10 +48,24 @@ const trpcClient = trpc.createClient({
       url: "/api/trpc",
       transformer: superjson,
       headers() {
-        // Preview auto-login fallback: when the browser blocks iframe cookies
-        // (Safari ITP / private browsing / WebView), the runtime mirrors the
-        // session into sessionStorage so we can forward it as a Bearer token.
-        // The regular OAuth cookie flow keeps working and takes priority server-side.
+        // 1. Primary mobile-safe auth: a Bearer token persisted in localStorage
+        //    from the OAuth redirect fragment. This works even when the browser
+        //    drops the SameSite=None session cookie on XHR (Safari ITP, iOS
+        //    WebViews, strict cross-site cookie policies) — the exact failure that
+        //    made owner-only procedures like picks.today 401 on mobile.
+        try {
+          const stored = getSessionToken();
+          if (stored) {
+            return { Authorization: `Bearer ${stored}` };
+          }
+        } catch {
+          // localStorage unavailable
+        }
+
+        // 2. Preview auto-login fallback: when running inside the Manus preview
+        //    iframe, the runtime mirrors the session into sessionStorage so we can
+        //    forward it as a Bearer token. The regular OAuth cookie flow keeps
+        //    working and takes priority server-side.
         try {
           const raw = sessionStorage.getItem("manus-cookie");
           if (raw) {

@@ -1,5 +1,6 @@
 import { getLoginUrl } from "@/const";
 import { trpc } from "@/lib/trpc";
+import { clearSessionToken } from "@/lib/sessionToken";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
 
@@ -42,6 +43,8 @@ export function useAuth(options?: UseAuthOptions) {
       try {
         sessionStorage.removeItem("manus-cookie");
       } catch {}
+      // Clear the mobile Bearer fallback token so the device is fully logged out.
+      clearSessionToken();
       utils.auth.me.setData(undefined, null);
       await utils.auth.me.invalidate();
     }
