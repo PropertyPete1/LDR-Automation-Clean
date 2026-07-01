@@ -224,3 +224,12 @@
 - [x] Tests: geoClassify, dallasSchedule (hour + cadence); 48 tests pass; tsc clean
 - [ ] Checkpoint + deploy + verify in production
 - [ ] NOTE FOR PETER: no Dallas/Fort Worth videos found in the synced IG source — need the account/videos that contain DFW reels for Dallas days to actually post
+
+## Fort Worth deep backfill (one-time) (Jul 1)
+- [x] Paginated full Instagram history via connector (~12 pages, ~230 posts)
+- [x] Identified 6 genuine Fort Worth / DFW-area reels (Aledo ISD, Benbrook/Crowley ISD, Joshua ISD / DFW side)
+- [x] Fetched real IG insights (views) per reel; hosted thumbnails on storage; upserted as city=dallas
+- [x] Strengthened geoClassify with DFW suburb/ISD keywords (Aledo, Benbrook, Crowley ISD, Joshua ISD, Chisholm Trail, Mansfield, Burleson, etc.)
+- [x] Library now: 89 San Antonio / 18 Austin / 6 Dallas
+- [x] Verified a Dallas pick can generate (top eligible = post 18395283235198565, 1095 views, 0 reposts in 30d)
+- [ ] Save checkpoint + user deploys

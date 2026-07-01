@@ -82,6 +82,23 @@ const DALLAS_PLACES = [
   "waxahachie",
   "midlothian",
   "cleburne",
+  // Additional DFW-area suburbs + strong local geo/school cues seen in captions
+  "aledo",
+  "benbrook",
+  "crowley",
+  "joshua",
+  "saginaw",
+  "haslet",
+  "azle",
+  "granbury",
+  "weatherford",
+  "prosper",
+  "celina",
+  "forney",
+  "chisholm trail", // Chisholm Trail Pkwy/Tollway — Fort Worth corridor
+  "aledo isd",
+  "crowley isd",
+  "joshua isd",
 ];
 
 function norm(s: string | null | undefined): string {
@@ -119,7 +136,7 @@ export async function classifyByAI(
 Markets and rules:
 - "san_antonio": San Antonio and its metro/suburbs, INCLUDING Schertz, Cibolo, Alamo Ranch, New Braunfels, Converse, Selma, Boerne, Seguin, Canyon Lake.
 - "austin": Austin and NORTH — Austin, Round Rock, Georgetown, Pflugerville, Cedar Park, Leander, Kyle, Buda, Hutto, Lakeway, Dripping Springs, San Marcos, Temple, Killeen, Belton, Waco.
-- "dallas": Dallas / Fort Worth / DFW metroplex — Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Irving, Denton, Mansfield, and other DFW-area cities.
+- "dallas": Dallas / Fort Worth / DFW metroplex — Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Irving, Denton, Mansfield, Aledo, Benbrook, Crowley, Joshua, Saginaw, Haslet, Azle, Granbury, Weatherford, and other DFW-area cities. Strong DFW cues: Aledo ISD, Crowley ISD, Joshua ISD, Benbrook Lake, Chisholm Trail Parkway/Tollway, or a caption saying "comment FORT WORTH" / "DFW side".
 Decide using on-screen location text first, then caption hints. Respond with ONLY the market key.`;
 
   const userText = `On-screen text: ${onscreen || "(none)"}
