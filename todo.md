@@ -323,5 +323,19 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] pickTopicForDate: engagement-weighted (comments x3, shares x5), normalized, floor keeps every angle in rotation; deterministic per date
 - [x] Guard: WEIGHTING_MIN_POSTS=6 posts-with-engagement before weighting; before that, plain even 6-way rotation. Writer now uses pickTopicForDate.
 - [x] Tests: linkedinWeighting.test.ts (7) covers scoring, thin-data guard, determinism, favors-winner, floor-keeps-all. Full suite 108/108 pass, 0 type errors
-- [ ] Checkpoint, push
-- [ ] Register daily analytics-sync cron; deploy; verify live
+- [x] Checkpoint a892507b; pushed to GitHub (ff9c20b..a892507)
+- [x] Deployed; endpoint verified (403 cron-guard). Registered linkedin-analytics-sync 0 30 18 UTC = 1:30 PM CDT (task_uid bCnWxXePkAaL8RdiBeCDi8), enabled. Runs before the 2 PM publish so each new post learns from the latest engagement.
+
+## Drive-Original Matching (replace IG copy with Drive original for high views)
+- [x] Found Drive folder (id: 16mNnK1avek0LUljjFPZ5iNxON2OJZod7): 43 videos (mp4+mov), 23-135MB, most have Google thumbnails, still growing
+- [x] DB: drive_videos table (driveFileId PK, fileName, mimeType, sizeBytes, durationMs, width, height, thumbnailUrl, hostedThumbnailUrl, driveCreatedAt, lastIndexedAt)
+- [x] DB: daily_picks.driveVideoUrl (text) + daily_picks.driveMatchConfidence (varchar 16) columns added
+- [x] driveIndex.ts: sync Drive folder metadata to drive_videos table via gws CLI (paginated, idempotent upsert)
+- [x] driveMatcher.ts: AI vision matching (gemini-3-flash-preview) — duration filter then batch thumbnail comparison, structured JSON output, high/medium confidence only
+- [x] drivePreprocess.ts: full morning pipeline (sync index → match → download via gws → variant fingerprint → upload to S3 → store URL on pick)
+- [x] Integrated into generatePicksHandler: after picks generated + auto-confirmed, Drive preprocessing runs (non-blocking on failure)
+- [x] publishNow updated: prefers pick.driveVideoUrl (already differentiated) over body videoUrl; skips re-variant when using Drive original
+- [x] publishNow graceful failure: if no Drive original AND no body videoUrl, marks pick failed with clear reason
+- [x] drivePreprocess.test.ts: 8 tests (module exports, early-return, match logic, Drive-source preference, variant skip)
+- [x] All 116 tests pass, 0 type errors
+- [ ] Checkpoint + push to GitHub + deploy + verify live

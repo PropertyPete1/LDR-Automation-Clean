@@ -95,6 +95,10 @@ export const dailyPicks = mysqlTable("daily_picks", {
   /** "pending" | "confirmed" | "posted" | "failed" */
   status: mysqlEnum("status", ["pending", "confirmed", "posted", "failed"]).default("pending").notNull(),
   repostId: int("repostId"),
+  /** Pre-uploaded Drive original video URL (signed S3 URL, set by morning job). */
+  driveVideoUrl: text("driveVideoUrl"),
+  /** AI match confidence: "high" | "medium" | "low" | null (no match attempted). */
+  driveMatchConfidence: varchar("driveMatchConfidence", { length: 16 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, t => ({
@@ -247,3 +251,32 @@ export const linkedinPosts = mysqlTable("linkedin_posts", {
 }));
 export type LinkedinPost = typeof linkedinPosts.$inferSelect;
 export type InsertLinkedinPost = typeof linkedinPosts.$inferInsert;
+
+/**
+ * Google Drive video index. One row per video file in the "Camera Roll Real
+ * Estate Videos" folder. Synced periodically so the AI matcher can quickly
+ * narrow candidates by duration and compare thumbnails.
+ */
+export const driveVideos = mysqlTable("drive_videos", {
+  /** Google Drive file ID (stable, globally unique). */
+  driveFileId: varchar("driveFileId", { length: 64 }).primaryKey(),
+  fileName: varchar("fileName", { length: 512 }).notNull(),
+  mimeType: varchar("mimeType", { length: 64 }),
+  sizeBytes: bigint("sizeBytes", { mode: "number" }),
+  /** Duration from videoMediaMetadata (milliseconds). */
+  durationMs: bigint("durationMs", { mode: "number" }),
+  width: int("width"),
+  height: int("height"),
+  /** Google-generated thumbnail URL (expires; refreshed on each index sync). */
+  thumbnailUrl: varchar("thumbnailUrl", { length: 1024 }),
+  /** Our hosted copy of the thumbnail (stable, never expires). */
+  hostedThumbnailUrl: varchar("hostedThumbnailUrl", { length: 512 }),
+  /** File creation time in Drive (epoch ms). */
+  driveCreatedAt: bigint("driveCreatedAt", { mode: "number" }),
+  /** Last time we synced this row from Drive. */
+  lastIndexedAt: bigint("lastIndexedAt", { mode: "number" }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DriveVideo = typeof driveVideos.$inferSelect;
+export type InsertDriveVideo = typeof driveVideos.$inferInsert;

@@ -114,10 +114,18 @@ export async function dueForPublishHandler(req: Request, res: Response) {
 }
 
 /**
- * publishNow endpoint: called by the agent after it has fetched the fresh video URL.
- * Body: { pickId, repostId, videoUrl, caption?, thumbnailUrl? }
- * - Calls Metricool to schedule the post for immediate publication (autoPublish: true).
- * - Marks the pick as posted or failed in the database.
+ * publishNow endpoint: called by the agent OR the Heartbeat cron.
+ * Body: { pickId, repostId, videoUrl?, caption?, thumbnailUrl? }
+ *
+ * NEW FLOW (Drive-original): If the pick has a pre-uploaded driveVideoUrl
+ * (set by the morning preprocessing job), that URL is used directly —
+ * no videoUrl from the agent is needed. The agent just calls dueForPublish
+ * → gets the pick → calls publishNow with pickId+repostId.
+ *
+ * LEGACY FLOW: If driveVideoUrl is not set AND a videoUrl is provided in
+ * the body, that URL is used (backward-compatible).
+ *
+ * If neither source is available, the pick is skipped (no fallback to IG copy).
  */
 export async function publishNowHandler(req: Request, res: Response) {
   try {
@@ -127,16 +135,13 @@ export async function publishNowHandler(req: Request, res: Response) {
 
     const pickId = Number(req.body?.pickId);
     const repostId = Number(req.body?.repostId);
-    const videoUrl = String(req.body?.videoUrl ?? "");
+    const bodyVideoUrl = req.body?.videoUrl ? String(req.body.videoUrl) : "";
     const captionOverride = req.body?.caption ? String(req.body.caption) : undefined;
     const thumbnailUrl = req.body?.thumbnailUrl ? String(req.body.thumbnailUrl) : null;
 
     if (!pickId) return res.status(400).json({ error: "missing pickId" });
-    if (!videoUrl || !videoUrl.startsWith("http")) {
-      return res.status(400).json({ error: "missing or invalid videoUrl" });
-    }
 
-    // Fetch the pick to get the caption if not provided
+    // Fetch the pick to get the caption and driveVideoUrl
     const pickDate = getCdtPickDate();
     const picks = await db.getDailyPicks(pickDate);
     const pick = picks.find(p => p.id === pickId);
@@ -145,6 +150,17 @@ export async function publishNowHandler(req: Request, res: Response) {
     }
     if (pick.status === "posted") {
       return res.json({ ok: true, alreadyPosted: true });
+    }
+
+    // Determine video source: Drive original (preferred) or body videoUrl (legacy)
+    const videoUrl = pick.driveVideoUrl || bodyVideoUrl;
+    if (!videoUrl || !videoUrl.startsWith("http")) {
+      // No Drive original and no agent-provided URL — skip this pick
+      const skipMsg = "No Drive original available and no videoUrl provided";
+      console.warn(`[publishNow] ${skipMsg} for pick ${pickId}`);
+      if (repostId) await db.markRepostFailed(repostId, skipMsg);
+      await db.updateDailyPick(pickId, { status: "failed" });
+      return res.status(422).json({ ok: false, error: skipMsg, source: "no_video" });
     }
 
     const video = await db.getVideoById(pick.videoId);
@@ -180,30 +196,35 @@ export async function publishNowHandler(req: Request, res: Response) {
 
     // -------------------------------------------------------------------------
     // GUARD 2 - Serverless byte differentiation (best-effort, NO ffmpeg).
-    // Appends spec-legal random `free` MP4 padding boxes so the uploaded file
-    // is NOT byte-identical to the reel already on the account / other brands,
-    // while decoded video+audio are unchanged. Byte-identical re-uploads can be
-    // detected as duplicates and throttled. Pure Node, so it runs on the
-    // Autoscale Node-only runtime (the old ffmpeg version silently no-oped in
-    // prod). If anything fails we fall back to the original URL rather than
-    // block the post.
+    // If using a Drive original (driveVideoUrl), the variant was already applied
+    // during the morning preprocessing job — skip re-differentiation.
+    // For legacy IG-copy URLs, apply the variant at publish time as before.
     // -------------------------------------------------------------------------
     let mediaUrl = videoUrl;
     let differentiated = false;
-    try {
-      const variant = await makeDifferentiatedVariant({
-        sourceUrl: videoUrl,
-        postId: pick.postId,
-        salt: `${Date.now()}`,
-      });
-      if (variant.ok && variant.url) {
-        mediaUrl = variant.url;
-        differentiated = true;
-      } else {
-        console.warn(`[publishNow] variant failed, using original URL: ${variant.error}`);
+    const usingDriveOriginal = Boolean(pick.driveVideoUrl);
+
+    if (usingDriveOriginal) {
+      // Drive originals are already differentiated in the morning job
+      differentiated = true;
+      console.log(`[publishNow] Using pre-uploaded Drive original for pick ${pickId}`);
+    } else {
+      // Legacy path: apply variant at publish time
+      try {
+        const variant = await makeDifferentiatedVariant({
+          sourceUrl: videoUrl,
+          postId: pick.postId,
+          salt: `${Date.now()}`,
+        });
+        if (variant.ok && variant.url) {
+          mediaUrl = variant.url;
+          differentiated = true;
+        } else {
+          console.warn(`[publishNow] variant failed, using original URL: ${variant.error}`);
+        }
+      } catch (e) {
+        console.warn(`[publishNow] variant threw, using original URL:`, e);
       }
-    } catch (e) {
-      console.warn(`[publishNow] variant threw, using original URL:`, e);
     }
 
     // Publish immediately via Metricool. Metricool interprets publicationDate
@@ -228,6 +249,8 @@ export async function publishNowHandler(req: Request, res: Response) {
         status: "posted",
         metricoolPostId,
         differentiated,
+        driveSource: usingDriveOriginal,
+        driveMatchConfidence: pick.driveMatchConfidence ?? null,
         platforms: result.platforms ?? "connected Metricool networks",
       });
     } else {
@@ -261,11 +284,29 @@ export async function generatePicksHandler(req: Request, res: Response) {
     }
     const pickDate = getCdtPickDate();
     const picks = await ensureTodayPicks(pickDate);
+
+    // -----------------------------------------------------------------------
+    // DRIVE PRE-PROCESSING: After picks are generated + auto-confirmed,
+    // match each pick to its Drive original, download, apply fingerprint
+    // change, and upload to S3. This makes the 2/3/4 PM publish instant.
+    // Non-blocking: if Drive matching fails, the pick stays confirmed but
+    // without a driveVideoUrl (publishNow will fail gracefully).
+    // -----------------------------------------------------------------------
+    let driveResults: unknown = null;
+    try {
+      const { preprocessDriveOriginals } = await import("./drivePreprocess");
+      driveResults = await preprocessDriveOriginals();
+    } catch (driveErr) {
+      console.error("[generatePicks] Drive preprocessing failed (non-fatal):", driveErr);
+      driveResults = { error: String(driveErr) };
+    }
+
     return res.json({
       ok: true,
       pickDate,
       count: picks.length,
       picks: picks.map(p => ({ city: p.city, status: p.status, scheduledFor: p.scheduledFor })),
+      drivePreprocess: driveResults,
     });
   } catch (err) {
     const e = err as Error;
