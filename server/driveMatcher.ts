@@ -167,7 +167,7 @@ Respond with ONLY a JSON object:
         },
       },
       // Gemini: use max_tokens, not max_completion_tokens
-      max_tokens: 256,
+      max_tokens: 2048,
     } as any);
 
     const content = response?.choices?.[0]?.message?.content;

@@ -1,4 +1,4 @@
-import type { Video } from "../drizzle/schema";
+import type { IgReel, Video } from "../drizzle/schema";
 
 export const NO_REPEAT_DAYS = 30;
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -53,15 +53,15 @@ export function isDallasDay(pickDate: string): boolean {
   return dayNumber % 2 === 0;
 }
 
+/** Legacy selection result (old videos table). */
 export type SelectionResult = { video: Video; mode: "fresh" | "fallback" } | null;
 
+/** New selection result for ig_reels pipeline. */
+export type ReelSelectionResult = { reel: IgReel; mode: "fresh" | "fallback" } | null;
+
 /**
- * Pick the best video for a city.
- * - videos: that city's library, will be sorted by views desc internally.
- * - lastRepostByPostId: map postId -> last repost time (ms).
- * - excludePostIds: ids already chosen today (avoid double-picking).
- * Rule: highest views with no repost within NO_REPEAT_DAYS. If none qualify,
- * fall back to the least-recently reposted (then highest views).
+ * Pick the best video for a city (LEGACY — old videos table).
+ * Kept for back-compat with any remaining callers.
  */
 export function selectForCity(
   videos: Video[],
@@ -84,8 +84,44 @@ export function selectForCity(
   candidates.sort((a, b) => {
     const la = lastRepostByPostId[a.postId] ?? 0;
     const lb = lastRepostByPostId[b.postId] ?? 0;
-    if (la !== lb) return la - lb; // least recently reposted first
+    if (la !== lb) return la - lb;
     return b.views - a.views;
   });
   return { video: candidates[0], mode: "fallback" };
+}
+
+/**
+ * Pick the best IG reel for a city (NEW — ig_reels table).
+ * - reels: that city's scraped reels, already sorted by engagementScore desc.
+ * - lastPostByIgMediaId: map igMediaId -> last post time (ms).
+ * - excludeIgMediaIds: ids already chosen today (avoid double-picking).
+ * Rule: highest engagement with no post within NO_REPEAT_DAYS. If none qualify,
+ * fall back to the least-recently posted (then highest engagement).
+ */
+export function selectReelForCity(
+  reels: IgReel[],
+  lastPostByIgMediaId: Record<string, number>,
+  excludeIgMediaIds: Set<string> = new Set(),
+  now: number = Date.now()
+): ReelSelectionResult {
+  // Already sorted by engagement score desc from DB query
+  const sorted = [...reels].sort((a, b) => b.engagementScore - a.engagementScore);
+  const cutoff = now - NO_REPEAT_DAYS * DAY_MS;
+
+  const eligible = sorted.filter(r => {
+    if (excludeIgMediaIds.has(r.igMediaId)) return false;
+    const last = lastPostByIgMediaId[r.igMediaId];
+    return !last || last <= cutoff;
+  });
+  if (eligible.length) return { reel: eligible[0], mode: "fresh" };
+
+  const candidates = sorted.filter(r => !excludeIgMediaIds.has(r.igMediaId));
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const la = lastPostByIgMediaId[a.igMediaId] ?? 0;
+    const lb = lastPostByIgMediaId[b.igMediaId] ?? 0;
+    if (la !== lb) return la - lb; // least recently posted first
+    return b.engagementScore - a.engagementScore;
+  });
+  return { reel: candidates[0], mode: "fallback" };
 }

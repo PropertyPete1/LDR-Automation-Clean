@@ -8,7 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { dueForPublishHandler, reportPublishHandler, publishNowHandler, syncIgHistoryHandler, runAnalystHandler, generatePicksHandler } from "../scheduledPublish";
+import { dueForPublishHandler, reportPublishHandler, publishNowHandler, syncIgHistoryHandler, runAnalystHandler, generatePicksHandler, scrapeReelsHandler } from "../scheduledPublish";
 import { generateLinkedinHandler, publishLinkedinHandler, syncLinkedinAnalyticsHandler } from "../linkedinScheduled";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -55,6 +55,7 @@ async function startServer() {
   app.post("/api/scheduled/syncIgHistory", syncIgHistoryHandler);
   app.post("/api/scheduled/runAnalyst", runAnalystHandler);
   app.post("/api/scheduled/generatePicks", generatePicksHandler);
+  app.post("/api/scheduled/scrapeReels", scrapeReelsHandler);
   app.post("/api/scheduled/generateLinkedin", generateLinkedinHandler);
   app.post("/api/scheduled/publishLinkedin", publishLinkedinHandler);
   app.post("/api/scheduled/syncLinkedinAnalytics", syncLinkedinAnalyticsHandler);

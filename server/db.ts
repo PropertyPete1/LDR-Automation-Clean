@@ -5,14 +5,17 @@ import {
   appSettings,
   dailyPicks,
   igPostHistory,
+  igReels,
   InsertAnalystInsight,
   InsertDailyPick,
   InsertLinkedinPost,
+  InsertPostHistory,
   InsertPostMetric,
   InsertRepost,
   InsertUser,
   InsertVideo,
   linkedinPosts,
+  postHistory,
   postMetrics,
   reposts,
   users,
@@ -452,4 +455,93 @@ export async function getDueLinkedinPost(postDate: string, nowMs: number) {
   if (post.status === "posted") return undefined;
   if ((post.scheduledFor ?? 0) > nowMs) return undefined;
   return post;
+}
+
+/* ----------------------------- IG Reels (new pipeline) ----------------------------- */
+
+/** Get all reels for a city, sorted by engagement score descending. */
+export async function getReelsByCity(city: "austin" | "san_antonio" | "dallas") {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(igReels)
+    .where(eq(igReels.city, city))
+    .orderBy(desc(igReels.engagementScore));
+}
+
+/** Get all reels sorted by engagement score descending. */
+export async function getAllReels() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(igReels).orderBy(desc(igReels.engagementScore));
+}
+
+/** Get a single reel by its auto-increment id. */
+export async function getReelById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(igReels).where(eq(igReels.id, id)).limit(1);
+  return r[0];
+}
+
+/** Get a single reel by its IG media ID (used for matching picks to reels). */
+export async function getReelByIgMediaId(igMediaId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const r = await db.select().from(igReels).where(eq(igReels.igMediaId, igMediaId)).limit(1);
+  return r[0];
+}
+
+/* ----------------------------- Post History (30-day dedup) ----------------------------- */
+
+/** Insert a post history record (tracks what WE posted). */
+export async function insertPostHistory(row: InsertPostHistory): Promise<number> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const res = await db.insert(postHistory).values(row);
+  // @ts-expect-error insertId access
+  return Number(res[0]?.insertId ?? res.insertId ?? 0);
+}
+
+/** Get post history from the last N days (for 30-day visual dedup). */
+export async function getRecentPostHistory(days: number = 30): Promise<Array<typeof postHistory.$inferSelect>> {
+  const db = await getDb();
+  if (!db) return [];
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const all = await db.select().from(postHistory).orderBy(desc(postHistory.postedAt));
+  return all.filter(p => (p.postedAt ?? 0) >= cutoff);
+}
+
+/** Map of igMediaId -> most recent post time (ms) for cooldown logic against ig_reels. */
+export async function getLastPostByIgMediaId(): Promise<Record<string, number>> {
+  const db = await getDb();
+  if (!db) return {};
+  const map: Record<string, number> = {};
+
+  // From post_history (what we posted through this system)
+  const history = await db.select().from(postHistory);
+  // post_history doesn't have igMediaId directly, but we track via daily_picks
+  // So we also check daily_picks for the last 30 days
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const recentPicks = await db.select().from(dailyPicks);
+  for (const p of recentPicks) {
+    if (p.status === "confirmed" || p.status === "posted") {
+      const t = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+      if (t >= cutoff) {
+        if (!map[p.postId] || t > map[p.postId]) map[p.postId] = t;
+      }
+    }
+  }
+
+  // Also include reposts table for back-compat
+  const allReposts = await db.select().from(reposts);
+  for (const r of allReposts) {
+    const t = (r.confirmedAt ? new Date(r.confirmedAt).getTime() : (r.scheduledFor ?? 0)) as number;
+    if (t >= cutoff) {
+      if (!map[r.postId] || t > map[r.postId]) map[r.postId] = t;
+    }
+  }
+
+  return map;
 }

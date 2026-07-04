@@ -26,13 +26,17 @@ type PickWithVideo = {
   status: "pending" | "confirmed" | "posted" | "failed";
   video?: {
     id: number;
+    postId?: string;
     views: number;
+    likes?: number;
+    comments?: number;
     thumbnailUrl: string | null;
     permalink: string | null;
-    onscreenText: string | null;
-    originalTimestamp: string | null;
     caption: string | null;
-  };
+    shortcode?: string | null;
+    engagementScore?: number;
+    city?: string | null;
+  } | null;
 };
 
 function PickCard({ pick }: { pick: PickWithVideo }) {

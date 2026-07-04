@@ -88,7 +88,8 @@ export async function dueForPublishHandler(req: Request, res: Response) {
     if (!pick) {
       return res.json({ due: false });
     }
-    const video = await db.getVideoById(pick.videoId);
+    // Look up from ig_reels (new pipeline) — postId is the igMediaId
+    const reel = await db.getReelByIgMediaId(pick.postId);
     return res.json({
       due: true,
       pick: {
@@ -96,10 +97,10 @@ export async function dueForPublishHandler(req: Request, res: Response) {
         repostId: pick.repostId,
         city: pick.city,
         postId: pick.postId,
-        shortcode: video?.shortcode ?? null,
-        permalink: video?.permalink ?? null,
-        caption: pick.refreshedCaption ?? video?.caption ?? "",
-        thumbnailUrl: video?.thumbnailUrl ?? null,
+        shortcode: null, // no shortcode in ig_reels
+        permalink: reel?.reelLink ?? null,
+        caption: pick.refreshedCaption ?? reel?.caption ?? "",
+        thumbnailUrl: reel?.thumbnailStorageKey ? `/manus-storage/${reel.thumbnailStorageKey}` : null,
         scheduledFor: pick.scheduledFor,
       },
     });
@@ -178,8 +179,9 @@ export async function publishNowHandler(req: Request, res: Response) {
       return res.status(422).json({ ok: false, error: skipMsg, source: "no_video" });
     }
 
-    const video = await db.getVideoById(pick.videoId);
-    const caption = captionOverride ?? pick.refreshedCaption ?? video?.caption ?? "";
+    // Look up from ig_reels (new pipeline)
+    const reel = await db.getReelByIgMediaId(pick.postId);
+    const caption = captionOverride ?? pick.refreshedCaption ?? reel?.caption ?? "";
 
     // -------------------------------------------------------------------------
     // GUARD 1 - Hard same-source cooldown (last line of defense).
@@ -252,7 +254,7 @@ export async function publishNowHandler(req: Request, res: Response) {
       caption,
       publishAt,
       timezone: "America/Chicago",
-      thumbnailUrl: thumbnailUrl ?? video?.thumbnailUrl ?? null,
+      thumbnailUrl: thumbnailUrl ?? (reel?.thumbnailStorageKey ? `/manus-storage/${reel.thumbnailStorageKey}` : null),
     });
 
     if (result.ok) {
@@ -291,6 +293,9 @@ export async function publishNowHandler(req: Request, res: Response) {
  * one opens the app that morning. Intended to be called by a morning Heartbeat
  * cron (~8 AM CT). ensureTodayPicks is idempotent and now auto-confirms every
  * pending pick, so the posting agent finds them due.
+ *
+ * NEW PIPELINE: ig_reels must be populated BEFORE this runs. The agent scrape
+ * task calls /api/scheduled/scrapeReels first, then this endpoint.
  */
 export async function generatePicksHandler(req: Request, res: Response) {
   try {
@@ -323,6 +328,39 @@ export async function generatePicksHandler(req: Request, res: Response) {
       picks: picks.map(p => ({ city: p.city, status: p.status, scheduledFor: p.scheduledFor })),
       drivePreprocess: driveResults,
     });
+  } catch (err) {
+    const e = err as Error;
+    return res.status(500).json({
+      error: e.message,
+      stack: e.stack,
+      context: { url: req.originalUrl },
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+
+/**
+ * scrapeReels endpoint: called by the morning agent (which has the Instagram
+ * MCP connector) to push freshly scraped IG reel data into ig_reels.
+ *
+ * Body: { reels: Array<{ igMediaId, caption, views, likes, comments, shares,
+ *         saved, reelLink, postedAt, thumbnailUrl? }> }
+ *
+ * This MUST be called BEFORE generatePicks so the ig_reels table has fresh
+ * engagement data for the selection algorithm.
+ */
+export async function scrapeReelsHandler(req: Request, res: Response) {
+  try {
+    if (!(await authorize(req))) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const reels = req.body?.reels;
+    if (!Array.isArray(reels) || reels.length === 0) {
+      return res.status(400).json({ error: "reels must be a non-empty array" });
+    }
+    const { upsertScrapedReels } = await import("./igScraper");
+    const result = await upsertScrapedReels(reels);
+    return res.json({ ok: true, ...result });
   } catch (err) {
     const e = err as Error;
     return res.status(500).json({

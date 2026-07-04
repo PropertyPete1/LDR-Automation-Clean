@@ -16,19 +16,30 @@
  * The pick stays confirmed but without a driveVideoUrl — publishNow will skip it.
  */
 
-import { execSync } from "child_process";
-import { existsSync, readFileSync, unlinkSync, mkdirSync } from "fs";
+import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { syncDriveIndex } from "./driveIndex";
 import { findDriveMatch } from "./driveMatcher";
 import { makeDifferentiatedVariant } from "./videoVariant";
 import * as db from "./db";
 import { getCdtPickDate } from "./selection";
+import { storageGetSignedUrl } from "./storage";
 
 const TMP_DIR = "/tmp/drive-downloads";
 
 /**
- * Download a file from Google Drive by its file ID using gws CLI.
+ * Get the Google Drive OAuth token from environment.
+ */
+function getDriveToken(): string {
+  const token = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || process.env.GOOGLE_DRIVE_TOKEN;
+  if (!token) {
+    throw new Error("[DrivePreprocess] No Google Drive token found");
+  }
+  return token;
+}
+
+/**
+ * Download a file from Google Drive by its file ID using the REST API.
  * Returns the local file path, or null on failure.
  */
 async function downloadDriveFile(fileId: string, fileName: string): Promise<string | null> {
@@ -38,26 +49,31 @@ async function downloadDriveFile(fileId: string, fileName: string): Promise<stri
     }
 
     const localPath = join(TMP_DIR, `${fileId}_${Date.now()}.mp4`);
+    const token = getDriveToken();
 
-    // Use gws drive files get with alt=media to download the file content
-    execSync(
-      `gws drive files get --params '{"fileId": "${fileId}", "alt": "media"}' -o '${localPath}'`,
-      { timeout: 120_000, stdio: "pipe" }
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
     );
 
-    if (!existsSync(localPath)) {
-      console.error(`[DrivePreprocess] Download produced no file: ${fileName}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error(`[DrivePreprocess] Drive download error (${res.status}): ${errText.slice(0, 300)}`);
       return null;
     }
 
-    const stat = require("fs").statSync(localPath);
-    if (stat.size < 1024) {
-      console.error(`[DrivePreprocess] Downloaded file too small (${stat.size} bytes): ${fileName}`);
-      unlinkSync(localPath);
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length < 1024) {
+      console.error(`[DrivePreprocess] Downloaded file too small (${buffer.length} bytes): ${fileName}`);
       return null;
     }
 
-    console.log(`[DrivePreprocess] Downloaded ${fileName} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+    writeFileSync(localPath, buffer);
+    console.log(`[DrivePreprocess] Downloaded ${fileName} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
     return localPath;
   } catch (err) {
     console.error(`[DrivePreprocess] Failed to download ${fileName}:`, err);
@@ -87,24 +103,36 @@ export interface PreprocessResult {
 
 /**
  * Pre-process a single pick: match → download → variant → upload.
+ * Reads from ig_reels table via the reel's igMediaId (stored as postId on the pick).
  */
 async function preprocessPick(pick: {
   id: number;
   city: string;
-  videoId: number;
   postId: string;
   refreshedCaption: string | null;
 }): Promise<PreprocessResult> {
-  const video = await db.getVideoById(pick.videoId);
-  if (!video) {
-    return { pickId: pick.id, city: pick.city, matched: false, error: "video not found in library" };
+  // Look up the IG reel by its igMediaId (stored as postId on the pick)
+  const reel = await db.getReelByIgMediaId(pick.postId);
+  if (!reel) {
+    return { pickId: pick.id, city: pick.city, matched: false, error: "reel not found in ig_reels" };
   }
 
-  // Step 1: Find the matching Drive original
+  // Step 1: Find the matching Drive original using AI vision
+  // thumbnailStorageKey is a storage key — generate a signed URL for the AI vision model
+  let thumbnailUrl = "";
+  if (reel.thumbnailStorageKey) {
+    try {
+      thumbnailUrl = await storageGetSignedUrl(reel.thumbnailStorageKey);
+    } catch {
+      // If we can't get a signed URL, try using the key as a relative path
+      thumbnailUrl = `/manus-storage/${reel.thumbnailStorageKey}`;
+    }
+  }
+
   const match = await findDriveMatch({
-    igThumbnailUrl: video.thumbnailUrl ?? "",
-    igCaption: video.caption,
-    igDurationMs: null, // We don't store IG reel duration in our videos table; rely on vision
+    igThumbnailUrl: thumbnailUrl,
+    igCaption: reel.caption,
+    igDurationMs: null, // ig_reels table doesn't store duration; rely on AI vision
   });
 
   if (!match) {
@@ -216,7 +244,6 @@ export async function preprocessDriveOriginals(): Promise<{
       const result = await preprocessPick({
         id: pick.id,
         city: pick.city,
-        videoId: pick.videoId,
         postId: pick.postId,
         refreshedCaption: pick.refreshedCaption ?? null,
       });

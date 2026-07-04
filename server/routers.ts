@@ -7,13 +7,14 @@ import { ownerProcedure, publicProcedure, router } from "./_core/trpc";
 import { refreshCaption } from "./captionRefresh";
 import { optimizeHook } from "./hookOptimizer";
 import * as db from "./db";
-import { getRecentIgHistory, isCaptionRecentlyPosted, isVisuallyDuplicate, syncIgPostHistory } from "./igHistorySync";
+import { isCaptionRecentlyPosted, isVisuallyDuplicate } from "./igHistorySync";
 import {
   defaultScheduleMs,
   getCdtPickDate,
   isDallasDay,
-  selectForCity,
+  selectReelForCity,
 } from "./selection";
+import { storageGetSignedUrl } from "./storage";
 
 const citySchema = z.enum(["austin", "san_antonio", "dallas"]);
 
@@ -21,55 +22,70 @@ const citySchema = z.enum(["austin", "san_antonio", "dallas"]);
  * Ensure today's picks (SA + Austin, plus Dallas on Dallas days) exist,
  * generating them if missing.
  * Idempotent: if rows already exist for the pick date, they are returned as-is.
- * Dedup is caption-fingerprint first (catches reposts under new IG IDs), then
- * AI visual check, skipping any candidate shown in the last 30 days.
+ *
+ * NEW PIPELINE: reads from ig_reels table (scraped IG engagement data).
+ * Dedup is caption-fingerprint first, then AI visual check against post_history
+ * (what WE posted in the last 30 days).
  */
 export async function ensureTodayPicks(pickDate: string) {
   const existing = await db.getDailyPicks(pickDate);
   const haveCities = new Set(existing.map(p => p.city));
-  const lastRepost = await db.getLastRepostByPostId();
+  const lastPostMap = await db.getLastPostByIgMediaId();
   const chosenToday = new Set(existing.map(p => p.postId));
-  // Load recent IG post history for AI visual dedup
-  const recentIgHistory = await getRecentIgHistory();
+
+  // Load recent post history (what WE posted) for dedup
+  const recentHistory = await db.getRecentPostHistory(30);
+  // Convert to the shape isVisuallyDuplicate expects
+  const recentForDedup = recentHistory.map(h => ({
+    igPostId: String(h.id),
+    thumbnailUrl: h.thumbnailStorageKey ? `/manus-storage/${h.thumbnailStorageKey}` : null,
+    captionSnippet: h.caption ? h.caption.slice(0, 500) : null,
+    postedAt: h.postedAt ?? 0,
+  }));
 
   // SA + Austin every day; Dallas only on Dallas days (roughly every 2 days).
-  // Dallas silently skips when there are no Dallas-classified videos yet.
   const marketsToday = ["san_antonio", "austin", ...(isDallasDay(pickDate) ? ["dallas" as const] : [])] as const;
 
   for (const city of marketsToday) {
     if (haveCities.has(city)) continue;
-    const lib = await db.getVideosByCity(city);
+    const lib = await db.getReelsByCity(city);
     if (!lib.length) continue;
 
     // Try candidates in ranked order; skip any that are visually similar to a recent post
-    let picked: Awaited<ReturnType<typeof selectForCity>> | null = null;
+    let picked: Awaited<ReturnType<typeof selectReelForCity>> | null = null;
     const triedIds = new Set<string>();
     let attempts = 0;
-    const MAX_ATTEMPTS = Math.min(lib.length, 10); // check up to 10 candidates
+    const MAX_ATTEMPTS = Math.min(lib.length, 10);
 
     while (attempts < MAX_ATTEMPTS) {
-      const result = selectForCity(lib, lastRepost, new Set([...Array.from(chosenToday), ...Array.from(triedIds)]));
+      const result = selectReelForCity(lib, lastPostMap, new Set([...Array.from(chosenToday), ...Array.from(triedIds)]));
       if (!result) break;
-      triedIds.add(result.video.postId);
+      triedIds.add(result.reel.igMediaId);
       attempts++;
 
       // Caption-fingerprint dedup (PRIMARY): catches the same reel reposted
-      // under a different IG post ID. Captions are stable; IG CDN thumbnails expire.
-      if (isCaptionRecentlyPosted(result.video.caption, recentIgHistory)) {
-        console.log(`[Dedup] Skipping ${result.video.postId} (${city}) — caption matches a post from the last 30 days`);
+      if (isCaptionRecentlyPosted(result.reel.caption, recentForDedup)) {
+        console.log(`[Dedup] Skipping ${result.reel.igMediaId} (${city}) — caption matches a post from the last 30 days`);
         continue;
       }
 
       // AI visual dedup (SECONDARY): skip if same property was posted in last 30 days
-      const thumbUrl = result.video.thumbnailUrl;
-      if (thumbUrl && recentIgHistory.length > 0) {
+      let thumbUrl = "";
+      if (result.reel.thumbnailStorageKey) {
+        try {
+          thumbUrl = await storageGetSignedUrl(result.reel.thumbnailStorageKey);
+        } catch {
+          thumbUrl = `/manus-storage/${result.reel.thumbnailStorageKey}`;
+        }
+      }
+      if (thumbUrl && recentForDedup.length > 0) {
         const isDup = await isVisuallyDuplicate(
           thumbUrl,
-          recentIgHistory,
-          result.video.caption
+          recentForDedup,
+          result.reel.caption
         );
         if (isDup) {
-          console.log(`[AI Dedup] Skipping ${result.video.postId} (${city}) — visually similar to recent post`);
+          console.log(`[AI Dedup] Skipping ${result.reel.igMediaId} (${city}) — visually similar to recent post`);
           continue;
         }
       }
@@ -79,54 +95,42 @@ export async function ensureTodayPicks(pickDate: string) {
     }
 
     if (!picked) {
-      // Fallback: every candidate we tried was flagged. Instead of blindly using
-      // the top-ranked video (which would re-post a duplicate), pick the best
-      // candidate whose caption was NOT posted in the last 30 days.
+      // Fallback: every candidate was flagged. Pick best caption-clean fallback.
       console.warn(`[Dedup] All ${attempts} candidates for ${city} flagged — searching for best caption-clean fallback`);
       const fallbackExcluded = new Set(chosenToday);
-      let fb: Awaited<ReturnType<typeof selectForCity>> | null = null;
+      let fb: Awaited<ReturnType<typeof selectReelForCity>> | null = null;
       for (let i = 0; i < lib.length; i++) {
-        const cand = selectForCity(lib, lastRepost, fallbackExcluded);
+        const cand = selectReelForCity(lib, lastPostMap, fallbackExcluded);
         if (!cand) break;
-        if (!isCaptionRecentlyPosted(cand.video.caption, recentIgHistory)) {
+        if (!isCaptionRecentlyPosted(cand.reel.caption, recentForDedup)) {
           fb = cand;
           break;
         }
-        fallbackExcluded.add(cand.video.postId);
+        fallbackExcluded.add(cand.reel.igMediaId);
       }
-      // If literally every video matches a recent caption, only then accept the
-      // top-ranked one (better to post something than nothing).
-      picked = fb ?? selectForCity(lib, lastRepost, chosenToday);
+      picked = fb ?? selectReelForCity(lib, lastPostMap, chosenToday);
     }
     if (!picked) continue;
 
-    chosenToday.add(picked.video.postId);
+    chosenToday.add(picked.reel.igMediaId);
     // 1) Vary the wording so the repost isn't a near-duplicate (hashtags/CTA kept).
-    const refreshed = await refreshCaption(picked.video.caption ?? "");
+    const refreshed = await refreshCaption(picked.reel.caption ?? "");
     // 2) ACTIVELY strengthen the opening hook using this account's winning hooks
-    //    (learned from real view/skip data). Preserves the long body, hashtags,
-    //    and the "Comment ..." CTA verbatim; fails safe to `refreshed` on any doubt.
     const optimized = await optimizeHook(refreshed);
     await db.insertDailyPick({
       pickDate,
       city,
-      videoId: picked.video.id,
-      postId: picked.video.postId,
+      videoId: picked.reel.id,
+      postId: picked.reel.igMediaId,
       refreshedCaption: optimized.caption,
       selectionMode: picked.mode,
       scheduledFor: defaultScheduleMs(pickDate, city),
-      // Inserted as "pending", then IMMEDIATELY auto-confirmed below so posting
-      // is fully hands-off (no manual tap needed).
       status: "pending",
     });
   }
 
   // ---------------------------------------------------------------------------
-  // AUTO-CONFIRM: the posting agent only publishes picks with status=confirmed.
-  // To make posting fully automatic (zero manual taps), confirm every pending
-  // pick for today right after generation. This creates the repost history row
-  // and flips the pick to "confirmed" so the 2/3/4 PM CT agent finds it due.
-  // Idempotent: already-confirmed/posted picks are left untouched.
+  // AUTO-CONFIRM: confirm every pending pick so the 2/3/4 PM CT agent finds it due.
   // ---------------------------------------------------------------------------
   const generated = await db.getDailyPicks(pickDate);
   for (const p of generated) {
@@ -162,15 +166,31 @@ export const appRouter = router({
 
   /* ----------------------- Daily Picks ----------------------- */
   picks: router({
-    /** Today's two picks with their video details. Generates if absent. */
+    /** Today's two picks with their reel details. Generates if absent. */
     today: ownerProcedure.query(async () => {
       const pickDate = getCdtPickDate();
       const picks = await ensureTodayPicks(pickDate);
       const detailed = await Promise.all(
-        picks.map(async p => ({
-          ...p,
-          video: await db.getVideoById(p.videoId),
-        }))
+        picks.map(async p => {
+          // Look up from ig_reels (postId = igMediaId)
+          const reel = await db.getReelByIgMediaId(p.postId);
+          return {
+            ...p,
+            video: reel ? {
+              id: reel.id,
+              postId: reel.igMediaId,
+              caption: reel.caption,
+              views: reel.views,
+              likes: reel.likes,
+              comments: reel.comments,
+              city: reel.city,
+              thumbnailUrl: reel.thumbnailStorageKey ? `/manus-storage/${reel.thumbnailStorageKey}` : null,
+              permalink: reel.reelLink,
+              shortcode: null,
+              engagementScore: reel.engagementScore,
+            } : null,
+          };
+        })
       );
       // Sort San Antonio first (2PM) then Austin (3PM)
       detailed.sort((a, b) => (a.scheduledFor ?? 0) - (b.scheduledFor ?? 0));
@@ -193,8 +213,9 @@ export const appRouter = router({
         const picks = await db.getDailyPicks(pickDate);
         const pick = picks.find(p => p.id === input.pickId);
         if (!pick) throw new TRPCError({ code: "NOT_FOUND" });
-        const video = await db.getVideoById(pick.videoId);
-        const refreshed = await refreshCaption(video?.caption ?? "");
+        // Look up from ig_reels
+        const reel = await db.getReelByIgMediaId(pick.postId);
+        const refreshed = await refreshCaption(reel?.caption ?? "");
         const optimized = await optimizeHook(refreshed);
         await db.updateDailyPick(input.pickId, { refreshedCaption: optimized.caption });
         return { caption: optimized.caption };

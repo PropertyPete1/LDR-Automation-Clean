@@ -2,13 +2,12 @@
  * Google Drive Video Index
  *
  * Syncs the "Camera Roll Real Estate Videos" folder into the drive_videos table.
- * Uses the `gws` CLI (pre-authenticated Google Workspace) to list files with
- * videoMediaMetadata (duration, resolution) and thumbnailLink.
+ * Uses the Google Drive REST API via fetch() with GOOGLE_WORKSPACE_CLI_TOKEN
+ * (or GOOGLE_DRIVE_TOKEN fallback) for authentication.
  *
  * Called by the morning generation job so the AI matcher always has fresh metadata.
  */
 
-import { execSync } from "child_process";
 import { getDb } from "./db";
 import { driveVideos } from "../drizzle/schema";
 
@@ -38,38 +37,52 @@ interface DriveListResponse {
 }
 
 /**
- * List all video files in the Drive folder using the gws CLI.
+ * Get the Google Drive OAuth token from environment.
+ * Prefers GOOGLE_WORKSPACE_CLI_TOKEN, falls back to GOOGLE_DRIVE_TOKEN.
+ */
+function getDriveToken(): string {
+  const token = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || process.env.GOOGLE_DRIVE_TOKEN;
+  if (!token) {
+    throw new Error("[DriveIndex] No Google Drive token found in GOOGLE_WORKSPACE_CLI_TOKEN or GOOGLE_DRIVE_TOKEN");
+  }
+  return token;
+}
+
+/**
+ * List all video files in the Drive folder using the Google Drive REST API.
  * Paginates through all results (up to 10 pages of 100).
  */
 export async function listDriveVideos(): Promise<DriveFile[]> {
   const allFiles: DriveFile[] = [];
   let pageToken: string | undefined;
+  const token = getDriveToken();
 
   for (let page = 0; page < 10; page++) {
-    const params: Record<string, string | number> = {
+    const params = new URLSearchParams({
       q: `'${DRIVE_FOLDER_ID}' in parents`,
       fields: FIELDS,
-      pageSize: 100,
-    };
-    if (pageToken) params.pageToken = pageToken;
-
-    const paramsJson = JSON.stringify(params);
-    let output: string;
-    try {
-      output = execSync(`gws drive files list --params '${paramsJson}'`, {
-        encoding: "utf-8",
-        timeout: 30_000,
-      });
-    } catch (err) {
-      console.error("[DriveIndex] gws CLI failed:", err);
-      break;
-    }
+      pageSize: "100",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
 
     let data: DriveListResponse;
     try {
-      data = JSON.parse(output);
-    } catch {
-      console.error("[DriveIndex] Failed to parse gws output:", output.slice(0, 200));
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[DriveIndex] Drive API error (${res.status}): ${errText.slice(0, 300)}`);
+        break;
+      }
+
+      data = await res.json() as DriveListResponse;
+    } catch (err) {
+      console.error("[DriveIndex] Drive API fetch failed:", err);
       break;
     }
 

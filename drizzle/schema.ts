@@ -280,3 +280,57 @@ export const driveVideos = mysqlTable("drive_videos", {
 
 export type DriveVideo = typeof driveVideos.$inferSelect;
 export type InsertDriveVideo = typeof driveVideos.$inferInsert;
+
+/**
+ * Scraped Instagram reels — used for RANKING by engagement only.
+ * The igMediaId is only for internal scrape dedup (avoid re-scraping the same post).
+ * It is NEVER used for matching to Drive originals.
+ */
+export const igReels = mysqlTable("ig_reels", {
+  id: int("id").autoincrement().primaryKey(),
+  /** IG media ID — internal dedup only, NOT used for matching. */
+  igMediaId: varchar("igMediaId", { length: 64 }).notNull().unique(),
+  /** Our hosted copy of the reel thumbnail (stable URL for AI vision). */
+  thumbnailStorageKey: varchar("thumbnailStorageKey", { length: 512 }),
+  /** The original IG caption/description. */
+  caption: text("caption"),
+  views: int("views").default(0).notNull(),
+  likes: int("likes").default(0).notNull(),
+  comments: int("comments").default(0).notNull(),
+  shares: int("shares").default(0).notNull(),
+  saved: int("saved").default(0).notNull(),
+  /** Computed engagement score for ranking. */
+  engagementScore: int("engagementScore").default(0).notNull(),
+  /** City classification via AI vision. */
+  city: mysqlEnum("city", ["austin", "san_antonio", "dallas"]),
+  /** IG reel permalink. */
+  reelLink: varchar("reelLink", { length: 512 }),
+  /** When originally posted on IG (epoch ms). */
+  postedAt: bigint("postedAt", { mode: "number" }),
+  /** Last time we scraped/updated this row (epoch ms). */
+  lastScrapedAt: bigint("lastScrapedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type IgReel = typeof igReels.$inferSelect;
+export type InsertIgReel = typeof igReels.$inferInsert;
+
+/**
+ * Post history — tracks what WE posted through this system.
+ * Used for 30-day visual dedup: AI compares candidate thumbnails against these.
+ */
+export const postHistory = mysqlTable("post_history", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Our hosted thumbnail for AI vision comparison (storage key). */
+  thumbnailStorageKey: varchar("thumbnailStorageKey", { length: 512 }),
+  /** Caption used when posting (for context in AI comparison). */
+  caption: text("caption"),
+  /** City this was posted for. */
+  city: mysqlEnum("city", ["austin", "san_antonio", "dallas"]),
+  /** When WE posted it via this system (epoch ms). */
+  postedAt: bigint("postedAt", { mode: "number" }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type PostHistory = typeof postHistory.$inferSelect;
+export type InsertPostHistory = typeof postHistory.$inferInsert;

@@ -339,3 +339,35 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] drivePreprocess.test.ts: 8 tests (module exports, early-return, match logic, Drive-source preference, variant skip)
 - [x] All 116 tests pass, 0 type errors
 - [ ] Checkpoint + push to GitHub + deploy + verify live
+
+## REBUILD: Drive-Only Video Source (Jul 4) — user directive
+- [ ] Clear today's picks entirely (nothing posts today)
+- [ ] Wipe old IG video library (videos table) — source of repeated/stale content
+- [ ] Wipe old reposts history (causes old data to keep surfacing)
+- [ ] Wipe ig_post_history (no longer needed — not using IG as source)
+- [ ] Rebuild selection: pick from drive_videos table ONLY (not old videos table)
+- [ ] Drive videos are the single source of truth: index Drive folder, classify by city, rank by IG views (from caption/metadata), enforce 30-day no-repeat
+- [ ] Morning job: sync Drive index → select best Drive video per city → post original from Drive
+- [ ] No more IG-downloaded videos anywhere in the pipeline
+- [ ] Test, checkpoint, deploy
+
+## FULL REBUILD: Drive-Only with AI Vision Matching (Jul 4) — NO IDs
+- [x] Remove ALL ID-based matching from the codebase (postId matching, filename ID extraction, etc.)
+- [x] Build IG scraper: fetch reels with views, engagement, description, thumbnail (for ranking only)
+- [x] Store scraped IG data in a new table (ig_reels) with: thumbnail, caption, views, likes, city, engagement score
+- [x] Selection engine: pick best engagement reel not posted in 30 days (30-day check uses AI vision on thumbnails, NOT IDs)
+- [x] AI vision matcher: given the picked IG reel thumbnail, find the matching Drive original by visual similarity ONLY
+- [x] Wire morning pipeline: scrape IG → rank → pick best → AI vision match to Drive → download Drive original → variant → upload to S3
+- [x] publishNow uses the pre-uploaded Drive original (storage key → fresh signed URL)
+- [x] 30-day dedup is VISUAL ONLY: AI compares thumbnails of candidate vs last 30 days of posts
+- [x] Remove old postId/videoId references from selection, dedup, and cooldown logic
+- [x] driveIndex.ts rewritten: Google Drive REST API via fetch() (no gws CLI)
+- [x] drivePreprocess.ts rewritten: fetch() download + ig_reels for metadata + storageGetSignedUrl for thumbnails
+- [x] driveMatcher.ts fixed: max_tokens 256→2048
+- [x] db.ts: new helpers (getReelsByCity, getAllReels, getReelById, getReelByIgMediaId, getLastPostByIgMediaId, getRecentPostHistory)
+- [x] selection.ts: new selectReelForCity() for ig_reels pipeline (engagement-ranked, 30-day cooldown)
+- [x] ensureTodayPicks rewritten: reads from ig_reels, dedup via caption-fingerprint + AI vision against post_history
+- [x] scheduledPublish.ts: dueForPublish + publishNow use ig_reels; scrapeReelsHandler added
+- [x] /api/scheduled/scrapeReels endpoint wired in _core/index.ts
+- [x] All 116 tests pass, 0 TypeScript errors
+- [ ] Checkpoint + deploy
