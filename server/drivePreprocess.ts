@@ -18,6 +18,7 @@
 
 import { existsSync, writeFileSync, readFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
+import { execSync } from "child_process";
 import { syncDriveIndex } from "./driveIndex";
 import { findDriveMatch } from "./driveMatcher";
 import { makeDifferentiatedVariant } from "./videoVariant";
@@ -39,7 +40,9 @@ function getDriveToken(): string {
 }
 
 /**
- * Download a file from Google Drive by its file ID using the REST API.
+ * Download a file from Google Drive by its file ID.
+ * Uses gws CLI (which has a fresh OAuth token) as primary method.
+ * Falls back to REST API with GOOGLE_DRIVE_TOKEN if gws is unavailable.
  * Returns the local file path, or null on failure.
  */
 async function downloadDriveFile(fileId: string, fileName: string): Promise<string | null> {
@@ -49,8 +52,48 @@ async function downloadDriveFile(fileId: string, fileName: string): Promise<stri
     }
 
     const localPath = join(TMP_DIR, `${fileId}_${Date.now()}.mp4`);
-    const token = getDriveToken();
 
+    // Try gws CLI first (has fresh OAuth token)
+    try {
+      const gswOutputDir = join(TMP_DIR, `gws-${Date.now()}`);
+      mkdirSync(gswOutputDir, { recursive: true });
+      const outputFile = join(gswOutputDir, 'video.mp4');
+      // Use the actual gws binary directly (not the shell wrapper)
+      // gws requires --output to be relative to cwd, so we cd into the output dir first
+      const gwsBin = '/home/ubuntu/.local/share/pnpm/global/v11/12-19f2857a989/node_modules/@googleworkspace/cli/node_modules/.bin_real/gws';
+      const paramsJson = JSON.stringify(JSON.stringify({ fileId, alt: 'media' }));
+      const cmd = `${gwsBin} drive files get --params ${paramsJson} --output video.mp4`;
+      // Must pass GOOGLE_WORKSPACE_CLI_TOKEN explicitly - the dev server may not inherit it
+      const gwsToken = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || '';
+      execSync(cmd, {
+        timeout: 120000,
+        stdio: 'pipe',
+        cwd: gswOutputDir,
+        env: { ...process.env, GOOGLE_WORKSPACE_CLI_TOKEN: gwsToken, HOME: '/home/ubuntu' },
+      });
+
+      if (existsSync(outputFile)) {
+        const stats = require('fs').statSync(outputFile);
+        if (stats.size > 1024) {
+          // Move to our standard path
+          require('fs').renameSync(outputFile, localPath);
+          console.log(`[DrivePreprocess] Downloaded via gws: ${fileName} (${(stats.size / 1024 / 1024).toFixed(1)} MB)`);
+          // Cleanup temp dir
+          try { require('fs').rmdirSync(gswOutputDir); } catch {}
+          return localPath;
+        }
+      }
+      console.warn(`[DrivePreprocess] gws download produced no/small file, trying REST API fallback`);
+    } catch (gswErr: any) {
+      const stderr = gswErr?.stderr?.toString?.()?.slice(0, 500) || '';
+      const stdout = gswErr?.stdout?.toString?.()?.slice(0, 500) || '';
+      console.warn(`[DrivePreprocess] gws CLI failed, trying REST API fallback:`, (gswErr as Error).message?.slice(0, 200));
+      if (stderr) console.warn(`[DrivePreprocess] gws stderr:`, stderr);
+      if (stdout) console.warn(`[DrivePreprocess] gws stdout:`, stdout);
+    }
+
+    // Fallback: REST API with GOOGLE_DRIVE_TOKEN
+    const token = getDriveToken();
     const res = await fetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
       {
