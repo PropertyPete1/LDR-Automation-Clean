@@ -57,6 +57,19 @@ export async function refreshCaption(caption: string): Promise<string> {
     if (!newBody || newBody.includes("#")) {
       return caption;
     }
+    // Safety: reject LLM outputs that are clearly meta-responses (not a rewrite)
+    const lower = newBody.toLowerCase();
+    if (
+      lower.includes("didn't come through") ||
+      lower.includes("didn\u2019t come through") ||
+      lower.includes("paste the full") ||
+      lower.includes("please provide") ||
+      lower.includes("i'd be happy to") ||
+      lower.includes("i'll get straight to work")
+    ) {
+      console.warn("[captionRefresh] LLM returned meta-response instead of rewrite, using original");
+      return caption;
+    }
     // Re-attach the ORIGINAL hashtag block verbatim — hashtags are never altered.
     return tags ? `${newBody.replace(/\s+$/, "")}\n\n${tags}` : newBody;
   } catch (err) {

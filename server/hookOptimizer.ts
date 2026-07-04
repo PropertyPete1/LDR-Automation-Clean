@@ -174,6 +174,20 @@ export async function optimizeHook(
   // 1. Non-empty.
   if (!newBody) return { caption: original, changed: false, reason: "empty-output" };
 
+  // 1b. Reject LLM meta-responses (not actual rewrites).
+  const lowerBody = newBody.toLowerCase();
+  if (
+    lowerBody.includes("didn't come through") ||
+    lowerBody.includes("didn\u2019t come through") ||
+    lowerBody.includes("paste the full") ||
+    lowerBody.includes("please provide") ||
+    lowerBody.includes("i'd be happy to") ||
+    lowerBody.includes("i'll get straight to work")
+  ) {
+    console.warn("[hookOptimizer] LLM returned meta-response, keeping original");
+    return { caption: original, changed: false, reason: "meta-response" };
+  }
+
   // 2. No hashtags introduced into the body (hashtags live only in `tags`).
   if (newBody.includes("#")) {
     return { caption: original, changed: false, reason: "added-hashtags" };

@@ -370,4 +370,7 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] scheduledPublish.ts: dueForPublish + publishNow use ig_reels; scrapeReelsHandler added
 - [x] /api/scheduled/scrapeReels endpoint wired in _core/index.ts
 - [x] All 116 tests pass, 0 TypeScript errors
-- [ ] Checkpoint + deploy
+- [x] Checkpoint + deploy
+- [x] Fix Metricool publish: thumbnail must be full signed URL (not relative /manus-storage/ path)
+- [x] Fix caption safety guard: reject LLM meta-responses ("didn't come through", "paste the full", etc.)
+- [x] San Antonio re-published successfully with correct video + caption (Metricool post 345524379)
