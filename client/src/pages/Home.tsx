@@ -1,5 +1,6 @@
 import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { CITY_LABEL, formatScheduledCdt, formatViews } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
@@ -10,6 +11,8 @@ import {
   Eye,
   Loader2,
   MapPin,
+  Pause,
+  Play,
   RefreshCw,
   Sparkles,
 } from "lucide-react";
@@ -221,6 +224,59 @@ Confirm now
   );
 }
 
+/** Auto-Pilot toggle — one tap to pause/resume all automatic posting. */
+function AutoPilotToggle() {
+  const { data, isLoading } = trpc.settings.getAutoPilot.useQuery();
+  const utils = trpc.useUtils();
+  const toggle = trpc.settings.setAutoPilot.useMutation({
+    onMutate: async ({ enabled }) => {
+      await utils.settings.getAutoPilot.cancel();
+      const prev = utils.settings.getAutoPilot.getData();
+      utils.settings.getAutoPilot.setData(undefined, { enabled });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.settings.getAutoPilot.setData(undefined, ctx.prev);
+      toast.error("Failed to update Auto-Pilot");
+    },
+    onSettled: () => utils.settings.getAutoPilot.invalidate(),
+    onSuccess: (_d, { enabled }) => {
+      toast.success(enabled ? "Auto-Pilot ON — posts will go out automatically" : "Auto-Pilot OFF — posting paused");
+    },
+  });
+
+  const enabled = data?.enabled ?? false;
+
+  if (isLoading) {
+    return <div className="h-10 w-36 animate-pulse rounded-full bg-card" />;
+  }
+
+  return (
+    <button
+      onClick={() => toggle.mutate({ enabled: !enabled })}
+      className={cn(
+        "flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200",
+        enabled
+          ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+          : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+      )}
+      disabled={toggle.isPending}
+    >
+      {enabled ? (
+        <Play className="h-3.5 w-3.5 fill-current" />
+      ) : (
+        <Pause className="h-3.5 w-3.5" />
+      )}
+      <span>{enabled ? "Auto-Pilot ON" : "Auto-Pilot OFF"}</span>
+      <Switch
+        checked={enabled}
+        className="pointer-events-none ml-1 scale-90"
+        tabIndex={-1}
+      />
+    </button>
+  );
+}
+
 export default function Home() {
   const { data, isLoading, isError, error, refetch, isFetching } =
     trpc.picks.today.useQuery(undefined, {
@@ -241,7 +297,10 @@ export default function Home() {
     <div className="mx-auto w-full max-w-5xl px-5 py-8 pb-28 sm:px-8 sm:py-12 sm:pb-12">
       <header className="mb-8">
         <p className="text-xs uppercase tracking-luxe text-muted-foreground">{today}</p>
-        <h1 className="mt-2 font-display text-4xl sm:text-5xl">Today&apos;s Picks</h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1 className="mt-2 font-display text-4xl sm:text-5xl">Today&apos;s Picks</h1>
+          <AutoPilotToggle />
+        </div>
         <p className="mt-3 max-w-xl text-sm text-muted-foreground">
           Top-performing reels — one per market — selected by Instagram views with a
           strict 30-day no-repeat rotation. San Antonio and Austin post daily; Dallas–Fort

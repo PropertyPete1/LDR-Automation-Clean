@@ -64,6 +64,13 @@ export async function dueForPublishHandler(req: Request, res: Response) {
     if (!(await authorize(req))) {
       return res.status(403).json({ error: "forbidden" });
     }
+
+    // Auto-Pilot check: if disabled, skip posting entirely
+    const autoPilot = await db.getSetting("autoPilot");
+    if (autoPilot !== "true") {
+      return res.json({ due: false, reason: "autoPilot is OFF" });
+    }
+
     const city = String(req.body?.city ?? "");
     if (!CITY_VALUES.has(city)) {
       return res.status(400).json({ error: "invalid city" });
@@ -317,6 +324,12 @@ export async function generatePicksHandler(req: Request, res: Response) {
     if (!(await authorize(req))) {
       return res.status(403).json({ error: "forbidden" });
     }
+
+    // Auto-Pilot check: if disabled, still generate picks (for dashboard display)
+    // but mark them so the publish step knows not to fire
+    const autoPilot = await db.getSetting("autoPilot");
+    const isAutoPilotOn = autoPilot === "true";
+
     const pickDate = getCdtPickDate();
     const picks = await ensureTodayPicks(pickDate);
 
@@ -326,18 +339,24 @@ export async function generatePicksHandler(req: Request, res: Response) {
     // change, and upload to S3. This makes the 2/3/4 PM publish instant.
     // Non-blocking: if Drive matching fails, the pick stays confirmed but
     // without a driveVideoUrl (publishNow will fail gracefully).
+    // Skip entirely if auto-pilot is OFF (no point preprocessing if we won't post).
     // -----------------------------------------------------------------------
     let driveResults: unknown = null;
-    try {
-      const { preprocessDriveOriginals } = await import("./drivePreprocess");
-      driveResults = await preprocessDriveOriginals();
-    } catch (driveErr) {
-      console.error("[generatePicks] Drive preprocessing failed (non-fatal):", driveErr);
-      driveResults = { error: String(driveErr) };
+    if (isAutoPilotOn) {
+      try {
+        const { preprocessDriveOriginals } = await import("./drivePreprocess");
+        driveResults = await preprocessDriveOriginals();
+      } catch (driveErr) {
+        console.error("[generatePicks] Drive preprocessing failed (non-fatal):", driveErr);
+        driveResults = { error: String(driveErr) };
+      }
+    } else {
+      driveResults = { skipped: "autoPilot is OFF" };
     }
 
     return res.json({
       ok: true,
+      autoPilot: isAutoPilotOn,
       pickDate,
       count: picks.length,
       picks: picks.map(p => ({ city: p.city, status: p.status, scheduledFor: p.scheduledFor })),

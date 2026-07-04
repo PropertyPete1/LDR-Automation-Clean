@@ -361,6 +361,22 @@ export const appRouter = router({
       }),
   }),
 
+  /* ----------------------- Settings (Auto-Pilot) ----------------------- */
+  settings: router({
+    /** Get auto-pilot status. */
+    getAutoPilot: ownerProcedure.query(async () => {
+      const val = await db.getSetting("autoPilot");
+      return { enabled: val === "true" };
+    }),
+    /** Toggle auto-pilot on/off. */
+    setAutoPilot: ownerProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input }) => {
+        await db.setSetting("autoPilot", input.enabled ? "true" : "false");
+        return { ok: true, enabled: input.enabled };
+      }),
+  }),
+
 });
 
 export type AppRouter = typeof appRouter;

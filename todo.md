@@ -374,3 +374,12 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] Fix Metricool publish: thumbnail must be full signed URL (not relative /manus-storage/ path)
 - [x] Fix caption safety guard: reject LLM meta-responses ("didn't come through", "paste the full", etc.)
 - [x] San Antonio re-published successfully with correct video + caption (Metricool post 345524379)
+
+## Auto-Pilot Toggle (Jul 4)
+- [x] Backend: settings.getAutoPilot + settings.setAutoPilot tRPC procedures (owner-only)
+- [x] Wire autoPilot check into dueForPublishHandler (returns due:false when OFF)
+- [x] Wire autoPilot check into generatePicksHandler (skips Drive preprocessing when OFF)
+- [x] UI: Auto-Pilot toggle button in dashboard header (green ON / amber OFF, with Switch)
+- [x] Optimistic mutation with toast feedback
+- [x] Set autoPilot = true in DB (system is ON and fully autonomous)
+- [x] All 116 tests pass, 0 TypeScript errors
