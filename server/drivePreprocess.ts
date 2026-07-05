@@ -251,6 +251,11 @@ async function preprocessPick(pick: {
  * Run the full Drive pre-processing pipeline for today's picks.
  * Called by the morning generation job AFTER picks are generated and confirmed.
  *
+ * 4K-ONLY POLICY: If a pick's Drive original can't be matched or downloaded,
+ * we swap it for the next best eligible reel (respecting 30-day rule) and retry.
+ * We keep trying until we find one with a successful Drive download.
+ * There are 400+ videos in Drive, so there's always a match available.
+ *
  * Returns a summary of results per pick.
  */
 export async function preprocessDriveOriginals(): Promise<{
@@ -280,30 +285,102 @@ export async function preprocessDriveOriginals(): Promise<{
     return { ok: true, indexSynced, results: [] };
   }
 
-  // Step 2: Process each pick sequentially (to avoid overwhelming Drive API)
+  // Step 2: Process each pick, retrying with alternate reels if Drive fails
   const results: PreprocessResult[] = [];
   for (const pick of needsProcessing) {
-    try {
-      const result = await preprocessPick({
-        id: pick.id,
-        city: pick.city,
-        postId: pick.postId,
-        refreshedCaption: pick.refreshedCaption ?? null,
-      });
-      results.push(result);
-    } catch (err) {
-      const e = err as Error;
-      results.push({
-        pickId: pick.id,
-        city: pick.city,
-        matched: false,
-        error: `unexpected error: ${e.message}`,
-      });
-    }
+    const result = await preprocessPickWithRetry(pick, pickDate, picks);
+    results.push(result);
   }
 
   const successCount = results.filter(r => r.uploaded).length;
   console.log(`[DrivePreprocess] Completed: ${successCount}/${results.length} picks got Drive originals`);
 
   return { ok: true, indexSynced, results };
+}
+
+/**
+ * Try to preprocess a pick. If the Drive match/download fails, swap the pick
+ * to the next best eligible reel for that city and retry (up to MAX_RETRIES).
+ */
+async function preprocessPickWithRetry(
+  pick: { id: number; city: string; postId: string; refreshedCaption: string | null },
+  pickDate: string,
+  allPicks: Awaited<ReturnType<typeof db.getDailyPicks>>
+): Promise<PreprocessResult> {
+  const MAX_RETRIES = 10;
+  const triedPostIds = new Set<string>();
+  // Collect all postIds already chosen today (to avoid double-picking)
+  const todayPostIds = new Set(allPicks.map(p => p.postId));
+
+  let currentPick = pick;
+  triedPostIds.add(currentPick.postId);
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const result = await preprocessPick(currentPick);
+      if (result.uploaded) {
+        return result;
+      }
+      // Drive match/download failed for this reel
+      console.warn(
+        `[DrivePreprocess] Attempt ${attempt + 1}/${MAX_RETRIES + 1} failed for pick ${currentPick.id} (${currentPick.city}): ${result.error}`
+      );
+    } catch (err) {
+      const e = err as Error;
+      console.warn(
+        `[DrivePreprocess] Attempt ${attempt + 1}/${MAX_RETRIES + 1} threw for pick ${currentPick.id} (${currentPick.city}): ${e.message}`
+      );
+    }
+
+    // If we've exhausted retries, stop
+    if (attempt >= MAX_RETRIES) break;
+
+    // Find the next best eligible reel for this city
+    const { selectReelForCity } = await import("./selection");
+    const { getLastPostByIgMediaId, getReelsByCity, updateDailyPick } = await import("./db");
+    const { refreshCaption } = await import("./captionRefresh");
+    const { optimizeHook } = await import("./hookOptimizer");
+
+    const cityReels = await getReelsByCity(currentPick.city as "austin" | "san_antonio" | "dallas");
+    const lastPostMap = await getLastPostByIgMediaId();
+    const excludeIds = new Set([...Array.from(todayPostIds), ...Array.from(triedPostIds)]);
+
+    const nextPick = selectReelForCity(cityReels, lastPostMap, excludeIds);
+    if (!nextPick) {
+      console.warn(`[DrivePreprocess] No more eligible reels for ${currentPick.city} after ${attempt + 1} attempts`);
+      break;
+    }
+
+    triedPostIds.add(nextPick.reel.igMediaId);
+    todayPostIds.add(nextPick.reel.igMediaId);
+
+    // Generate refreshed caption for the new reel
+    const refreshed = await refreshCaption(nextPick.reel.caption ?? "");
+    const optimized = await optimizeHook(refreshed);
+
+    // Update the pick in the database to point to the new reel
+    await updateDailyPick(currentPick.id, {
+      videoId: nextPick.reel.id,
+      postId: nextPick.reel.igMediaId,
+      refreshedCaption: optimized.caption,
+      selectionMode: nextPick.mode,
+    });
+
+    console.log(
+      `[DrivePreprocess] Swapped pick ${currentPick.id} (${currentPick.city}) to reel ${nextPick.reel.igMediaId} (attempt ${attempt + 2})`
+    );
+
+    currentPick = {
+      ...currentPick,
+      postId: nextPick.reel.igMediaId,
+      refreshedCaption: optimized.caption,
+    };
+  }
+
+  return {
+    pickId: currentPick.id,
+    city: currentPick.city,
+    matched: false,
+    error: `All ${MAX_RETRIES + 1} attempts failed to get a Drive original`,
+  };
 }

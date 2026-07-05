@@ -408,3 +408,8 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] 99 of 129 SA reels are older than 30 days — plenty of eligible content
 - [x] Deleted bad SA pick + repost, regenerated: new SA pick is video 25 (posted May 1, 64 days ago, 2,880 views)
 - [x] All 120 tests passing
+
+## Enforce 4K-Only Posting (Jul 4)
+- [x] publishNow: reject any post that doesn't have a Drive original (no IG CDN fallback)
+- [x] drivePreprocess: if Drive match/download fails for a pick, try next eligible reel for that city
+- [x] Keep trying next eligible reels until one gets a successful Drive download (never skip a day)

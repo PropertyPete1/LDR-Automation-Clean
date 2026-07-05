@@ -175,11 +175,15 @@ export async function publishNowHandler(req: Request, res: Response) {
         console.log(`[publishNow] Generated fresh signed URL from storage key for pick ${pickId}`);
       }
     } else {
-      videoUrl = bodyVideoUrl || null;
+      // 4K-ONLY POLICY: Never fall back to IG CDN copy. Drive original is required.
+      const skipMsg = "No Drive original available — 4K-only policy blocks IG CDN fallback";
+      console.warn(`[publishNow] ${skipMsg} for pick ${pickId}`);
+      if (repostId) await db.markRepostFailed(repostId, skipMsg);
+      await db.updateDailyPick(pickId, { status: "failed" });
+      return res.status(422).json({ ok: false, error: skipMsg, source: "no_drive_original" });
     }
     if (!videoUrl || !videoUrl.startsWith("http")) {
-      // No Drive original and no agent-provided URL — skip this pick
-      const skipMsg = "No Drive original available and no videoUrl provided";
+      const skipMsg = "Drive original URL could not be resolved";
       console.warn(`[publishNow] ${skipMsg} for pick ${pickId}`);
       if (repostId) await db.markRepostFailed(repostId, skipMsg);
       await db.updateDailyPick(pickId, { status: "failed" });
@@ -219,37 +223,14 @@ export async function publishNowHandler(req: Request, res: Response) {
     }
 
     // -------------------------------------------------------------------------
-    // GUARD 2 - Serverless byte differentiation (best-effort, NO ffmpeg).
-    // If using a Drive original (driveVideoUrl), the variant was already applied
-    // during the morning preprocessing job — skip re-differentiation.
-    // For legacy IG-copy URLs, apply the variant at publish time as before.
+    // GUARD 2 - Serverless byte differentiation.
+    // Drive originals are already differentiated in the morning preprocessing
+    // job. Since we enforce 4K-only (no IG CDN fallback), we always have a
+    // Drive original at this point.
     // -------------------------------------------------------------------------
     let mediaUrl = videoUrl;
-    let differentiated = false;
-    const usingDriveOriginal = Boolean(pick.driveVideoUrl);
-
-    if (usingDriveOriginal) {
-      // Drive originals are already differentiated in the morning job
-      differentiated = true;
-      console.log(`[publishNow] Using pre-uploaded Drive original for pick ${pickId}`);
-    } else {
-      // Legacy path: apply variant at publish time
-      try {
-        const variant = await makeDifferentiatedVariant({
-          sourceUrl: videoUrl,
-          postId: pick.postId,
-          salt: `${Date.now()}`,
-        });
-        if (variant.ok && variant.url) {
-          mediaUrl = variant.url;
-          differentiated = true;
-        } else {
-          console.warn(`[publishNow] variant failed, using original URL: ${variant.error}`);
-        }
-      } catch (e) {
-        console.warn(`[publishNow] variant threw, using original URL:`, e);
-      }
-    }
+    const differentiated = true;
+    console.log(`[publishNow] Using pre-uploaded Drive original for pick ${pickId}`);
 
     // Publish immediately via Metricool. Metricool interprets publicationDate
     // in the given timezone, so we MUST build a wall-clock string in
@@ -288,7 +269,7 @@ export async function publishNowHandler(req: Request, res: Response) {
         status: "posted",
         metricoolPostId,
         differentiated,
-        driveSource: usingDriveOriginal,
+        driveSource: true,
         driveMatchConfidence: pick.driveMatchConfidence ?? null,
         platforms: result.platforms ?? "connected Metricool networks",
       });
