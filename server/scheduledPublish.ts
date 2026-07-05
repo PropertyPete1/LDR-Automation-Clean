@@ -175,12 +175,50 @@ export async function publishNowHandler(req: Request, res: Response) {
         console.log(`[publishNow] Generated fresh signed URL from storage key for pick ${pickId}`);
       }
     } else {
-      // 4K-ONLY POLICY: Never fall back to IG CDN copy. Drive original is required.
-      const skipMsg = "No Drive original available — 4K-only policy blocks IG CDN fallback";
-      console.warn(`[publishNow] ${skipMsg} for pick ${pickId}`);
-      if (repostId) await db.markRepostFailed(repostId, skipMsg);
-      await db.updateDailyPick(pickId, { status: "failed" });
-      return res.status(422).json({ ok: false, error: skipMsg, source: "no_drive_original" });
+      // 4K-ONLY POLICY: Drive original is required. Attempt Drive preprocessing
+      // one more time as a self-heal (covers the case where morning job failed
+      // due to temporary Drive disconnect but it's back now).
+      console.log(`[publishNow] No driveVideoUrl for pick ${pickId} — attempting Drive retry...`);
+      try {
+        const { driveHealthCheck } = await import("./driveIndex");
+        const health = await driveHealthCheck();
+        if (health.healthy) {
+          const { preprocessDriveOriginals } = await import("./drivePreprocess");
+          await preprocessDriveOriginals();
+          // Re-fetch the pick to see if it now has a driveVideoUrl
+          const updatedPicks = await db.getDailyPicks(pickDate);
+          const updatedPick = updatedPicks.find(p => p.id === pickId);
+          if (updatedPick?.driveVideoUrl) {
+            if (updatedPick.driveVideoUrl.startsWith("http")) {
+              videoUrl = updatedPick.driveVideoUrl;
+            } else {
+              videoUrl = await storageGetSignedUrl(updatedPick.driveVideoUrl);
+            }
+            console.log(`[publishNow] Drive retry succeeded for pick ${pickId}`);
+          }
+        } else {
+          console.warn(`[publishNow] Drive still disconnected: ${health.error}`);
+        }
+      } catch (retryErr) {
+        console.error(`[publishNow] Drive retry failed:`, retryErr);
+      }
+
+      // If still no video URL after retry, fail the pick
+      if (!videoUrl) {
+        const skipMsg = "No Drive original available — 4K-only policy (Drive retry also failed)";
+        console.warn(`[publishNow] ${skipMsg} for pick ${pickId}`);
+        if (repostId) await db.markRepostFailed(repostId, skipMsg);
+        await db.updateDailyPick(pickId, { status: "failed" });
+        // Notify owner about the failure
+        try {
+          const { notifyOwner } = await import("./_core/notification");
+          await notifyOwner({
+            title: "\u274c Post Failed — No Drive Original",
+            content: `The ${pick.city} post for today could not be published because no 4K Drive original was available (both morning preprocessing and publish-time retry failed).\n\nPlease check that the Google Drive connector is enabled in your Manus project settings.`,
+          });
+        } catch (_) { /* notification is best-effort */ }
+        return res.status(422).json({ ok: false, error: skipMsg, source: "no_drive_original" });
+      }
     }
     if (!videoUrl || !videoUrl.startsWith("http")) {
       const skipMsg = "Drive original URL could not be resolved";
@@ -315,21 +353,44 @@ export async function generatePicksHandler(req: Request, res: Response) {
     const picks = await ensureTodayPicks(pickDate);
 
     // -----------------------------------------------------------------------
-    // DRIVE PRE-PROCESSING: After picks are generated + auto-confirmed,
-    // match each pick to its Drive original, download, apply fingerprint
-    // change, and upload to S3. This makes the 2/3/4 PM publish instant.
-    // Non-blocking: if Drive matching fails, the pick stays confirmed but
-    // without a driveVideoUrl (publishNow will fail gracefully).
-    // Skip entirely if auto-pilot is OFF (no point preprocessing if we won't post).
+    // DRIVE HEALTH CHECK: Before preprocessing, verify Drive token is valid.
+    // If disconnected, notify owner immediately so they can re-enable it.
     // -----------------------------------------------------------------------
     let driveResults: unknown = null;
+    let driveHealthy = false;
     if (isAutoPilotOn) {
       try {
-        const { preprocessDriveOriginals } = await import("./drivePreprocess");
-        driveResults = await preprocessDriveOriginals();
-      } catch (driveErr) {
-        console.error("[generatePicks] Drive preprocessing failed (non-fatal):", driveErr);
-        driveResults = { error: String(driveErr) };
+        const { driveHealthCheck } = await import("./driveIndex");
+        const health = await driveHealthCheck();
+        driveHealthy = health.healthy;
+        if (!health.healthy) {
+          console.error(`[generatePicks] Drive health check FAILED: ${health.error}`);
+          // Notify owner immediately
+          try {
+            const { notifyOwner } = await import("./_core/notification");
+            await notifyOwner({
+              title: "\u26a0\ufe0f Google Drive Disconnected",
+              content: `The Google Drive connector is not responding (${health.error ?? "token expired or revoked"}). Today's videos cannot be posted in 4K until Drive is reconnected.\n\nPlease re-enable the Google Drive connector in your Manus project settings (Settings \u2192 Integrations).\n\nThe system will retry at publish time (2/3/4 PM CT), so if you reconnect before then, posts will still go out on schedule.`,
+            });
+          } catch (notifErr) {
+            console.error("[generatePicks] Failed to send Drive disconnect notification:", notifErr);
+          }
+          driveResults = { error: "Drive disconnected", detail: health.error };
+        }
+      } catch (healthErr) {
+        console.error("[generatePicks] Drive health check threw:", healthErr);
+        driveResults = { error: "Drive health check failed", detail: String(healthErr) };
+      }
+
+      // Only run Drive preprocessing if health check passed
+      if (driveHealthy) {
+        try {
+          const { preprocessDriveOriginals } = await import("./drivePreprocess");
+          driveResults = await preprocessDriveOriginals();
+        } catch (driveErr) {
+          console.error("[generatePicks] Drive preprocessing failed (non-fatal):", driveErr);
+          driveResults = { error: String(driveErr) };
+        }
       }
     } else {
       driveResults = { skipped: "autoPilot is OFF" };

@@ -98,6 +98,34 @@ export async function listDriveVideos(): Promise<DriveFile[]> {
 }
 
 /**
+ * Lightweight health check: verify the Drive token is valid by listing 1 file.
+ * Returns { healthy: true } if the API responds with 200, or { healthy: false, error }
+ * if the token is expired/revoked/missing.
+ */
+export async function driveHealthCheck(): Promise<{ healthy: boolean; error?: string }> {
+  try {
+    const token = getDriveToken();
+    const params = new URLSearchParams({
+      q: `'${DRIVE_FOLDER_ID}' in parents`,
+      fields: "files(id)",
+      pageSize: "1",
+    });
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.ok) {
+      return { healthy: true };
+    }
+    const errText = await res.text().catch(() => "");
+    return { healthy: false, error: `Drive API ${res.status}: ${errText.slice(0, 200)}` };
+  } catch (err) {
+    const e = err as Error;
+    return { healthy: false, error: e.message };
+  }
+}
+
+/**
  * Sync Drive folder → drive_videos table.
  * Upserts all video files found in the folder. Idempotent.
  * Returns the count of files synced.

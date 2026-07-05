@@ -421,3 +421,11 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] Manually posted today's SA (41.8MB, success) and Austin (compressed 127MB→73MB, success) via Metricool
 - [x] Fixed repost sync bug: when drivePreprocess swaps a pick to alternate reel, also updates the reposts row postId
 - [x] All 120 tests passing, 0 TypeScript errors
+
+## Drive Health Check + Auto-Notification (Jul 5)
+- [x] Build driveHealthCheck() function: lightweight Drive API call (list 1 file) to verify token is valid
+- [x] Integrate into generatePicksHandler: run health check first, if fails → notify owner immediately + skip Drive preprocessing
+- [x] Integrate into publishNowHandler: if pick has no driveVideoUrl, attempt Drive preprocess one more time before failing
+- [x] Owner notification on disconnect: push notification "Google Drive disconnected — re-enable in Manus settings"
+- [x] Also notify on publish failure (post couldn't go out due to no Drive original)
+- [x] Tests pass (120/120), 0 TypeScript errors
