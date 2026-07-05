@@ -6,6 +6,9 @@
 
 import { ENV } from "./_core/env";
 import crypto from "node:crypto";
+import { execSync } from "node:child_process";
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 const BASE = "https://app.metricool.com/api";
 
@@ -300,7 +303,17 @@ export async function createScheduledPost(opts: CreatePostOptions): Promise<Crea
   try {
     const dl = await fetch(videoUrl);
     if (!dl.ok) throw new Error(`source download failed (${dl.status})`);
-    const buf = Buffer.from(await dl.arrayBuffer());
+    let buf: Buffer = Buffer.from(await dl.arrayBuffer()) as Buffer;
+
+    // Metricool has a 100MB per-part upload limit. If the video exceeds 95MB,
+    // compress it with ffmpeg at full resolution (4K preserved) to fit.
+    const MAX_UPLOAD_BYTES = 95 * 1024 * 1024; // 95MB safety margin
+    if (buf.length > MAX_UPLOAD_BYTES) {
+      console.log(`[Metricool] Video is ${(buf.length / 1024 / 1024).toFixed(1)} MB — compressing to fit 100MB limit while keeping 4K...`);
+      buf = await compressVideoToFit(buf, MAX_UPLOAD_BYTES) as Buffer;
+      console.log(`[Metricool] Compressed to ${(buf.length / 1024 / 1024).toFixed(1)} MB`);
+    }
+
     prefetched = { buf, sha256b64: crypto.createHash("sha256").update(buf).digest("base64") };
   } catch (err) {
     return {
@@ -518,4 +531,57 @@ export async function publishLinkedinText(opts: {
     (raw as Record<string, unknown>)?.id ??
     ((raw as Record<string, unknown>)?.data as Record<string, unknown>)?.id;
   return { ok: true, postId: typeof postId === "number" ? postId : undefined, raw };
+}
+
+
+/**
+ * Compress a video buffer to fit under maxBytes while preserving resolution (4K).
+ * Uses ffmpeg with h264 encoding at progressively higher CRF until it fits.
+ * Falls back to the original buffer if ffmpeg is unavailable or all attempts fail.
+ */
+async function compressVideoToFit(source: Buffer, maxBytes: number): Promise<Buffer> {
+  const tmpDir = "/tmp/metricool-compress";
+  if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+
+  const inputPath = join(tmpDir, `input_${Date.now()}.mp4`);
+  const outputPath = join(tmpDir, `output_${Date.now()}.mp4`);
+
+  writeFileSync(inputPath, source);
+
+  // Try CRF values from 26 to 32 — higher CRF = smaller file, slight quality loss
+  // CRF 26-28 is visually indistinguishable from the original at 4K
+  const crfValues = [26, 28, 30, 32];
+
+  for (const crf of crfValues) {
+    try {
+      if (existsSync(outputPath)) unlinkSync(outputPath);
+
+      execSync(
+        `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset fast -crf ${crf} -c:a aac -b:a 128k -movflags +faststart "${outputPath}"`,
+        { timeout: 300_000, stdio: "pipe" }
+      );
+
+      if (existsSync(outputPath)) {
+        const compressed = readFileSync(outputPath);
+        if (compressed.length > 1024 && compressed.length <= maxBytes) {
+          console.log(`[Metricool] Compression succeeded at CRF ${crf}: ${(compressed.length / 1024 / 1024).toFixed(1)} MB`);
+          // Cleanup
+          try { unlinkSync(inputPath); } catch {}
+          try { unlinkSync(outputPath); } catch {}
+          return compressed;
+        }
+        console.log(`[Metricool] CRF ${crf} produced ${(compressed.length / 1024 / 1024).toFixed(1)} MB — still too large, trying higher CRF...`);
+      }
+    } catch (err) {
+      console.warn(`[Metricool] ffmpeg CRF ${crf} failed:`, (err as Error).message?.slice(0, 200));
+    }
+  }
+
+  // Cleanup
+  try { unlinkSync(inputPath); } catch {}
+  try { unlinkSync(outputPath); } catch {}
+
+  // If all CRF attempts failed, return original (will likely fail at Metricool but at least we tried)
+  console.error(`[Metricool] All compression attempts failed — returning original ${(source.length / 1024 / 1024).toFixed(1)} MB`);
+  return source;
 }

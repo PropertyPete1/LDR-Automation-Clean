@@ -58,18 +58,16 @@ async function downloadDriveFile(fileId: string, fileName: string): Promise<stri
       const gswOutputDir = join(TMP_DIR, `gws-${Date.now()}`);
       mkdirSync(gswOutputDir, { recursive: true });
       const outputFile = join(gswOutputDir, 'video.mp4');
-      // Use the actual gws binary directly (not the shell wrapper)
-      // gws requires --output to be relative to cwd, so we cd into the output dir first
-      const gwsBin = '/home/ubuntu/.local/share/pnpm/global/v11/12-19f2857a989/node_modules/@googleworkspace/cli/node_modules/.bin_real/gws';
-      const paramsJson = JSON.stringify(JSON.stringify({ fileId, alt: 'media' }));
-      const cmd = `${gwsBin} drive files get --params ${paramsJson} --output video.mp4`;
-      // Must pass GOOGLE_WORKSPACE_CLI_TOKEN explicitly - the dev server may not inherit it
-      const gwsToken = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || '';
+      // Use the gws wrapper at its known path. gws requires --output to be
+      // relative to cwd, so we cd into the output dir first.
+      const gwsBin = '/home/ubuntu/.local/share/pnpm/bin/gws';
+      const paramsJson = JSON.stringify({ fileId, alt: 'media' });
+      const cmd = `${gwsBin} drive files get --params '${paramsJson}' --output video.mp4`;
       execSync(cmd, {
         timeout: 120000,
         stdio: 'pipe',
         cwd: gswOutputDir,
-        env: { ...process.env, GOOGLE_WORKSPACE_CLI_TOKEN: gwsToken, HOME: '/home/ubuntu' },
+        env: { ...process.env, HOME: '/home/ubuntu' },
       });
 
       if (existsSync(outputFile)) {
@@ -365,6 +363,10 @@ async function preprocessPickWithRetry(
       refreshedCaption: optimized.caption,
       selectionMode: nextPick.mode,
     });
+
+    // Also sync the associated repost row so it matches the new postId
+    const { syncRepostForPick } = await import("./db");
+    await syncRepostForPick(currentPick.id, nextPick.reel.igMediaId);
 
     console.log(
       `[DrivePreprocess] Swapped pick ${currentPick.id} (${currentPick.city}) to reel ${nextPick.reel.igMediaId} (attempt ${attempt + 2})`

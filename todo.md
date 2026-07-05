@@ -413,3 +413,11 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] publishNow: reject any post that doesn't have a Drive original (no IG CDN fallback)
 - [x] drivePreprocess: if Drive match/download fails for a pick, try next eligible reel for that city
 - [x] Keep trying next eligible reels until one gets a successful Drive download (never skip a day)
+
+## Fix: Auto-Compress Oversized Videos for Metricool (Jul 5)
+- [x] Root cause: Metricool has 100MB per-part upload limit; Austin Drive original was 127.7MB (2160x3840 at 55 Mbps)
+- [x] Added compressVideoToFit() in metricool.ts: ffmpeg CRF 26→32 ladder, keeps full 4K resolution, targets <95MB
+- [x] Integrated into createScheduledPost: auto-compresses any video >95MB before uploading to Metricool
+- [x] Manually posted today's SA (41.8MB, success) and Austin (compressed 127MB→73MB, success) via Metricool
+- [x] Fixed repost sync bug: when drivePreprocess swaps a pick to alternate reel, also updates the reposts row postId
+- [x] All 120 tests passing, 0 TypeScript errors

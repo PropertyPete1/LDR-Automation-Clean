@@ -266,6 +266,20 @@ export async function autoConfirmPick(pick: {
   return { confirmed: true, repostId };
 }
 
+/**
+ * When drivePreprocess swaps a pick to a different reel, update the associated
+ * repost row so its postId matches the new reel. This prevents stale repost data.
+ */
+export async function syncRepostForPick(pickId: number, newPostId: string) {
+  const db = await getDb();
+  if (!db) return;
+  // Find the pick to get its repostId
+  const [pick] = await db.select().from(dailyPicks).where(eq(dailyPicks.id, pickId)).limit(1);
+  if (!pick?.repostId) return;
+  // Update the repost row's postId to match
+  await db.update(reposts).set({ postId: newPostId }).where(eq(reposts.id, pick.repostId));
+}
+
 export async function getConfirmedDuePicks(nowMs: number) {
   const db = await getDb();
   if (!db) return [];
