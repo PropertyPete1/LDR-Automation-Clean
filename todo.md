@@ -429,3 +429,45 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] Owner notification on disconnect: push notification "Google Drive disconnected — re-enable in Manus settings"
 - [x] Also notify on publish failure (post couldn't go out due to no Drive original)
 - [x] Tests pass (120/120), 0 TypeScript errors
+
+## AI Voiceover Pipeline (Jul 6)
+
+### Phase 1: Infrastructure
+- [x] Add ELEVENLABS_API_KEY env var via webdev_request_secrets
+- [x] Create voiceover DB tables (voiceover_jobs, voiceover_budget)
+- [x] Build ElevenLabs service module (voice lookup, TTS, character tracking)
+
+### Phase 2: Audio Intelligence + Script Generation
+- [x] Detect speech vs music-only in source videos (ffprobe audio analysis)
+- [x] Surface audio type status per video in dashboard
+- [x] LLM-powered script generation (paced to video duration, brand rules, emotional tags)
+- [x] Script approval UI in dashboard (editable, approvable before TTS)
+
+### Phase 3: TTS + Duration Matching + Video Assembly
+- [x] ElevenLabs TTS generation with Peter's Pro Voice + v3 model
+- [x] Duration comparison: audio vs video (±5% tolerance)
+- [x] FFmpeg atempo stretch/compress within 0.95x–1.05x
+- [x] Flag mismatch in dashboard if beyond tolerance
+- [x] Video assembly: voiceover layer + duck original audio (15-20%) or mute
+- [x] Loudness normalization to -14 LUFS
+- [x] Word-by-word caption burn-in (forced alignment + ffmpeg subtitle overlay)
+- [x] Caption style: bold, centered lower-middle third, white text black outline, safe-zone aware
+
+### Phase 4: Dashboard UI
+- [x] Voiceover toggle per post ("Add Peter voiceover" on/off, default OFF)
+- [x] Script editor with approval button
+- [x] Video preview player (final rendered video before posting)
+- [x] "Regenerate audio" button (reuses approved script)
+- [x] Monthly character budget meter (warn at 80%, pause at 100%)
+- [x] Audio type indicator (speech detected vs music-only)
+- [x] Duration mismatch flag display
+
+### Phase 5: Pipeline Integration
+- [x] Connect voiceover to existing pick → approve → post flow
+- [x] Final rendered video = transformed version for Metricool posting
+- [x] Log ElevenLabs character usage per video
+- [x] Cache generated audio (reuse if script unchanged)
+- [x] Save rendered videos to S3 storage (Drive upload deferred to post-publish)
+- [x] Error handling: if ElevenLabs fails, flag for retry, don't post
+- [x] Validate final video meets IG Reels specs (9:16, codec, length)
+- [x] Nothing posts automatically — human approval required

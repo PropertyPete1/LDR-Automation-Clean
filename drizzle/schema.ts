@@ -334,3 +334,81 @@ export const postHistory = mysqlTable("post_history", {
 
 export type PostHistory = typeof postHistory.$inferSelect;
 export type InsertPostHistory = typeof postHistory.$inferInsert;
+
+/**
+ * Voiceover jobs — one row per voiceover request tied to a daily pick.
+ * Tracks the full lifecycle: script generation → approval → TTS → render → done.
+ */
+export const voiceoverJobs = mysqlTable("voiceover_jobs", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FK to daily_picks.id */
+  pickId: int("pickId").notNull(),
+  /** FK to ig_reels.id for the source video */
+  reelId: int("reelId"),
+  /** City for reference */
+  city: mysqlEnum("city", ["austin", "san_antonio", "dallas"]).notNull(),
+  /**
+   * Lifecycle status:
+   * - "detecting": analyzing source audio
+   * - "scripting": generating voiceover script
+   * - "pending_approval": script ready, awaiting owner approval
+   * - "generating_audio": calling ElevenLabs TTS
+   * - "duration_mismatch": audio doesn't match video length (needs script edit)
+   * - "rendering": ffmpeg assembling final video
+   * - "preview_ready": final video ready for owner review
+   * - "approved": owner approved final video, ready to post
+   * - "failed": something went wrong
+   */
+  status: mysqlEnum("status", [
+    "detecting", "scripting", "pending_approval", "generating_audio",
+    "duration_mismatch", "rendering", "preview_ready", "approved", "failed"
+  ]).default("detecting").notNull(),
+  /** Source audio type: "speech" | "music_only" | "silent" | "unknown" */
+  audioType: varchar("audioType", { length: 16 }),
+  /** Owner's choice for original audio: "duck" (15-20%) or "mute" */
+  originalAudioMode: mysqlEnum("originalAudioMode", ["duck", "mute"]).default("duck").notNull(),
+  /** Video duration in seconds (from ffprobe) */
+  videoDurationSec: int("videoDurationSec"),
+  /** The voiceover script (editable by owner) */
+  script: text("script"),
+  /** ElevenLabs voice ID used */
+  voiceId: varchar("voiceId", { length: 64 }),
+  /** Characters used for this TTS call */
+  charactersUsed: int("charactersUsed").default(0).notNull(),
+  /** Generated audio duration in seconds */
+  audioDurationSec: int("audioDurationSec"),
+  /** Duration mismatch percentage (positive = audio longer, negative = shorter) */
+  durationMismatchPct: int("durationMismatchPct"),
+  /** S3 storage key for the generated TTS audio file */
+  audioStorageKey: varchar("audioStorageKey", { length: 512 }),
+  /** S3 storage key for the final rendered video (voiceover + captions) */
+  renderedVideoStorageKey: varchar("renderedVideoStorageKey", { length: 512 }),
+  /** Google Drive file ID for the uploaded rendered video */
+  driveRenderedFileId: varchar("driveRenderedFileId", { length: 64 }),
+  /** Error message if status = failed */
+  errorMessage: text("errorMessage"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VoiceoverJob = typeof voiceoverJobs.$inferSelect;
+export type InsertVoiceoverJob = typeof voiceoverJobs.$inferInsert;
+
+/**
+ * Monthly ElevenLabs character usage budget tracking.
+ * One row per month (YYYY-MM format).
+ */
+export const voiceoverBudget = mysqlTable("voiceover_budget", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Month in YYYY-MM format */
+  month: varchar("month", { length: 7 }).notNull().unique(),
+  /** Total characters used this month */
+  charactersUsed: int("charactersUsed").default(0).notNull(),
+  /** Monthly budget limit (characters) — configurable */
+  budgetLimit: int("budgetLimit").default(100000).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type VoiceoverBudget = typeof voiceoverBudget.$inferSelect;
+export type InsertVoiceoverBudget = typeof voiceoverBudget.$inferInsert;

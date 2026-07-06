@@ -377,6 +377,284 @@ export const appRouter = router({
       }),
   }),
 
+  /* ----------------------- Voiceover ----------------------- */
+  voiceover: router({
+    /** Get voiceover job for a pick (or null if none). */
+    getJob: ownerProcedure
+      .input(z.object({ pickId: z.number() }))
+      .query(async ({ input }) => {
+        return db.getVoiceoverJobByPickId(input.pickId);
+      }),
+
+    /** Start a voiceover job for a pick (detection → scripting → pending_approval). */
+    startJob: ownerProcedure
+      .input(z.object({
+        pickId: z.number(),
+        originalAudioMode: z.enum(["duck", "mute"]).default("duck"),
+      }))
+      .mutation(async ({ input }) => {
+        // Check if job already exists
+        const existing = await db.getVoiceoverJobByPickId(input.pickId);
+        if (existing) return existing;
+
+        // Get the pick details
+        const pickDate = getCdtPickDate();
+        const picks = await db.getDailyPicks(pickDate);
+        const pick = picks.find(p => p.id === input.pickId);
+        if (!pick) throw new TRPCError({ code: "NOT_FOUND", message: "Pick not found" });
+
+        const reel = await db.getReelByIgMediaId(pick.postId);
+        if (!reel) throw new TRPCError({ code: "NOT_FOUND", message: "Reel not found" });
+
+        // Create the job
+        const result = await db.insertVoiceoverJob({
+          pickId: input.pickId,
+          reelId: reel.id,
+          city: pick.city,
+          status: "detecting",
+          originalAudioMode: input.originalAudioMode,
+          voiceId: "ymv1q5WLElzdmrHdtgsw",
+        });
+
+        // Kick off async detection + scripting (non-blocking)
+        processVoiceoverJob(result.id).catch(err =>
+          console.error(`[Voiceover] Background job ${result.id} failed:`, err)
+        );
+
+        return db.getVoiceoverJob(result.id);
+      }),
+
+    /** Update the script before approval. */
+    updateScript: ownerProcedure
+      .input(z.object({ jobId: z.number(), script: z.string().min(1) }))
+      .mutation(async ({ input }) => {
+        const job = await db.getVoiceoverJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+        if (job.status !== "pending_approval" && job.status !== "duration_mismatch")
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Script can only be edited in pending_approval or duration_mismatch status" });
+        await db.updateVoiceoverJob(input.jobId, { script: input.script });
+        return { ok: true };
+      }),
+
+    /** Regenerate the script with LLM. */
+    regenerateScript: ownerProcedure
+      .input(z.object({ jobId: z.number() }))
+      .mutation(async ({ input }) => {
+        const job = await db.getVoiceoverJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+        await db.updateVoiceoverJob(input.jobId, { status: "scripting" });
+        processScriptGeneration(input.jobId).catch(err =>
+          console.error(`[Voiceover] Script regen ${input.jobId} failed:`, err)
+        );
+        return { ok: true };
+      }),
+
+    /** Approve script and trigger TTS + render. */
+    approveScript: ownerProcedure
+      .input(z.object({ jobId: z.number() }))
+      .mutation(async ({ input }) => {
+        const job = await db.getVoiceoverJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+        if (!job.script) throw new TRPCError({ code: "BAD_REQUEST", message: "No script to approve" });
+
+        // Check budget
+        const month = new Date().toISOString().slice(0, 7);
+        const budget = await db.getOrCreateBudget(month);
+        const estimatedChars = job.script.length;
+        if (budget.charactersUsed + estimatedChars > budget.budgetLimit) {
+          throw new TRPCError({ code: "FORBIDDEN", message: `Monthly character budget exceeded (${budget.charactersUsed}/${budget.budgetLimit})` });
+        }
+
+        await db.updateVoiceoverJob(input.jobId, { status: "generating_audio" });
+        processRender(input.jobId).catch(err =>
+          console.error(`[Voiceover] Render ${input.jobId} failed:`, err)
+        );
+        return { ok: true };
+      }),
+
+    /** Approve the rendered video for posting. */
+    approveVideo: ownerProcedure
+      .input(z.object({ jobId: z.number() }))
+      .mutation(async ({ input }) => {
+        const job = await db.getVoiceoverJob(input.jobId);
+        if (!job) throw new TRPCError({ code: "NOT_FOUND" });
+        if (job.status !== "preview_ready")
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Video not ready for approval" });
+        await db.updateVoiceoverJob(input.jobId, { status: "approved" });
+        return { ok: true };
+      }),
+
+    /** Get current month's budget. */
+    budget: ownerProcedure.query(async () => {
+      const month = new Date().toISOString().slice(0, 7);
+      return db.getOrCreateBudget(month);
+    }),
+
+    /** Update monthly budget limit. */
+    setBudgetLimit: ownerProcedure
+      .input(z.object({ limit: z.number().int().min(1000) }))
+      .mutation(async ({ input }) => {
+        const month = new Date().toISOString().slice(0, 7);
+        await db.updateBudgetLimit(month, input.limit);
+        return { ok: true };
+      }),
+  }),
+
 });
 
 export type AppRouter = typeof appRouter;
+
+/* ===================== Voiceover Background Processors ===================== */
+
+async function processVoiceoverJob(jobId: number) {
+  try {
+    const job = await db.getVoiceoverJob(jobId);
+    if (!job) return;
+
+    // Step 1: Audio detection
+    const reel = await db.getReelByIgMediaId(
+      (await db.getDailyPicks(getCdtPickDate())).find(p => p.id === job.pickId)?.postId ?? ""
+    );
+    if (!reel) {
+      await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: "Reel not found" });
+      return;
+    }
+
+    const { analyzeSourceAudio, getVideoDuration } = await import("./voiceoverAudioIntel");
+    // Audio detection requires a local file — we'll do it during render phase
+    // For now, estimate from the pick's Drive video if available
+    let audioType: "speech" | "music_only" | "silent" | "unknown" = "music_only";
+    let videoDurationSec = 30;
+
+    // If the pick already has a Drive video, download a small probe
+    const pickDate = getCdtPickDate();
+    const picks = await db.getDailyPicks(pickDate);
+    const pick = picks.find(p => p.id === job.pickId);
+    if (pick?.driveVideoUrl) {
+      try {
+        const { storageGetSignedUrl } = await import("./storage");
+        const { execSync } = await import("child_process");
+        const storageKey = pick.driveVideoUrl.replace(/^\/manus-storage\//, "");
+        const signedUrl = await storageGetSignedUrl(storageKey);
+        const probePath = `/tmp/voiceover-render/probe_${jobId}.mp4`;
+        execSync(`mkdir -p /tmp/voiceover-render && curl -sL -r 0-5000000 -o "${probePath}" "${signedUrl}"`, { timeout: 30000 });
+        const analysis = await analyzeSourceAudio(probePath);
+        audioType = analysis.audioType;
+        videoDurationSec = analysis.durationSec > 0 ? analysis.durationSec : 30;
+        execSync(`rm -f "${probePath}"`);
+      } catch {
+        // Detection failed, use defaults
+        videoDurationSec = 30;
+      }
+    }
+
+    await db.updateVoiceoverJob(jobId, {
+      status: "scripting",
+      audioType,
+      videoDurationSec,
+      // Default: mute if music_only, duck if speech/mixed
+      originalAudioMode: audioType === "music_only" ? "mute" : "duck",
+    });
+
+    // Step 2: Generate script
+    await processScriptGeneration(jobId);
+  } catch (err: any) {
+    await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: err.message ?? "Unknown error" });
+  }
+}
+
+async function processScriptGeneration(jobId: number) {
+  try {
+    const job = await db.getVoiceoverJob(jobId);
+    if (!job) return;
+
+    const reel = await db.getReelByIgMediaId(
+      (await db.getDailyPicks(getCdtPickDate())).find(p => p.id === job.pickId)?.postId ?? ""
+    );
+
+    const { generateVoiceoverScript } = await import("./voiceoverScript");
+    const result = await generateVoiceoverScript({
+      caption: reel?.caption ?? "",
+      city: job.city,
+      videoDurationSec: job.videoDurationSec ?? 30,
+      audioType: (job.audioType as "speech" | "music_only" | "silent" | "mixed") ?? "music_only",
+    });
+
+    await db.updateVoiceoverJob(jobId, {
+      status: "pending_approval",
+      script: result.script,
+    });
+  } catch (err: any) {
+    await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: err.message ?? "Script generation failed" });
+  }
+}
+
+async function processRender(jobId: number) {
+  try {
+    const job = await db.getVoiceoverJob(jobId);
+    if (!job || !job.script) return;
+
+    // Get the pick's Drive video URL
+    const pickDate = getCdtPickDate();
+    const picks = await db.getDailyPicks(pickDate);
+    const pick = picks.find(p => p.id === job.pickId);
+    if (!pick) {
+      await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: "Pick not found" });
+      return;
+    }
+
+    // Download the source video from S3 (Drive original stored on the pick)
+    const driveVideoUrl = pick.driveVideoUrl;
+    if (!driveVideoUrl) {
+      await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: "No Drive original video available" });
+      return;
+    }
+
+    // driveVideoUrl is a /manus-storage/ path — get a signed URL
+    const { storageGetSignedUrl } = await import("./storage");
+    const storageKey = driveVideoUrl.replace(/^\/manus-storage\//, "");
+    const videoSignedUrl = await storageGetSignedUrl(storageKey);
+    // Download to temp
+    const { execSync } = await import("child_process");
+    const { existsSync, mkdirSync } = await import("fs");
+    const workDir = "/tmp/voiceover-render";
+    if (!existsSync(workDir)) mkdirSync(workDir, { recursive: true });
+    const sourcePath = `${workDir}/job_${jobId}_source.mp4`;
+    execSync(`curl -sL -o "${sourcePath}" "${videoSignedUrl}"`, { timeout: 120000 });
+
+    await db.updateVoiceoverJob(jobId, { status: "rendering" });
+
+    // Render
+    const { renderVoiceover } = await import("./voiceoverRender");
+    const renderResult = await renderVoiceover({
+      sourceVideoPath: sourcePath,
+      script: job.script,
+      originalAudioMode: (job.originalAudioMode as "duck" | "mute") ?? "duck",
+      jobId,
+    });
+
+    // Upload rendered video to S3
+    const { readFileSync } = await import("fs");
+    const { storagePut } = await import("./storage");
+    const renderedKey = `voiceover-rendered/job_${jobId}.mp4`;
+    await storagePut(renderedKey, readFileSync(renderResult.outputPath), "video/mp4");
+
+    // Track character usage
+    const month = new Date().toISOString().slice(0, 7);
+    await db.addCharacterUsage(month, renderResult.charactersUsed);
+
+    await db.updateVoiceoverJob(jobId, {
+      status: "preview_ready",
+      charactersUsed: renderResult.charactersUsed,
+      audioDurationSec: renderResult.audioDurationSec,
+      durationMismatchPct: renderResult.durationMismatchPct,
+      audioStorageKey: renderResult.audioStorageKey,
+      renderedVideoStorageKey: renderedKey,
+    });
+
+    // Clean up source file
+    try { execSync(`rm -f "${sourcePath}"`); } catch { /* ignore */ }
+  } catch (err: any) {
+    await db.updateVoiceoverJob(jobId, { status: "failed", errorMessage: err.message ?? "Render failed" });
+  }
+}

@@ -261,14 +261,22 @@ export async function publishNowHandler(req: Request, res: Response) {
     }
 
     // -------------------------------------------------------------------------
-    // GUARD 2 - Serverless byte differentiation.
-    // Drive originals are already differentiated in the morning preprocessing
-    // job. Since we enforce 4K-only (no IG CDN fallback), we always have a
-    // Drive original at this point.
+    // VOICEOVER CHECK: If an approved voiceover exists, use the rendered video.
     // -------------------------------------------------------------------------
     let mediaUrl = videoUrl;
+    const voiceoverJob = await db.getVoiceoverJobByPickId(pickId);
+    if (voiceoverJob?.status === "approved" && voiceoverJob.renderedVideoStorageKey) {
+      try {
+        mediaUrl = await storageGetSignedUrl(voiceoverJob.renderedVideoStorageKey);
+        console.log(`[publishNow] Using voiceover-rendered video for pick ${pickId} (job ${voiceoverJob.id})`);
+      } catch (voErr) {
+        console.warn(`[publishNow] Failed to get voiceover video URL, falling back to Drive original:`, voErr);
+        // Fall back to the Drive original
+      }
+    } else {
+      console.log(`[publishNow] Using pre-uploaded Drive original for pick ${pickId}`);
+    }
     const differentiated = true;
-    console.log(`[publishNow] Using pre-uploaded Drive original for pick ${pickId}`);
 
     // Publish immediately via Metricool. Metricool interprets publicationDate
     // in the given timezone, so we MUST build a wall-clock string in

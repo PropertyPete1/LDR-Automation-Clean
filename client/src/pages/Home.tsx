@@ -2,6 +2,8 @@ import StatusBadge from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { VoiceoverBudget } from "@/components/VoiceoverBudget";
+import { VoiceoverPanel } from "@/components/VoiceoverPanel";
 import { CITY_LABEL, formatScheduledCdt, formatViews } from "@/lib/format";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
@@ -219,6 +221,9 @@ Confirm now
             </div>
           )}
         </div>
+
+        {/* Voiceover Panel */}
+        <VoiceoverPanel pickId={pick.id} pickStatus={pick.status} />
       </div>
     </div>
   );
@@ -252,15 +257,18 @@ function AutoPilotToggle() {
   }
 
   return (
-    <button
-      onClick={() => toggle.mutate({ enabled: !enabled })}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => !toggle.isPending && toggle.mutate({ enabled: !enabled })}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); !toggle.isPending && toggle.mutate({ enabled: !enabled }); } }}
       className={cn(
-        "flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200",
+        "flex cursor-pointer items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200 select-none",
         enabled
           ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
-          : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+          : "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
+        toggle.isPending && "opacity-60 pointer-events-none"
       )}
-      disabled={toggle.isPending}
     >
       {enabled ? (
         <Play className="h-3.5 w-3.5 fill-current" />
@@ -273,7 +281,7 @@ function AutoPilotToggle() {
         className="pointer-events-none ml-1 scale-90"
         tabIndex={-1}
       />
-    </button>
+    </div>
   );
 }
 
@@ -367,6 +375,9 @@ export default function Home() {
           {data.picks.map(p => (
             <PickCard key={p.id} pick={p as PickWithVideo} />
           ))}
+
+          {/* Voiceover Budget Meter */}
+          <VoiceoverBudget />
         </div>
       )}
     </div>

@@ -14,12 +14,15 @@ import {
   InsertRepost,
   InsertUser,
   InsertVideo,
+  InsertVoiceoverJob,
   linkedinPosts,
   postHistory,
   postMetrics,
   reposts,
   users,
   videos,
+  voiceoverBudget,
+  voiceoverJobs,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -558,4 +561,68 @@ export async function getLastPostByIgMediaId(): Promise<Record<string, number>> 
   }
 
   return map;
+}
+
+/* ===================== Voiceover Jobs ===================== */
+
+export async function insertVoiceoverJob(data: InsertVoiceoverJob) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const [result] = await db.insert(voiceoverJobs).values(data).$returningId();
+  return result;
+}
+
+export async function getVoiceoverJobByPickId(pickId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(voiceoverJobs).where(eq(voiceoverJobs.pickId, pickId)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getVoiceoverJob(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(voiceoverJobs).where(eq(voiceoverJobs.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function updateVoiceoverJob(id: number, data: Partial<InsertVoiceoverJob>) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(voiceoverJobs).set(data).where(eq(voiceoverJobs.id, id));
+}
+
+export async function getRecentVoiceoverJobs(limit: number = 30) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(voiceoverJobs).orderBy(desc(voiceoverJobs.createdAt)).limit(limit);
+}
+
+/* ===================== Voiceover Budget ===================== */
+
+export async function getOrCreateBudget(month: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select().from(voiceoverBudget).where(eq(voiceoverBudget.month, month)).limit(1);
+  if (rows[0]) return rows[0];
+  // Create new month entry
+  await db.insert(voiceoverBudget).values({ month, charactersUsed: 0, budgetLimit: 100000 });
+  const created = await db.select().from(voiceoverBudget).where(eq(voiceoverBudget.month, month)).limit(1);
+  return created[0]!;
+}
+
+export async function addCharacterUsage(month: string, chars: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const budget = await getOrCreateBudget(month);
+  const newTotal = budget.charactersUsed + chars;
+  await db.update(voiceoverBudget).set({ charactersUsed: newTotal }).where(eq(voiceoverBudget.id, budget.id));
+  return { ...budget, charactersUsed: newTotal };
+}
+
+export async function updateBudgetLimit(month: string, limit: number) {
+  const db = await getDb();
+  if (!db) return;
+  const budget = await getOrCreateBudget(month);
+  await db.update(voiceoverBudget).set({ budgetLimit: limit }).where(eq(voiceoverBudget.id, budget.id));
 }
