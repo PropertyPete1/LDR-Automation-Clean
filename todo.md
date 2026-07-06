@@ -504,3 +504,10 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] Updated poster agent prompt: STEP 0 passes $GOOGLE_WORKSPACE_CLI_TOKEN to refreshDriveToken before posting
 - [x] All 122 tests passing
 - [x] Abandoned Google Cloud OAuth approach (client secret display issue) — agent-passed token is simpler and auto-refreshes via platform
+
+## BUG: TikTok/Instagram not posting + YouTube duplicate SA (Jul 6)
+- [ ] Investigate why TikTok and Instagram didn't receive posts
+- [ ] Investigate why YouTube posted SA video twice (duplicate)
+- [ ] Fix posting logic to prevent duplicates
+- [ ] Ensure all platforms (IG, TikTok, YouTube, LinkedIn) reliably receive every post
+- [ ] Test and verify fix

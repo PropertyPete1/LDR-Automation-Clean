@@ -161,6 +161,13 @@ export async function publishNowHandler(req: Request, res: Response) {
       return res.json({ ok: true, alreadyPosted: true });
     }
 
+    // Atomic lock: mark pick as "publishing" to prevent duplicate posts from
+    // concurrent agent calls. Only proceeds if status is still "confirmed".
+    const lockResult = await db.claimPickForPublishing(pickId);
+    if (!lockResult) {
+      return res.json({ ok: true, alreadyPosted: true, reason: "concurrent publish blocked" });
+    }
+
     // Determine video source: Drive original (preferred) or body videoUrl (legacy)
     // driveVideoUrl is now stored as an S3 storage KEY (not a signed URL).
     // Generate a fresh signed URL at publish time so it never expires.

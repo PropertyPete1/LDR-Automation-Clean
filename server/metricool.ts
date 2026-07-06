@@ -428,15 +428,20 @@ async function postToBrand(
       showReelOnFeed: true,
       autoPublish: true,
     },
-    // TikTok-specific: public post
+    // TikTok-specific: public post with auto-publish enabled
     tiktokData: {
       privacyOption: "PUBLIC_TO_EVERYONE",
+      autoPublish: true,
+      contentType: "VIDEO",
     },
     // YouTube-specific: publish as a public Short
+    // Use first 100 chars of caption as title (YouTube Shorts title limit)
     youtubeData: {
       type: "short",
       privacy: "public",
-      title: "New build tour",
+      title: caption
+        ? caption.replace(/#\S+/g, "").trim().slice(0, 100) || "New property tour"
+        : "New property tour",
     },
   };
 

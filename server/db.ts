@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   analystInsights,
@@ -242,6 +242,22 @@ export async function updateDailyPick(id: number, set: Partial<InsertDailyPick>)
   const db = await getDb();
   if (!db) return;
   await db.update(dailyPicks).set(set).where(eq(dailyPicks.id, id));
+}
+
+/**
+ * Atomic lock: attempts to set pick status to "publishing". Returns true only
+ * if the row was in "confirmed" status. Prevents duplicate posts when the
+ * agent calls publishNow concurrently for the same pick.
+ */
+export async function claimPickForPublishing(pickId: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db.execute(
+    sql`UPDATE daily_picks SET status = 'publishing' WHERE id = ${pickId} AND status = 'confirmed'`
+  );
+  // mysql2 returns [ResultSetHeader, ...] where affectedRows tells us if the row was updated
+  const header = Array.isArray(result) ? result[0] : result;
+  return (header as any)?.affectedRows === 1;
 }
 
 /**
