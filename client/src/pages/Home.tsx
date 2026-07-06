@@ -13,6 +13,8 @@ import {
   Eye,
   Loader2,
   MapPin,
+  Mic,
+  MicOff,
   Pause,
   Play,
   RefreshCw,
@@ -222,7 +224,10 @@ Confirm now
           )}
         </div>
 
-        {/* Voiceover Panel */}
+      </div>
+
+      {/* Voiceover Panel — full width below the grid */}
+      <div className="px-6 pb-6">
         <VoiceoverPanel pickId={pick.id} pickStatus={pick.status} />
       </div>
     </div>
@@ -285,6 +290,62 @@ function AutoPilotToggle() {
   );
 }
 
+/** Auto-Voiceover toggle — enables/disables automatic voiceover generation for all picks. */
+function AutoVoiceoverToggle() {
+  const { data, isLoading } = trpc.settings.getAutoVoiceover.useQuery();
+  const utils = trpc.useUtils();
+  const toggle = trpc.settings.setAutoVoiceover.useMutation({
+    onMutate: async ({ enabled }) => {
+      await utils.settings.getAutoVoiceover.cancel();
+      const prev = utils.settings.getAutoVoiceover.getData();
+      utils.settings.getAutoVoiceover.setData(undefined, { enabled });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.settings.getAutoVoiceover.setData(undefined, ctx.prev);
+      toast.error("Failed to update Auto-Voiceover");
+    },
+    onSettled: () => utils.settings.getAutoVoiceover.invalidate(),
+    onSuccess: (_d, { enabled }) => {
+      toast.success(enabled ? "Auto-Voiceover ON — all posts will include your voice + captions" : "Auto-Voiceover OFF — posts will go out without voiceover");
+    },
+  });
+
+  const enabled = data?.enabled ?? true; // default ON
+
+  if (isLoading) {
+    return <div className="h-10 w-36 animate-pulse rounded-full bg-card" />;
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => !toggle.isPending && toggle.mutate({ enabled: !enabled })}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); !toggle.isPending && toggle.mutate({ enabled: !enabled }); } }}
+      className={cn(
+        "flex cursor-pointer items-center gap-2.5 rounded-full border px-4 py-2 text-sm font-medium transition-all duration-200 select-none",
+        enabled
+          ? "border-violet-500/40 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20"
+          : "border-zinc-500/40 bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20",
+        toggle.isPending && "opacity-60 pointer-events-none"
+      )}
+    >
+      {enabled ? (
+        <Mic className="h-3.5 w-3.5" />
+      ) : (
+        <MicOff className="h-3.5 w-3.5" />
+      )}
+      <span>{enabled ? "Voiceover ON" : "Voiceover OFF"}</span>
+      <Switch
+        checked={enabled}
+        className="pointer-events-none ml-1 scale-90"
+        tabIndex={-1}
+      />
+    </div>
+  );
+}
+
 export default function Home() {
   const { data, isLoading, isError, error, refetch, isFetching } =
     trpc.picks.today.useQuery(undefined, {
@@ -307,7 +368,10 @@ export default function Home() {
         <p className="text-xs uppercase tracking-luxe text-muted-foreground">{today}</p>
         <div className="flex items-center justify-between gap-4">
           <h1 className="mt-2 font-display text-4xl sm:text-5xl">Today&apos;s Picks</h1>
-          <AutoPilotToggle />
+          <div className="flex items-center gap-3">
+            <AutoPilotToggle />
+            <AutoVoiceoverToggle />
+          </div>
         </div>
         <p className="mt-3 max-w-xl text-sm text-muted-foreground">
           Top-performing reels — one per market — selected by Instagram views with a

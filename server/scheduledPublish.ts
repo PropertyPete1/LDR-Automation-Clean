@@ -404,13 +404,47 @@ export async function generatePicksHandler(req: Request, res: Response) {
       driveResults = { skipped: "autoPilot is OFF" };
     }
 
+    // --- Auto-Voiceover: start voiceover jobs for all picks if enabled ---
+    let voiceoverResults: any = { skipped: "autoVoiceover is OFF" };
+    const autoVoiceoverVal = await db.getSetting("autoVoiceover");
+    const isAutoVoiceoverOn = autoVoiceoverVal === null || autoVoiceoverVal === "true"; // default ON
+    if (isAutoVoiceoverOn && isAutoPilotOn) {
+      try {
+        const { processFullVoiceover } = await import("./voiceoverPipeline");
+        const voiceoverJobs = [];
+        for (const pick of picks) {
+          // Only start if no existing job and pick has a Drive original
+          const existingJob = await db.getVoiceoverJob(pick.id);
+          if (!existingJob && pick.driveVideoUrl) {
+            try {
+              const result = await processFullVoiceover(pick.id);
+              voiceoverJobs.push({ pickId: pick.id, city: pick.city, status: result.status });
+            } catch (voErr) {
+              console.error(`[generatePicks] Auto-voiceover failed for pick ${pick.id}:`, voErr);
+              voiceoverJobs.push({ pickId: pick.id, city: pick.city, error: String(voErr) });
+            }
+          } else if (existingJob) {
+            voiceoverJobs.push({ pickId: pick.id, city: pick.city, status: "already_exists" });
+          } else {
+            voiceoverJobs.push({ pickId: pick.id, city: pick.city, status: "no_drive_video" });
+          }
+        }
+        voiceoverResults = { started: voiceoverJobs.length, jobs: voiceoverJobs };
+      } catch (voErr) {
+        console.error("[generatePicks] Auto-voiceover module error:", voErr);
+        voiceoverResults = { error: String(voErr) };
+      }
+    }
+
     return res.json({
       ok: true,
       autoPilot: isAutoPilotOn,
+      autoVoiceover: isAutoVoiceoverOn,
       pickDate,
       count: picks.length,
       picks: picks.map(p => ({ city: p.city, status: p.status, scheduledFor: p.scheduledFor })),
       drivePreprocess: driveResults,
+      voiceover: voiceoverResults,
     });
   } catch (err) {
     const e = err as Error;

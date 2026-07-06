@@ -471,3 +471,11 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] Error handling: if ElevenLabs fails, flag for retry, don't post
 - [x] Validate final video meets IG Reels specs (9:16, codec, length)
 - [x] Nothing posts automatically — human approval required
+
+## Auto Voiceover Mode (Jul 6)
+- [x] Add autoVoiceover setting to settings table (default ON)
+- [x] Add tRPC procedures: getAutoVoiceover / setAutoVoiceover
+- [x] Auto-start voiceover jobs in generatePicksHandler when autoVoiceover is ON
+- [x] Make pipeline fully automatic: script → TTS → render → auto-approve (no manual step)
+- [x] Add "Auto Voiceover" toggle to dashboard UI (next to Auto-Pilot toggle)
+- [x] Show voiceover status on pick cards even when auto mode is on

@@ -375,6 +375,19 @@ export const appRouter = router({
         await db.setSetting("autoPilot", input.enabled ? "true" : "false");
         return { ok: true, enabled: input.enabled };
       }),
+    /** Get auto-voiceover status (default ON). */
+    getAutoVoiceover: ownerProcedure.query(async () => {
+      const val = await db.getSetting("autoVoiceover");
+      // Default to ON if not set
+      return { enabled: val === null || val === "true" };
+    }),
+    /** Toggle auto-voiceover on/off. */
+    setAutoVoiceover: ownerProcedure
+      .input(z.object({ enabled: z.boolean() }))
+      .mutation(async ({ input }) => {
+        await db.setSetting("autoVoiceover", input.enabled ? "true" : "false");
+        return { ok: true, enabled: input.enabled };
+      }),
   }),
 
   /* ----------------------- Voiceover ----------------------- */

@@ -105,8 +105,8 @@ export function VoiceoverPanel({ pickId, pickStatus }: VoiceoverPanelProps) {
     onError: (err) => toast.error(err.message),
   });
 
-  // Don't show for already-posted picks
-  if (pickStatus === "posted") return null;
+  // For posted picks, show a compact summary if a voiceover job exists
+  const isPosted = pickStatus === "posted";
 
   if (isLoading) {
     return (
@@ -116,14 +116,18 @@ export function VoiceoverPanel({ pickId, pickStatus }: VoiceoverPanelProps) {
     );
   }
 
-  // Toggle to enable voiceover
+  // If no job exists and pick is already posted, don't show the toggle
+  if (!job && !enabled && isPosted) return null;
+
+  // Toggle to enable voiceover (default ON — auto-starts when toggled)
   if (!job && !enabled) {
     return (
       <div className="mt-4 border-t border-border/50 pt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mic className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium">Add Peter Voiceover</span>
+            <span className="text-sm font-medium">Peter Voiceover</span>
+            <span className="text-[11px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">Enabled</span>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -147,16 +151,18 @@ export function VoiceoverPanel({ pickId, pickStatus }: VoiceoverPanelProps) {
               </button>
             </div>
             <Switch
-              checked={false}
-              onCheckedChange={() => {
-                setEnabled(true);
-                startJob.mutate({ pickId, originalAudioMode: audioMode });
+              checked={true}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  setEnabled(true);
+                  startJob.mutate({ pickId, originalAudioMode: audioMode });
+                }
               }}
             />
           </div>
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          Generate an AI voiceover with captions using Peter&apos;s voice clone.
+          AI voiceover with captions using Peter&apos;s voice clone.
           {audioMode === "duck" ? " Original audio reduced to 15%." : " Original audio replaced entirely."}
         </p>
       </div>
