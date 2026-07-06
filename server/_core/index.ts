@@ -10,7 +10,6 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { dueForPublishHandler, reportPublishHandler, publishNowHandler, syncIgHistoryHandler, runAnalystHandler, generatePicksHandler, scrapeReelsHandler, refreshDriveTokenHandler } from "../scheduledPublish";
 import { generateLinkedinHandler, publishLinkedinHandler, syncLinkedinAnalyticsHandler } from "../linkedinScheduled";
-import { driveAuthStartHandler, driveAuthCallbackHandler } from "../driveOAuthSetup";
 import { getDriveToken } from "../driveAuth";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -65,9 +64,6 @@ async function startServer() {
   // Google Drive token refresh (agent passes its fresh token before generatePicks)
   app.post("/api/scheduled/refreshDriveToken", refreshDriveTokenHandler);
 
-  // Google Drive OAuth setup endpoints (one-time authorization flow, backup)
-  app.get("/api/drive-auth/start", driveAuthStartHandler);
-  app.get("/api/drive-auth/callback", driveAuthCallbackHandler);
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
