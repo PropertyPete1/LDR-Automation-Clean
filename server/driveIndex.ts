@@ -2,14 +2,15 @@
  * Google Drive Video Index
  *
  * Syncs the "Camera Roll Real Estate Videos" folder into the drive_videos table.
- * Uses the Google Drive REST API via fetch() with GOOGLE_WORKSPACE_CLI_TOKEN
- * (or GOOGLE_DRIVE_TOKEN fallback) for authentication.
+ * Uses the OAuth2 refresh token flow (driveAuth.ts) for reliable, auto-refreshing
+ * authentication. Falls back to GOOGLE_WORKSPACE_CLI_TOKEN in dev.
  *
  * Called by the morning generation job so the AI matcher always has fresh metadata.
  */
 
 import { getDb } from "./db";
 import { driveVideos } from "../drizzle/schema";
+import { getDriveToken as getTokenFromAuth } from "./driveAuth";
 
 /** The Google Drive folder ID for "Camera Roll Real Estate Videos". */
 const DRIVE_FOLDER_ID = "16mNnK1avek0LUljjFPZ5iNxON2OJZod7";
@@ -37,15 +38,11 @@ interface DriveListResponse {
 }
 
 /**
- * Get the Google Drive OAuth token from environment.
- * Prefers GOOGLE_WORKSPACE_CLI_TOKEN, falls back to GOOGLE_DRIVE_TOKEN.
+ * Get the Google Drive OAuth token.
+ * Uses the auto-refreshing OAuth2 flow from driveAuth.ts.
  */
-function getDriveToken(): string {
-  const token = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || process.env.GOOGLE_DRIVE_TOKEN;
-  if (!token) {
-    throw new Error("[DriveIndex] No Google Drive token found in GOOGLE_WORKSPACE_CLI_TOKEN or GOOGLE_DRIVE_TOKEN");
-  }
-  return token;
+async function getDriveTokenLocal(): Promise<string> {
+  return getTokenFromAuth();
 }
 
 /**
@@ -55,7 +52,7 @@ function getDriveToken(): string {
 export async function listDriveVideos(): Promise<DriveFile[]> {
   const allFiles: DriveFile[] = [];
   let pageToken: string | undefined;
-  const token = getDriveToken();
+  const token = await getDriveTokenLocal();
 
   for (let page = 0; page < 10; page++) {
     const params = new URLSearchParams({
@@ -104,7 +101,7 @@ export async function listDriveVideos(): Promise<DriveFile[]> {
  */
 export async function driveHealthCheck(): Promise<{ healthy: boolean; error?: string }> {
   try {
-    const token = getDriveToken();
+    const token = await getDriveTokenLocal();
     const params = new URLSearchParams({
       q: `'${DRIVE_FOLDER_ID}' in parents`,
       fields: "files(id)",

@@ -25,18 +25,16 @@ import { makeDifferentiatedVariant } from "./videoVariant";
 import * as db from "./db";
 import { getCdtPickDate } from "./selection";
 import { storageGetSignedUrl } from "./storage";
+import { getDriveToken as getTokenFromAuth } from "./driveAuth";
 
 const TMP_DIR = "/tmp/drive-downloads";
 
 /**
- * Get the Google Drive OAuth token from environment.
+ * Get the Google Drive OAuth token.
+ * Uses the auto-refreshing OAuth2 flow from driveAuth.ts.
  */
-function getDriveToken(): string {
-  const token = process.env.GOOGLE_WORKSPACE_CLI_TOKEN || process.env.GOOGLE_DRIVE_TOKEN;
-  if (!token) {
-    throw new Error("[DrivePreprocess] No Google Drive token found");
-  }
-  return token;
+async function getDriveToken(): Promise<string> {
+  return getTokenFromAuth();
 }
 
 /**
@@ -90,8 +88,8 @@ async function downloadDriveFile(fileId: string, fileName: string): Promise<stri
       if (stdout) console.warn(`[DrivePreprocess] gws stdout:`, stdout);
     }
 
-    // Fallback: REST API with GOOGLE_DRIVE_TOKEN
-    const token = getDriveToken();
+    // Fallback: REST API with auto-refreshing OAuth2 token
+    const token = await getDriveToken();
     const res = await fetch(
       `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
       {

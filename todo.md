@@ -495,3 +495,12 @@ Current build (low-views fix + AI performance analyst) is complete and green: 64
 - [x] ffmpeg 6.1.1 with libass/subtitles/libx264/aac — all codecs present
 - [x] Production endpoints reachable and auth-gated
 - [x] All 121 tests passing after bug fix
+
+## Google Drive OAuth Refresh Token (Jul 6)
+- [x] Built driveAuth.ts module: DB-backed token cache with 50-min TTL, getDriveToken() async helper
+- [x] Added /api/scheduled/refreshDriveToken endpoint (accepts token from agent, stores in DB, validates with Drive API)
+- [x] Updated driveIndex.ts and drivePreprocess.ts to use getDriveToken() from driveAuth
+- [x] Added Google Workspace connector to poster agent cron (UID f8900a57-4bd7-46cc-83a3-5ebd2420a817)
+- [x] Updated poster agent prompt: STEP 0 passes $GOOGLE_WORKSPACE_CLI_TOKEN to refreshDriveToken before posting
+- [x] All 122 tests passing
+- [x] Abandoned Google Cloud OAuth approach (client secret display issue) — agent-passed token is simpler and auto-refreshes via platform

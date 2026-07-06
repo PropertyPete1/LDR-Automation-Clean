@@ -8,8 +8,10 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { dueForPublishHandler, reportPublishHandler, publishNowHandler, syncIgHistoryHandler, runAnalystHandler, generatePicksHandler, scrapeReelsHandler } from "../scheduledPublish";
+import { dueForPublishHandler, reportPublishHandler, publishNowHandler, syncIgHistoryHandler, runAnalystHandler, generatePicksHandler, scrapeReelsHandler, refreshDriveTokenHandler } from "../scheduledPublish";
 import { generateLinkedinHandler, publishLinkedinHandler, syncLinkedinAnalyticsHandler } from "../linkedinScheduled";
+import { driveAuthStartHandler, driveAuthCallbackHandler } from "../driveOAuthSetup";
+import { getDriveToken } from "../driveAuth";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -59,6 +61,13 @@ async function startServer() {
   app.post("/api/scheduled/generateLinkedin", generateLinkedinHandler);
   app.post("/api/scheduled/publishLinkedin", publishLinkedinHandler);
   app.post("/api/scheduled/syncLinkedinAnalytics", syncLinkedinAnalyticsHandler);
+
+  // Google Drive token refresh (agent passes its fresh token before generatePicks)
+  app.post("/api/scheduled/refreshDriveToken", refreshDriveTokenHandler);
+
+  // Google Drive OAuth setup endpoints (one-time authorization flow, backup)
+  app.get("/api/drive-auth/start", driveAuthStartHandler);
+  app.get("/api/drive-auth/callback", driveAuthCallbackHandler);
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
@@ -78,4 +87,18 @@ async function startServer() {
   });
 }
 
-startServer().catch(console.error);
+// On startup, warm the Drive token cache from DB if available
+async function warmDriveTokenCache() {
+  try {
+    // Just calling getDriveToken will load from DB if available
+    const token = await getDriveToken();
+    if (token) {
+      console.log("[DriveAuth] Token cache warmed from DB on startup");
+    }
+  } catch {
+    // No token available yet — that's fine, agent will provide one
+    console.log("[DriveAuth] No cached Drive token available. Agent will provide one before generatePicks.");
+  }
+}
+
+warmDriveTokenCache().then(() => startServer()).catch(console.error);

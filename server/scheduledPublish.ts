@@ -606,3 +606,46 @@ export async function runAnalystHandler(req: Request, res: Response) {
     });
   }
 }
+
+
+/**
+ * refreshDriveToken endpoint: called by the agent cron BEFORE generatePicks.
+ * The agent passes its fresh GOOGLE_WORKSPACE_CLI_TOKEN so the deployed app
+ * can use it for Drive API calls (token is valid for ~60 minutes).
+ * 
+ * POST /api/scheduled/refreshDriveToken
+ * Body: { token: string }
+ */
+export async function refreshDriveTokenHandler(req: Request, res: Response) {
+  try {
+    if (!(await authorize(req))) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    const { token } = req.body as { token?: string };
+    if (!token || typeof token !== "string" || token.length < 50) {
+      return res.status(400).json({ error: "Missing or invalid token in request body" });
+    }
+
+    // Store the token
+    const { setDriveToken, verifyDriveAccess } = await import("./driveAuth");
+    await setDriveToken(token);
+
+    // Verify it works
+    const health = await verifyDriveAccess();
+
+    return res.json({
+      ok: true,
+      healthy: health.healthy,
+      tokenAge: health.tokenAge,
+      error: health.error,
+    });
+  } catch (err) {
+    const e = err as Error;
+    console.error("[refreshDriveToken] Error:", e.message);
+    return res.status(500).json({
+      error: e.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
