@@ -36,7 +36,7 @@ import requests
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from openai import OpenAI
+from anthropic import Anthropic
 from pydantic import BaseModel
 
 LOGGER = logging.getLogger("fub_automation")
@@ -73,7 +73,7 @@ class Settings:
             fub_api_key=os.environ.get("FUB_API_KEY", ""),
             fub_system_name=os.environ.get("FUB_SYSTEM_NAME"),
             fub_system_key=os.environ.get("FUB_SYSTEM_KEY"),
-            openai_model=os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
+            openai_model=os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "claude-sonnet-4-20250514"),
             database_path=os.environ.get("DATABASE_PATH", "data/fub_automation.sqlite3"),
             rules_path=os.environ.get("RULES_PATH", "config/rules.yaml"),
             base_url=os.environ.get("BASE_URL", "http://localhost:8080"),
@@ -694,16 +694,42 @@ class FollowUpBossClient:
 
 class ContentGenerator:
     def __init__(self, settings: Settings, rules: Rules):
-        api_key = os.getenv("OPENAI_API_KEY") or getattr(settings, "openai_api_key", None)
-        base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
-        if api_key and base_url:
-            self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)
-        elif api_key:
-            self.client = OpenAI(api_key=api_key, timeout=120.0)
-        else:
-            self.client = OpenAI(timeout=120.0)
-        self.model = settings.openai_model
+        api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        self.client = Anthropic(api_key=api_key, timeout=120.0)
+        self.model = os.getenv("LLM_MODEL") or settings.openai_model or "claude-sonnet-4-20250514"
         self.rules = rules
+
+    def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True) -> str:
+        """Unified LLM call via Anthropic SDK. Returns raw content string."""
+        # Separate system message from user messages
+        system_text = ""
+        user_messages = []
+        for m in messages:
+            if m["role"] == "system":
+                system_text = m["content"]
+            else:
+                user_messages.append(m)
+        if not user_messages:
+            user_messages = [{"role": "user", "content": "Please respond."}]
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "temperature": temperature,
+            "messages": user_messages,
+        }
+        if system_text:
+            kwargs["system"] = system_text
+
+        response = self.client.messages.create(**kwargs)
+        content = response.content[0].text if response.content else ""
+        # Strip markdown code fences if present (common with Claude JSON output)
+        if content.startswith("```"):
+            lines = content.split("\n")
+            # Remove first and last lines (```json and ```)
+            lines = [l for l in lines[1:] if l.strip() != "```"]
+            content = "\n".join(lines)
+        return content
 
     def should_skip_lead_llm(self, person: dict, notes: List[dict]) -> Tuple[bool, str]:
         if not notes:
@@ -773,15 +799,10 @@ class ContentGenerator:
         {chr(10).join(rendered_notes)}
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-                temperature=0.1,
-                response_format={"type": "json_object"},
-            )
-            if not response.choices or response.choices[0].message.content is None:
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.1)
+            if not content:
                 return False, ""
-            parsed = json.loads(response.choices[0].message.content)
+            parsed = json.loads(content)
             should_skip = bool(parsed.get("should_skip"))
             confidence = int(parsed.get("confidence") or 0)
             reason = str(parsed.get("reason") or "").strip()
@@ -932,21 +953,12 @@ class ContentGenerator:
         - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-            temperature=0.86,
-            response_format={"type": "json_object"},
-        )
-        LOGGER.debug("OpenAI Response: %s", response)
-        if not response.choices:
-            LOGGER.error("OpenAI returned empty choices: %s", response)
-            raise ValueError("OpenAI returned empty choices")
-        message = response.choices[0].message
-        if message.content is None:
-            LOGGER.error("OpenAI returned empty message content: %s", message)
-            raise ValueError("OpenAI returned empty message content")
-        generated = json.loads(message.content)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        LOGGER.debug("LLM Response content: %s", content[:200])
+        if not content:
+            LOGGER.error("LLM returned empty content")
+            raise ValueError("LLM returned empty content")
+        generated = json.loads(content)
         generated["freshness_angle"] = angle
         generated["asked_referral"] = ask_referral
         return generated
@@ -1015,15 +1027,10 @@ class ContentGenerator:
         - Keep it concise: 130 to 200 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-            temperature=0.86,
-            response_format={"type": "json_object"},
-        )
-        if not response.choices or response.choices[0].message.content is None:
-            raise ValueError("OpenAI returned empty closed drip email choices")
-        return json.loads(response.choices[0].message.content)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        if not content:
+            raise ValueError("LLM returned empty closed drip email choices")
+        return json.loads(content)
 
     def generate_congrats_email(self, person: dict, deal_address: str) -> dict:
         """Generate a warm, personal congratulations email for a newly closed deal.
@@ -1060,15 +1067,10 @@ class ContentGenerator:
         - Keep it concise: 100 to 160 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-            temperature=0.88,
-            response_format={"type": "json_object"},
-        )
-        if not response.choices or response.choices[0].message.content is None:
-            raise ValueError("OpenAI returned empty congrats email choices")
-        return json.loads(response.choices[0].message.content)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.88)
+        if not content:
+            raise ValueError("LLM returned empty congrats email choices")
+        return json.loads(content)
 
     def generate_welcome_email(self, person: dict, city: str) -> dict:
         first_name = person.get("firstName") or "there"
@@ -1098,15 +1100,10 @@ class ContentGenerator:
         - Email must include a subject and body.
         - Return strict JSON with keys: subject, email_body.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-            temperature=0.86,
-            response_format={"type": "json_object"},
-        )
-        if not response.choices or response.choices[0].message.content is None:
-            raise ValueError("OpenAI returned empty welcome email choices")
-        generated = json.loads(response.choices[0].message.content)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        if not content:
+            raise ValueError("LLM returned empty welcome email choices")
+        generated = json.loads(content)
         return generated
 
 
@@ -1207,15 +1204,10 @@ class ContentGenerator:
         - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-            temperature=0.86,
-            response_format={"type": "json_object"},
-        )
-        if not response.choices or response.choices[0].message.content is None:
-            raise ValueError("OpenAI returned empty long-term nurture email choices")
-        return json.loads(response.choices[0].message.content)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        if not content:
+            raise ValueError("LLM returned empty long-term nurture email choices")
+        return json.loads(content)
 
 
     def classify_lead_intent(
@@ -1321,15 +1313,10 @@ class ContentGenerator:
         - source: the channel of the trigger communication: "Inbound SMS", "Inbound Email", "Sync Note", or "none"
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-                temperature=0.05,
-                response_format={"type": "json_object"},
-            )
-            if not response.choices or response.choices[0].message.content is None:
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.05)
+            if not content:
                 return {"intent": "none", "confidence": 0, "reason": "Empty AI response", "trigger_snippet": "", "source": "none"}
-            parsed = json.loads(response.choices[0].message.content)
+            parsed = json.loads(content)
             intent = str(parsed.get("intent") or "none").strip().lower()
             confidence = int(parsed.get("confidence") or 0)
             reason = str(parsed.get("reason") or "").strip()
@@ -1425,15 +1412,10 @@ class ContentGenerator:
             }}
         """
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}],
-                temperature=0.0,
-                response_format={"type": "json_object"},
-            )
-            if not response.choices or response.choices[0].message.content is None:
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.0)
+            if not content:
                 return {"changed": False, "new_email": "", "confidence": 0, "reason": "Empty AI response", "trigger_snippet": ""}
-            parsed = json.loads(response.choices[0].message.content)
+            parsed = json.loads(content)
             changed = bool(parsed.get("changed", False))
             new_email = str(parsed.get("new_email") or "").strip().lower()
             confidence = int(parsed.get("confidence") or 0)

@@ -268,7 +268,7 @@ def fix_daily_errors(dry_run: bool) -> None:
             if "401" in str(sample_error) or "Incorrect API key" in str(sample_error) or "api key" in str(sample_error).lower():
                 warnings.append(
                     f"API key error in '{action}' ({count} leads affected). "
-                    f"Check OPENAI_API_KEY / FUB_API_KEY environment variables."
+                    f"Check ANTHROPIC_API_KEY / FUB_API_KEY environment variables."
                 )
                 log.warning("API key error detected in %s — cannot auto-fix, flagging for Peter", action)
                 continue

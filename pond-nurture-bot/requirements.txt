@@ -4,4 +4,4 @@ requests==2.32.3
 PyYAML==6.0.2
 pydantic==2.10.4
 APScheduler==3.10.4
-openai==1.59.3
+anthropic>=0.34.0

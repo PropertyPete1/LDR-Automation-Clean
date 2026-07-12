@@ -1,54 +1,70 @@
-name: "Sync SQLite State"
-description: "Pull/push the SQLite audit DB from/to the 'state' branch"
+name: "Sync SQLite State (Encrypted)"
+description: "Pull/push the SQLite audit DB from/to the 'state' branch with AES-256 encryption"
 inputs:
   mode:
-    description: "'pull' to fetch state, 'push' to commit state back"
+    description: "'pull' to fetch and decrypt state, 'push' to encrypt and commit state"
     required: true
   github_token:
     description: "GitHub token for pushing"
+    required: true
+  encryption_key:
+    description: "AES-256 passphrase for encrypting/decrypting the state DB"
     required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Pull state from 'state' branch
+    - name: Pull and decrypt state from 'state' branch
       if: inputs.mode == 'pull'
       shell: bash
+      env:
+        STATE_KEY: ${{ inputs.encryption_key }}
       run: |
         git fetch origin state:state 2>/dev/null || true
-        if git show state:pond-nurture-bot/data/fub_automation.sqlite3 > /dev/null 2>&1; then
+        if git show state:pond-nurture-bot/data/fub_automation.sqlite3.enc > /dev/null 2>&1; then
           mkdir -p pond-nurture-bot/data
-          git show state:pond-nurture-bot/data/fub_automation.sqlite3 > pond-nurture-bot/data/fub_automation.sqlite3
-          echo "✅ State DB pulled from 'state' branch"
+          git show state:pond-nurture-bot/data/fub_automation.sqlite3.enc > pond-nurture-bot/data/fub_automation.sqlite3.enc
+          openssl enc -aes-256-cbc -pbkdf2 -d \
+            -in pond-nurture-bot/data/fub_automation.sqlite3.enc \
+            -out pond-nurture-bot/data/fub_automation.sqlite3 \
+            -pass env:STATE_KEY
+          rm -f pond-nurture-bot/data/fub_automation.sqlite3.enc
+          echo "✅ State DB pulled and decrypted from 'state' branch"
           ls -la pond-nurture-bot/data/fub_automation.sqlite3
         else
-          echo "⚠️ No state DB found on 'state' branch — will start fresh"
+          echo "⚠️ No encrypted state DB found on 'state' branch — will start fresh"
           mkdir -p pond-nurture-bot/data
         fi
 
-    - name: Push state to 'state' branch
+    - name: Encrypt and push state to 'state' branch
       if: inputs.mode == 'push'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
+        STATE_KEY: ${{ inputs.encryption_key }}
       run: |
         if [ ! -f pond-nurture-bot/data/fub_automation.sqlite3 ]; then
           echo "⚠️ No state DB to push"
           exit 0
         fi
+        # Encrypt the DB
+        openssl enc -aes-256-cbc -pbkdf2 \
+          -in pond-nurture-bot/data/fub_automation.sqlite3 \
+          -out /tmp/fub_automation.sqlite3.enc \
+          -pass env:STATE_KEY
+        echo "✅ State DB encrypted ($(wc -c < /tmp/fub_automation.sqlite3.enc) bytes)"
         # Configure git
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         # Checkout or create state branch
-        git fetch origin state:state 2>/dev/null || git checkout --orphan state
+        git fetch origin state:state 2>/dev/null || true
         git checkout state 2>/dev/null || git checkout --orphan state
-        # Clean and copy state
+        # Clean working tree
         git rm -rf . 2>/dev/null || true
+        # Place only the encrypted file
         mkdir -p pond-nurture-bot/data
-        git checkout ${{ github.sha }} -- . 2>/dev/null || true
-        # Restore the DB from working dir
-        cp ${{ github.workspace }}/pond-nurture-bot/data/fub_automation.sqlite3 pond-nurture-bot/data/fub_automation.sqlite3
-        git add pond-nurture-bot/data/fub_automation.sqlite3
-        git commit -m "state: update SQLite DB [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --allow-empty
+        cp /tmp/fub_automation.sqlite3.enc pond-nurture-bot/data/fub_automation.sqlite3.enc
+        git add pond-nurture-bot/data/fub_automation.sqlite3.enc
+        git commit -m "state: update encrypted SQLite DB [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --allow-empty
         git push origin state
-        echo "✅ State DB pushed to 'state' branch"
+        echo "✅ Encrypted state DB pushed to 'state' branch"
