@@ -19,13 +19,16 @@ from zoneinfo import ZoneInfo
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+_log_handlers = [logging.StreamHandler(sys.stdout)]
+_log_file = Path(os.environ.get("AUTO_DIR", str(Path(__file__).resolve().parent))) / "speed_to_lead.log"
+try:
+    _log_handlers.append(logging.FileHandler(str(_log_file), mode="a"))
+except OSError:
+    pass  # GH Actions: skip file logging if dir doesn't exist
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [speed-to-lead] %(levelname)s %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/home/ubuntu/fub_automation/speed_to_lead.log", mode="a"),
-    ],
+    handlers=_log_handlers,
 )
 LOGGER = logging.getLogger("speed_to_lead")
 
@@ -63,6 +66,12 @@ def main() -> int:
     LOGGER.info("Speed-to-lead check starting at %s CT", now_ct.strftime("%H:%M:%S"))
 
     load_dotenv()
+
+    # Support DRY_RUN from env (GitHub Actions sets this)
+    if os.environ.get("DRY_RUN", "").lower() not in {"1", "true", "yes"}:
+        pass  # normal mode
+    else:
+        LOGGER.info("DRY_RUN mode — will log actions without writing to FUB")
 
     # Disable the APScheduler background scheduler (we run inline, not as a daemon)
     os.environ["FUB_DISABLE_SCHEDULER"] = "true"

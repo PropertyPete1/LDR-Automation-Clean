@@ -258,6 +258,9 @@ def send_email(subject: str, html_body: str, to_email: str):
 
 def main():
     """Generate and send the weekly performance digest."""
+    dry_run = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
+    if dry_run:
+        LOGGER.info("DRY_RUN mode — will generate digest but not send email")
     LOGGER.info("Generating weekly performance digest...")
 
     now = dt.datetime.now(CT)
@@ -278,14 +281,16 @@ def main():
 
     html = format_digest(this_week_stats, last_week_stats, pond_size)
     subject = f"📊 Weekly Performance Digest — {now.strftime('%b %d, %Y')}"
-
+    if dry_run:
+        LOGGER.info("[DRY-RUN] Would send digest: %s", subject)
+        LOGGER.info("[DRY-RUN] Digest HTML length: %d chars", len(html))
+        print(html[:2000])  # Print first 2000 chars for inspection
+        return True
     success = send_email(subject, html, OWNER_EMAIL)
-
     if success:
         LOGGER.info("Weekly digest delivered successfully.")
     else:
         LOGGER.error("Weekly digest delivery failed.")
-
     return success
 
 

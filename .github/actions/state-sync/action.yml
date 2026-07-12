@@ -1,0 +1,54 @@
+name: "Sync SQLite State"
+description: "Pull/push the SQLite audit DB from/to the 'state' branch"
+inputs:
+  mode:
+    description: "'pull' to fetch state, 'push' to commit state back"
+    required: true
+  github_token:
+    description: "GitHub token for pushing"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Pull state from 'state' branch
+      if: inputs.mode == 'pull'
+      shell: bash
+      run: |
+        git fetch origin state:state 2>/dev/null || true
+        if git show state:pond-nurture-bot/data/fub_automation.sqlite3 > /dev/null 2>&1; then
+          mkdir -p pond-nurture-bot/data
+          git show state:pond-nurture-bot/data/fub_automation.sqlite3 > pond-nurture-bot/data/fub_automation.sqlite3
+          echo "✅ State DB pulled from 'state' branch"
+          ls -la pond-nurture-bot/data/fub_automation.sqlite3
+        else
+          echo "⚠️ No state DB found on 'state' branch — will start fresh"
+          mkdir -p pond-nurture-bot/data
+        fi
+
+    - name: Push state to 'state' branch
+      if: inputs.mode == 'push'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+      run: |
+        if [ ! -f pond-nurture-bot/data/fub_automation.sqlite3 ]; then
+          echo "⚠️ No state DB to push"
+          exit 0
+        fi
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        # Checkout or create state branch
+        git fetch origin state:state 2>/dev/null || git checkout --orphan state
+        git checkout state 2>/dev/null || git checkout --orphan state
+        # Clean and copy state
+        git rm -rf . 2>/dev/null || true
+        mkdir -p pond-nurture-bot/data
+        git checkout ${{ github.sha }} -- . 2>/dev/null || true
+        # Restore the DB from working dir
+        cp ${{ github.workspace }}/pond-nurture-bot/data/fub_automation.sqlite3 pond-nurture-bot/data/fub_automation.sqlite3
+        git add pond-nurture-bot/data/fub_automation.sqlite3
+        git commit -m "state: update SQLite DB [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --allow-empty
+        git push origin state
+        echo "✅ State DB pushed to 'state' branch"

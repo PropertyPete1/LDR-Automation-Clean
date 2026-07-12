@@ -150,18 +150,25 @@ def main() -> int:
     engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
     engine.send_phase2_daily_summary()
     
-    # Auto-refresh the dashboard data
-    try:
-        print("Auto-refreshing FUB Pond Nurture Dashboard data...")
-        import subprocess
-        subprocess.run(["/home/ubuntu/fub_automation/refresh_dashboard.sh"], check=True)
-    except Exception as d_exc:
-        print(f"Warning: Failed to auto-refresh dashboard: {d_exc}")
+    # Auto-refresh the dashboard data (only on Cloud Computer where script exists)
+    refresh_script = Path(os.environ.get('AUTO_DIR', str(Path(__file__).resolve().parent))) / 'refresh_dashboard.sh'
+    if refresh_script.exists() and not settings.dry_run:
+        try:
+            print("Auto-refreshing FUB Pond Nurture Dashboard data...")
+            import subprocess
+            subprocess.run([str(refresh_script)], check=True)
+        except Exception as d_exc:
+            print(f"Warning: Failed to auto-refresh dashboard: {d_exc}")
+    else:
+        print("Skipping dashboard refresh (dry-run or script not found)")
         
     print('Approved daily automation run completed.')
 
     # ── Dead-Man's Switch: Ping healthchecks.io on success ─────────────────
-    _ping_healthcheck_daily()
+    if not settings.dry_run:
+        _ping_healthcheck_daily()
+    else:
+        print('  [healthcheck] Skipped in DRY_RUN mode')
 
     return 0
 
@@ -174,7 +181,7 @@ def _ping_healthcheck_daily() -> None:
     """
     import json as _json
     import requests as _req
-    hc_path = Path('/home/ubuntu/fub_automation/config/healthchecks.json')
+    hc_path = Path(os.environ.get('AUTO_DIR', str(Path(__file__).resolve().parent))) / 'config' / 'healthchecks.json'
     if not hc_path.exists():
         print('  [healthcheck] config not found — skipping ping')
         return

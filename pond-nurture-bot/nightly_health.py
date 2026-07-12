@@ -29,16 +29,18 @@ from pathlib import Path
 from typing import List, Optional
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-AUTO_DIR    = Path("/home/ubuntu/fub_automation")
+AUTO_DIR    = Path(os.environ.get("AUTO_DIR", str(Path(__file__).resolve().parent)))
 AUDIT_PY    = AUTO_DIR / "eightx_audit.py"
 AUDIT_JSON  = AUTO_DIR / "audit_result.json"
 PRUNE_PY    = AUTO_DIR / "prune_audit_log.py"
-DB_PATH     = AUTO_DIR / "data/fub_automation.sqlite3"
-ROUTERS_TS  = Path("/home/ubuntu/fub_nurture_dashboard/server/routers.ts")
-APP_TSX     = Path("/home/ubuntu/fub_nurture_dashboard/client/src/App.tsx")
-DASHBOARD_TS = Path("/home/ubuntu/fub_nurture_dashboard/server/dashboardData.ts")
-INDEX_TS    = Path("/home/ubuntu/fub_nurture_dashboard/server/_core/index.ts")
-HEALTH_LOG  = AUTO_DIR / "data/nightly_health_log.json"
+DB_PATH     = AUTO_DIR / "data" / "fub_automation.sqlite3"
+# Dashboard paths — only used by fix_dashboard_ui_errors (skipped in GH Actions mode)
+_DASHBOARD_ROOT = Path(os.environ.get("DASHBOARD_ROOT", "/home/ubuntu/fub_nurture_dashboard"))
+ROUTERS_TS  = _DASHBOARD_ROOT / "server" / "routers.ts"
+APP_TSX     = _DASHBOARD_ROOT / "client" / "src" / "App.tsx"
+DASHBOARD_TS = _DASHBOARD_ROOT / "server" / "dashboardData.ts"
+INDEX_TS    = _DASHBOARD_ROOT / "server" / "_core" / "index.ts"
+HEALTH_LOG  = AUTO_DIR / "data" / "nightly_health_log.json"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -167,7 +169,7 @@ def fix_stale_dashboard_data(dry_run: bool) -> None:
     """Refresh dashboard_data.json if it's older than 2 hours."""
     export_script = AUTO_DIR / "export_dashboard_data.py"
     # export_dashboard_data.py writes to client/src/data/ — check that path first
-    dashboard_json = Path("/home/ubuntu/fub_nurture_dashboard/client/src/data/dashboard_data.json")
+    dashboard_json = _DASHBOARD_ROOT / "client" / "src" / "data" / "dashboard_data.json"
     if not dashboard_json.exists():
         # Fallback to legacy path
         dashboard_json = AUTO_DIR / "data/dashboard_data.json"
@@ -1490,7 +1492,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true",
                         help="Preview all actions without making changes or sending emails")
     args = parser.parse_args()
-    dry_run = args.dry_run
+    dry_run = args.dry_run or os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
     if dry_run:
         log.info("=" * 60)
@@ -1582,7 +1584,10 @@ def main():
     log.info("=" * 60)
 
     # ── Dead-Man's Switch: Ping healthchecks.io on success ─────────────────
-    ping_healthcheck("nightly_health")
+    if not dry_run:
+        ping_healthcheck("nightly_health")
+    else:
+        log.info("[DRY-RUN] Skipping healthchecks.io ping")
 
     # Exit 0 even if post-audit has failures — the email already notified Peter
     sys.exit(0)
