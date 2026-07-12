@@ -1,0 +1,66 @@
+# Nightly Health — runs at 4:00 AM CT daily
+# CT = UTC-6 (CST) or UTC-5 (CDT). Using UTC 09:00 for CDT (summer).
+# DST note: GitHub cron uses UTC only. Adjust to 10:00 UTC when CDT ends (~Nov).
+name: Nightly Health
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ldr-state
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  LLM_MODEL: ${{ secrets.LLM_MODEL }}
+  SMTP_HOST: ${{ secrets.SMTP_HOST }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  nightly-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Run nightly health
+        working-directory: pond-nurture-bot
+        run: |
+          echo "=== Nightly Health — DRY_RUN=$DRY_RUN ==="
+          python3 nightly_health.py --dry-run
+
+      - name: Push state DB
+        if: always()
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
