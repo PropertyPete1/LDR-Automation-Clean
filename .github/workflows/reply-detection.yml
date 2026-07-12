@@ -1,0 +1,80 @@
+# Reply Detection — runs every 10 minutes (scans for incoming replies)
+# DST note: The script handles CT timezone internally; cron fires every 10 min UTC.
+name: Reply Detection
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ldr-state
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  LLM_MODEL: ${{ secrets.LLM_MODEL }}
+  SMTP_HOST: ${{ secrets.SMTP_HOST }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  reply-detection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Run reply detection
+        working-directory: pond-nurture-bot
+        run: |
+          echo "=== Reply Detection — DRY_RUN=$DRY_RUN ==="
+          python3 -c "
+          import os, sys
+          sys.path.insert(0, 'src')
+          os.environ['FUB_DISABLE_SCHEDULER'] = 'true'
+          from fub_automation.main import AuditDB, FollowUpBossClient, RuleEngine, Rules, Settings
+          settings = Settings.from_env()
+          if not settings.fub_api_key:
+              print('FUB_API_KEY missing — skipping')
+              sys.exit(0)
+          rules = Rules.load(settings.rules_path)
+          db = AuditDB(settings.database_path)
+          fub = FollowUpBossClient(settings)
+          engine = RuleEngine(settings, rules, fub, db)
+          engine.scan_reply_detection()
+          print('Reply detection scan complete')
+          "
+
+      - name: Push state DB
+        if: always()
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
