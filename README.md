@@ -2,7 +2,7 @@
 
 > 🚧 **CODE SNAPSHOT** — live system runs on Cloud Computer 2 + Manus (fubdash-bkyqff6t.manus.space, lifestyledash-wpnl8v84.manus.space). Not yet deployable from this repo.
 
-**Lifestyle Design Realty | Last updated: June 17, 2026**
+**Lifestyle Design Realty | Last updated: July 12, 2026**
 
 ---
 
@@ -279,6 +279,50 @@ All secrets live in `/home/ubuntu/fub_automation/.env`. Never commit this file.
 
 ---
 
+## Recently Activated Features (July 2026)
+
+### Speed-to-Lead — 0/30/60-Minute Timer (LIVE)
+
+When a new lead is created in FUB and assigned to an agent, a countdown begins:
+
+| Timer | Action |
+| --- | --- |
+| Minute 0 | Agent receives alert email with lead details + green "Tap to Text" button. Peter CC'd. |
+| Minute 30 | If no qualifying activity (call, text, email, or note by agent): FUB @mention warning note + urgent Call task created for the agent. |
+| Minute 60 | If still no activity: lead reassigned to Peter (user ID 2), FUB note logged, Peter notified by email, lead tagged `auto-reassigned-speed-to-lead`. |
+
+**Implementation details:**
+- Scheduler jobs: `poll_new_leads` (every 5 min) and `process_new_lead_timers` (every 5 min)
+- Business-hours aware: only counts minutes during 10 AM – 6 PM CT (America/Chicago)
+- Touch detection: checks `lastSentEmail`, `lastSentText`, `lastCall`, and human-authored FUB notes
+- Database: timer records stored in `new_lead_timers` table (SQLite)
+- Acceptance test passed July 12, 2026: all 3 stages fired correctly (~3 min alert, ~32 min warning, ~62 min reassignment)
+
+### Reply Detection + Hot Lead Alert (LIVE)
+
+Detects when any lead that received a bot email replies by email or text:
+
+| Trigger | Action |
+| --- | --- |
+| Reply detected | Lead tagged `Replied - Paused` — suppresses ALL bot cadences |
+| Notification | Owning agent emailed immediately (pond leads → Peter) |
+| FUB note | "Lead replied on [date] — bots paused, follow up personally" |
+
+**Implementation details:**
+- Scheduler job: `scan_reply_detection` (every 10 min)
+- Suppression scope: pond nurture bot + all 7 agent bots (via `hasDncTag()` in `botHelpers.ts`)
+- Resume: human removes the `Replied - Paused` tag to re-enable automation
+- Cap: 20 alerts per scan to avoid flooding
+- Acceptance test passed: suppression check verified in every bot's skip logic
+
+### Cursor-Based Pagination (LIVE)
+
+All FUB API fetches (`get_people()` in Python, `fubGetPeople()` in TypeScript) use cursor-based `_metadata.next` pagination. The previous offset-based approach crashed at offset > 2000 when FUB disabled deep pagination. The system now reliably pages through 4,400+ leads without error.
+
+**Fixed in:** Python `main.py`, TypeScript `dashboardData.ts` / `pondNurture.ts`
+
+---
+
 ## What Is Currently Disabled
 
 The following features exist in the codebase but are turned off by owner decision:
@@ -286,7 +330,6 @@ The following features exist in the codebase but are turned off by owner decisio
 | Feature | Status | Reason |
 | --- | --- | --- |
 | SMS/text outreach (Python) | Disabled | Owner request — agents text manually via Power Queue |
-| New-lead 30/60-min workflow | Disabled | Not yet activated |
 | Email sending from agent addresses | Disabled | All emails send from `peter@lifestyledesignrealty.com` |
 
 ---
