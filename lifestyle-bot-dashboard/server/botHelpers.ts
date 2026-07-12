@@ -207,12 +207,20 @@ export async function postFubNote(personId: number, body: string): Promise<void>
   });
 }
 
-/** Check if a lead has a DNC / opt-out tag */
+/** Check if a lead has a DNC / opt-out / suppression tag */
 export function hasDncTag(person: FubPerson): boolean {
   const tags = person.tags ?? [];
   return tags.some(t => {
     const tag = (typeof t === "string" ? t : (t as { name?: string })?.name ?? "").toLowerCase();
-    return tag.includes("opt-out") || tag.includes("do-not-contact") || tag.includes("dnc");
+    return (
+      tag.includes("opt-out") ||
+      tag.includes("do-not-contact") ||
+      tag.includes("dnc") ||
+      tag.includes("replied - paused") ||
+      tag.includes("bot_suppress") ||
+      tag.includes("unsubscribed") ||
+      tag.includes("opt-out-auto-trash")
+    );
   });
 }
 
@@ -265,17 +273,17 @@ export function isEligible(person: FubPerson): boolean {
 // ─── Power Queue integration ─────────────────────────────────────────────────
 
 /**
- * Power Queue API — source of truth for 1-20 day stale leads.
+ * The FUB Nurture Dashboard Power Queue URL — source of truth for 1-20 day stale leads.
  * The Power Queue shows leads the AGENT should personally text (days 1-20).
  * The bot handles leads 3–19 days stale via email — monitoring notes so it only
- * follows up when the agent hasn't already. At 20 days the lead moves to the
- * pond and the separate pond nurture system takes over.
+ * follows up when the agent hasn't already. At 20 days, Python automation moves
+ * the lead to the pond and the pond nurture bot takes over.
  */
-const POWER_QUEUE_API = "https://lifestyledash-wpnl8v84.manus.space/api/trpc/fub.getPendingQueue";
+const POWER_QUEUE_API = "https://fub-nurture-phfprjui.manus.space/api/trpc/fub.getPendingQueue";
 
 /**
- * Fetch the live Power Queue count for a specific agent.
- * The Power Queue applies smarter filters (phone required,
+ * Fetch the live Power Queue count for a specific agent from the FUB Nurture Dashboard portal.
+ * The portal is the authoritative source — it applies smarter filters (phone required,
  * stage exclusions, priority scoring) that we can't fully replicate from FUB directly.
  *
  * Node.js fetch with a browser User-Agent gets 200 OK from the portal.
@@ -338,161 +346,22 @@ export async function recordSmsSentToday(
 
 // ─── Contacted Leads audit log ───────────────────────────────────────────────
 
-// ─── Contact Cadence & Team-Wide Communication Checks ─────────────────────────
-
-/** Minimum days between bot emails to the SAME lead (bot's own cadence). */
-const BOT_MIN_CADENCE_DAYS = 7;
-
-/** If ANY team member emailed the lead within this window, bot skips entirely. */
-const TEAM_EMAIL_SKIP_DAYS = 3;
-
 /**
- * Check if the BOT itself emailed this lead within the last BOT_MIN_CADENCE_DAYS.
- * Uses the local contacted_leads DB table (bot's own send log).
+ * Returns true if this lead was contacted within the last MIN_CONTACT_GAP_DAYS days.
+ * Prevents the same lead from being emailed on consecutive days.
  */
-export async function wasBotEmailedRecently(personId: number): Promise<boolean> {
+const MIN_CONTACT_GAP_DAYS = 3;
+
+export async function wasContactedRecently(personId: number): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
-  const cutoff = new Date(Date.now() - BOT_MIN_CADENCE_DAYS * 24 * 60 * 60 * 1000);
+  const cutoff = new Date(Date.now() - MIN_CONTACT_GAP_DAYS * 24 * 60 * 60 * 1000);
   const rows = await db
     .select({ personId: contactedLeads.personId })
     .from(contactedLeads)
     .where(and(eq(contactedLeads.personId, personId), gte(contactedLeads.sentAt, cutoff)))
     .limit(1);
   return rows.length > 0;
-}
-
-/**
- * Check if ANY team member emailed or texted this lead within the last TEAM_EMAIL_SKIP_DAYS.
- * Uses FUB's /emails endpoint (sentByPerson: false = team sent) and /textMessages (isIncoming: false = team sent).
- * Only counts OUTBOUND communications from the team — inbound lead messages do NOT trigger a skip.
- */
-export async function wasTeamEmailedRecently(personId: number): Promise<boolean> {
-  const cutoff = new Date(Date.now() - TEAM_EMAIL_SKIP_DAYS * 24 * 60 * 60 * 1000);
-
-  try {
-    // Check outbound EMAILS from team
-    const emailData = await fubRequest<{
-      emails?: Array<{
-        date?: string;
-        relatedPeople?: Array<{ personId?: number; sentByPerson?: boolean }>;
-      }>;
-    }>(`/emails?personId=${personId}&sort=-created&limit=10`);
-    const emails = emailData.emails ?? [];
-    for (const email of emails) {
-      if (!email.date) continue;
-      const emailDate = new Date(email.date);
-      if (emailDate < cutoff) break; // Sorted newest-first, stop once past cutoff
-      // sentByPerson: false means the TEAM sent it (outbound to lead)
-      const relPerson = email.relatedPeople?.find(rp => rp.personId === personId);
-      if (relPerson && relPerson.sentByPerson === false) return true;
-    }
-  } catch {
-    // On FUB API error for emails, continue to text check
-  }
-
-  try {
-    // Check outbound TEXT MESSAGES from team
-    const textData = await fubRequest<{
-      textmessages?: Array<{ sent?: string; isIncoming?: boolean }>;
-    }>(`/textMessages?personId=${personId}&sort=-dateCreated&limit=5`);
-    const texts = textData.textmessages ?? [];
-    for (const text of texts) {
-      if (!text.sent) continue;
-      const textDate = new Date(text.sent);
-      if (textDate < cutoff) break; // Sorted newest-first
-      // isIncoming: false means the TEAM sent it (outbound to lead)
-      if (text.isIncoming === false) return true;
-    }
-  } catch {
-    // On FUB API error for texts, fail open
-  }
-
-  return false;
-}
-
-/**
- * Combined check: should the bot skip this lead due to recent contact?
- * Returns { skip: true, reason } if either:
- *   1. Any team member emailed within 3 days (team-wide check via FUB /emails)
- *   2. The bot itself emailed within 7 days (bot cadence check via local DB)
- */
-export async function wasContactedRecently(personId: number): Promise<boolean> {
-  // Rule 1: Team-wide 3-day skip
-  if (await wasTeamEmailedRecently(personId)) return true;
-  // Rule 2: Bot's own 7-day cadence
-  if (await wasBotEmailedRecently(personId)) return true;
-  return false;
-}
-
-/**
- * Fetch the most recent OUTBOUND team communication context for a lead.
- * Uses FUB /emails (sentByPerson: false) and /textMessages (isIncoming: false).
- * Since FUB hides email content, we also check notes for context clues.
- * Returns the most recent outbound activity date and any available context.
- */
-export async function fetchRecentOutboundContext(personId: number): Promise<{
-  type: "email" | "text";
-  date: string;
-  summary: string;
-} | null> {
-  let latestOutbound: { type: "email" | "text"; date: string; summary: string } | null = null;
-
-  try {
-    // Check outbound emails
-    const emailData = await fubRequest<{
-      emails?: Array<{
-        date?: string;
-        subject?: string;
-        bodyExcerpt?: string;
-        relatedPeople?: Array<{ personId?: number; sentByPerson?: boolean }>;
-      }>;
-    }>(`/emails?personId=${personId}&sort=-created&limit=5`);
-    const emails = emailData.emails ?? [];
-    for (const email of emails) {
-      const relPerson = email.relatedPeople?.find(rp => rp.personId === personId);
-      if (relPerson && relPerson.sentByPerson === false && email.date) {
-        // FUB hides content but subject might be visible
-        const subject = (email.subject && !email.subject.includes("CONTENT HIDDEN")) ? email.subject : "";
-        const excerpt = (email.bodyExcerpt && !email.bodyExcerpt.includes("CONTENT HIDDEN")) ? email.bodyExcerpt : "";
-        latestOutbound = {
-          type: "email",
-          date: email.date,
-          summary: subject || excerpt || "Team sent an email (content not available from FUB API)",
-        };
-        break; // Only need the most recent
-      }
-    }
-  } catch {
-    // Continue
-  }
-
-  try {
-    // Check outbound texts (these might be more recent)
-    const textData = await fubRequest<{
-      textmessages?: Array<{ sent?: string; isIncoming?: boolean; message?: string }>;
-    }>(`/textMessages?personId=${personId}&sort=-dateCreated&limit=3`);
-    const texts = textData.textmessages ?? [];
-    for (const text of texts) {
-      if (text.isIncoming === false && text.sent) {
-        const textDate = new Date(text.sent);
-        const existingDate = latestOutbound ? new Date(latestOutbound.date) : new Date(0);
-        if (textDate > existingDate) {
-          const msg = (text.message && !text.message.includes("hidden")) ? text.message : "";
-          latestOutbound = {
-            type: "text",
-            date: text.sent,
-            summary: msg || "Team sent a text message",
-          };
-        }
-        break;
-      }
-    }
-  } catch {
-    // Continue
-  }
-
-  return latestOutbound;
 }
 
 /** Write a per-lead audit record for the lead list view on the dashboard */
@@ -609,78 +478,18 @@ export function hasActiveContactNote(_person: FubPerson): boolean {
 function buildLeadContext(person: FubPerson): string {
   const notes = person.notes ?? [];
   if (notes.length === 0) return "No prior notes on this lead. Write a general friendly check-in.";
-
-  const now = Date.now();
-
-  // Sort all notes by date (newest first)
-  const sorted = [...notes].sort((a, b) => {
-    const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return bDate - aDate;
+  const sorted = notes
+    .sort((a, b) => {
+      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bDate - aDate;
+    })
+    .slice(0, 3);
+  const lines = sorted.map((n, i) => {
+    const label = i === 0 ? "MOST RECENT NOTE (base your follow-up on this)" : `Older note ${i + 1}`;
+    return `${label}: ${(n.body ?? "").substring(0, 400)}`;
   });
-
-  // Separate human notes from bot-generated notes
-  // Bot notes start with "[" (e.g. "[S&P500 Lifestyle Bot]", "[Laila's Lifestyle Bot]")
-  // or contain "Automated click-to-text", "Click-to-Text follow-up", or "Automated two-week pond nurture"
-  const isBotNote = (body: string): boolean => {
-    return /^\[.*Lifestyle Bot\]/.test(body) ||
-      /^Automated click-to-text/i.test(body) ||
-      /^Click-to-Text follow-up/i.test(body) ||
-      /^Automated two-week pond nurture/i.test(body);
-  };
-
-  const humanNotes = sorted.filter(n => !isBotNote(n.body ?? ""));
-  const botNotes = sorted.filter(n => isBotNote(n.body ?? ""));
-
-  // Calculate how old the most recent HUMAN note is (critical for anti-hallucination)
-  let mostRecentHumanDaysAgo = 999;
-  if (humanNotes.length > 0 && humanNotes[0].createdAt) {
-    mostRecentHumanDaysAgo = Math.floor((now - new Date(humanNotes[0].createdAt).getTime()) / (1000 * 60 * 60 * 24));
-  }
-
-  // Build context: prioritize human notes, then include bot notes for timeline awareness
-  const contextLines: string[] = [];
-
-  // Add a STALENESS WARNING if notes are old — this is the key anti-hallucination guard
-  if (mostRecentHumanDaysAgo > 90) {
-    contextLines.push(`🚨 CRITICAL WARNING: The most recent human note is ${mostRecentHumanDaysAgo} DAYS OLD (over ${Math.floor(mostRecentHumanDaysAgo / 30)} months ago). This lead has NOT been in active contact recently. Any events, meetings, calls, or plans mentioned in the notes below are ANCIENT HISTORY — they already happened long ago or never materialized. Do NOT reference them as current or upcoming.`);
-  } else if (mostRecentHumanDaysAgo > 30) {
-    contextLines.push(`⚠️ NOTE AGE WARNING: The most recent human note is ${mostRecentHumanDaysAgo} days old (over ${Math.floor(mostRecentHumanDaysAgo / 7)} weeks ago). Events mentioned in these notes are NOT current — do not reference them as recent or upcoming.`);
-  }
-
-  // Most important: the most recent HUMAN note (agent calls, Power Queue texts, manual notes)
-  if (humanNotes.length > 0) {
-    const mostRecent = humanNotes[0];
-    const dateStr = mostRecent.createdAt ? new Date(mostRecent.createdAt).toLocaleDateString() : "unknown date";
-    const daysAgo = mostRecent.createdAt
-      ? Math.floor((now - new Date(mostRecent.createdAt).getTime()) / (1000 * 60 * 60 * 24))
-      : null;
-    const ageLabel = daysAgo !== null ? ` [${daysAgo} days ago]` : "";
-    contextLines.push(`⭐ MOST IMPORTANT — Latest human/agent note (${dateStr}${ageLabel}):\n${(mostRecent.body ?? "").substring(0, 500)}`);
-    // Add 1-2 more human notes for deeper context
-    for (let i = 1; i < Math.min(3, humanNotes.length); i++) {
-      const note = humanNotes[i];
-      const d = note.createdAt ? new Date(note.createdAt).toLocaleDateString() : "unknown";
-      const noteDaysAgo = note.createdAt
-        ? Math.floor((now - new Date(note.createdAt).getTime()) / (1000 * 60 * 60 * 24))
-        : null;
-      const noteAgeLabel = noteDaysAgo !== null ? ` [${noteDaysAgo} days ago]` : "";
-      contextLines.push(`Previous agent note (${d}${noteAgeLabel}): ${(note.body ?? "").substring(0, 300)}`);
-    }
-  }
-
-  // Include the most recent bot note for timeline awareness (so AI knows what was last sent)
-  if (botNotes.length > 0) {
-    const lastBot = botNotes[0];
-    const d = lastBot.createdAt ? new Date(lastBot.createdAt).toLocaleDateString() : "unknown";
-    contextLines.push(`Last bot email sent (${d}): ${(lastBot.body ?? "").substring(0, 200)}`);
-  }
-
-  if (contextLines.length === 0) {
-    return "No meaningful notes found. Write a general friendly check-in.";
-  }
-
-  return `Notes from Follow Up Boss (READ CAREFULLY — your email MUST reference this context):\n${contextLines.join("\n\n")}`;
+  return `Notes from Follow Up Boss:\n${lines.join("\n")}`;
 }
 
 /**
@@ -704,28 +513,14 @@ export async function generateFollowUpMessage(opts: {
 
   const leadContext = person ? buildLeadContext(person) : "No prior notes available.";
 
-  // Fetch recent outbound team communication for additional context
-  let recentOutboundNote = "";
-  if (person?.id) {
-    const outbound = await fetchRecentOutboundContext(person.id);
-    if (outbound) {
-      const daysAgo = Math.round((Date.now() - new Date(outbound.date).getTime()) / (1000 * 60 * 60 * 24));
-      recentOutboundNote = `\n\n⚡ RECENT TEAM OUTBOUND (${daysAgo} day(s) ago via ${outbound.type}): ${outbound.summary}\nIMPORTANT: A team member JUST reached out ${daysAgo} day(s) ago. Your follow-up MUST acknowledge or build on this recent contact — do NOT write as if no one has spoken to them recently.`;
-    }
-  }
-
   // Determine urgency/tone based on staleness
   let urgencyNote = "";
-  if (staleDays >= 180) {
-    urgencyNote = "⚠️ LONG-DORMANT LEAD: This lead has been completely cold for 6+ MONTHS. There has been NO real conversation in a very long time. You MUST write a gentle re-engagement email that honestly acknowledges the time gap. Say something like 'It's been a while since we last connected' or 'Hope you've been well — just wanted to reach back out.' NEVER pretend there was a recent conversation or meeting. NEVER reference old notes as if they are current.";
-  } else if (staleDays >= 60) {
-    urgencyNote = "This lead has been completely cold for 2+ months. Write a gentle re-engagement message that acknowledges time has passed without being pushy. Do NOT pretend there was recent contact.";
+  if (staleDays >= 60) {
+    urgencyNote = "This lead has been completely cold for 2+ months. Write a gentle re-engagement message that acknowledges time has passed without being pushy.";
   } else if (staleDays >= 40) {
     urgencyNote = "This lead has been inactive for 40+ days. Write a warm check-in that feels natural and not salesy.";
-  } else if (staleDays >= 14) {
-    urgencyNote = "This lead has been inactive for 2+ weeks. They may be busy or distracted. Write a warm, low-pressure follow-up that references their specific situation.";
   } else {
-    urgencyNote = "This lead was recently active (under 2 weeks ago). Write a natural continuation of the last conversation — keep it brief and specific.";
+    urgencyNote = "This lead has been inactive for 20-40 days. Write a friendly, casual follow-up.";
   }
 
   // Stage-specific guidance
@@ -757,43 +552,22 @@ LEAD CONTEXT:
 - ${stageGuidance}
 
 PRIOR NOTES:
-${leadContext}${recentOutboundNote}
+${leadContext}
 
 CRITICAL INSTRUCTIONS — READ CAREFULLY:
-1. The ⭐ MOST IMPORTANT note above is your #1 priority. Your email MUST be a direct, natural continuation of whatever happened in that note.
-   - If the note mentions specific builders/communities (e.g. "Perry", "Highland Homes", "Meritage") → ask about THOSE SPECIFIC builders by name
-   - If the note mentions home options/listings were sent → ask "Did you get a chance to look at those options I sent over?"
-   - If the note mentions a showing was scheduled → ask how the showing went
-   - If the note mentions a specific city/area/budget/timeline → reference it directly
-   - If the note mentions a phone call → reference what was discussed on the call
-   - If the note is a Power Queue text about specific homes → follow up on those exact homes
-   - ONLY if there are truly NO notes with any context → write a general friendly check-in
-2. ABSOLUTELY NEVER write a generic "just checking in" or "checking on your search" email if the notes contain ANY specific detail (builder names, areas, timelines, preferences, prior conversations). This is the #1 rule.
+1. The MOST RECENT NOTE above is the single most important piece of context. Your email MUST be a direct, natural continuation of whatever happened in that note.
+   - If the note says home options/listings were sent → ask "Did you get a chance to look at those options I sent?"
+   - If the note says a showing was scheduled → ask how the showing went
+   - If the note says they mentioned a specific city/budget/timeline → reference it directly
+   - If there are no notes → write a general friendly check-in
+2. NEVER write a generic "just checking in" email if the notes show a specific prior action. That is unprofessional and confusing to the client.
 3. Write 2-4 sentences only. Warm, casual, genuine — like a real person texting a friend.
 4. Never mention automation, AI, or that this is a follow-up system.
-5. Include a soft call-to-action that directly relates to the note context (e.g. "Would you like me to set up a tour of the Perry models?" not "Let me know if I can help!").
+5. Include a soft call-to-action that makes sense given the note context.
 6. Sign off with just your first name.
-7. If the notes mention the lead is moving in the FUTURE (e.g. "moving July 2027") — acknowledge their timeline and offer to keep them updated on new inventory as it comes, don't push for immediate action.
-
-🚫 ANTI-HALLUCINATION RULES (ABSOLUTE — NEVER VIOLATE):
-8. NEVER invent, fabricate, or assume ANY of the following:
-   - Meetings ("our meeting", "that Friday meeting", "our appointment")
-   - Phone calls ("our chat", "our conversation", "when we spoke")
-   - Prior interactions that are not EXPLICITLY described in the notes above
-   - Scheduled events that are not EXPLICITLY confirmed in the notes above
-9. PAY ATTENTION TO NOTE DATES. Each note has a [X days ago] label. If a note is 30+ days old:
-   - Do NOT say "our recent chat" — it was NOT recent
-   - Do NOT reference plans/meetings from that note as if they are upcoming — they already happened or fell through months ago
-   - If notes mention "this Friday" or "next week" but the note is 30+ days old, those dates have LONG PASSED
-10. If the most recent human note is 90+ days old (see 🚨 CRITICAL WARNING above):
-    - You MUST write a gentle RE-ENGAGEMENT email that acknowledges it's been a while
-    - Use phrases like "It's been a while since we last connected" or "Hope you've been well — wanted to reach back out"
-    - NEVER pretend you just spoke to them or that there's a current conversation going
-11. If you are unsure whether something happened recently, DO NOT MENTION IT. Only reference facts that are clearly stated AND recent (within 30 days) in the notes.
-12. NEVER use the phrases: "our recent chat", "our conversation", "that meeting we have", "following up on our call" — UNLESS a note from within the last 14 days explicitly describes that specific call/chat/meeting happening.
 
 FORMAT:
-- Line 1: SUBJECT: <a natural, context-aware subject line that references the SPECIFIC context from notes. NEVER use generic subjects like "Checking in" or "Checking on your search" if notes mention specific details. Examples: "Quick question about Perry Homes", "Following up on the Highland Homes options", "Any thoughts on those listings in [area]?", "Still thinking about that [specific thing from notes]?">
+- Line 1: SUBJECT: <a natural, context-aware subject line — NOT "Checking in". Examples: "Quick question about those listings", "Following up on the homes I sent", "Checking on your search", "Any questions about the options I shared?">
 - Line 2 onwards: The email body. Start with ONE single greeting line only (e.g. "Hey Matthew,"). Do NOT repeat the name or write two greetings. The very next line after the greeting should be the first sentence of the message.
 
 IMPORTANT:
@@ -804,7 +578,7 @@ IMPORTANT:
     messages: [
       {
         role: "system",
-        content: "You are an expert real estate agent writing highly personalized, intelligent follow-up emails. Your emails feel handcrafted and genuine, never automated. You always reference specific context when available. CRITICAL: You NEVER fabricate or invent facts. You NEVER mention meetings, calls, or conversations that are not explicitly described in the notes. If notes are old (30+ days), you treat them as historical context, NOT as recent events.",
+        content: "You are an expert real estate agent writing highly personalized, intelligent follow-up emails. Your emails feel handcrafted and genuine, never automated. You always reference specific context when available.",
       },
       { role: "user", content: prompt },
     ],
@@ -818,13 +592,7 @@ IMPORTANT:
   let bodyLines = lines;
 
   if (lines[0]?.toUpperCase().startsWith("SUBJECT:")) {
-    let subjectText = lines[0].replace(/^SUBJECT:\s*/i, "").trim();
-    // Strip hallucinated meeting/chat references from subject line too
-    if (/our (recent )?(chat|conversation|meeting)/i.test(subjectText) ||
-        /that (friday|monday|tuesday|wednesday|thursday|saturday|sunday) meeting/i.test(subjectText) ||
-        /following up on our (call|chat)/i.test(subjectText)) {
-      subjectText = ""; // Fall through to default subject
-    }
+    const subjectText = lines[0].replace(/^SUBJECT:\s*/i, "").trim();
     if (subjectText) subject = `${subjectText} — ${opts.agentFirstName} ${opts.agentLastName}`;
     bodyLines = lines.slice(1);
   }
@@ -835,54 +603,11 @@ IMPORTANT:
     .replace(/Is there anything else I can automate to make your life easier\?/gi, "")
     .replace(/Is there anything (else )?I can (help|automate|do) to make your (life|day|work) easier\??/gi, "")
     .replace(/Would you like me to automate anything[^\n]*/gi, "")
-    .replace(/Let me know if there['\u2019]?s anything (else )?I can automate[^\n]*/gi, "")
+    .replace(/Let me know if there['']?s anything (else )?I can automate[^\n]*/gi, "")
     .replace(/Reply to this email with any(thing)?[^\n]*automate[^\n]*/gi, "")
     // Remove any trailing blank lines left by the strips
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-
-  // SAFETY CHECK: If the lead's most recent human note is 90+ days old,
-  // verify the email doesn't contain hallucinated recent-contact language.
-  // This is a last-resort guardrail — the prompt should prevent this, but
-  // if the LLM still hallucinates, we catch it here.
-  if (person) {
-    const humanNotes = (person.notes ?? [])
-      .filter(n => {
-        const b = n.body ?? "";
-        return !(/^\[.*Lifestyle Bot\]/.test(b) || /^Automated/i.test(b) || /^Click-to-Text/i.test(b));
-      })
-      .sort((a, b) => {
-        const aD = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const bD = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return bD - aD;
-      });
-    const newestHumanNote = humanNotes[0];
-    const humanNoteDaysAgo = newestHumanNote?.createdAt
-      ? Math.floor((Date.now() - new Date(newestHumanNote.createdAt).getTime()) / (1000 * 60 * 60 * 24))
-      : 999;
-    if (humanNoteDaysAgo > 90) {
-      // Check for hallucinated recent-contact phrases
-      const hallucinationPatterns = [
-        /our (recent )?chat/i,
-        /our (recent )?conversation/i,
-        /that (friday|monday|tuesday|wednesday|thursday|saturday|sunday) meeting/i,
-        /meeting we have (coming up|scheduled)/i,
-        /when we (spoke|talked|chatted) (last|recently)/i,
-        /following up on our (call|chat|meeting|conversation)/i,
-        /great (talking|chatting|speaking) (with you|to you) (recently|the other day|last)/i,
-      ];
-      const hasHallucination = hallucinationPatterns.some(p => p.test(body));
-      if (hasHallucination) {
-        // Regenerate with an explicit override — but to avoid infinite loops,
-        // just return a safe generic re-engagement instead
-        const safeName = leadFirstName && leadFirstName.toLowerCase() !== "there" ? leadFirstName : null;
-        const safeGreeting = safeName ? `Hey ${safeName},` : `Hey, it's ${agentFirstName} with Lifestyle Design Realty!`;
-        const safeBody = `${safeGreeting}\n\nHope you've been well! It's been a while since we last connected, and I just wanted to reach back out. If you're still thinking about buying or selling in Texas at some point, I'd love to be a resource for you — no pressure at all.\n\n${agentFirstName}`;
-        const safeSubject = `Hope you're doing well, ${safeName ?? "friend"}!`;
-        return { body: safeBody, subject: safeSubject };
-      }
-    }
-  }
 
   return { body, subject };
 }
@@ -969,8 +694,10 @@ export async function sendEmail(opts: {
  * Asks the agent if they want anything automated — replies go to Peter's email.
  * Recipients: Peter, Steven, and the agent.
  */
-/** Lifestyle Bot Dashboard base URL */
-const DASHBOARD_BASE = "https://lifestyledash-wpnl8v84.manus.space";
+const OLD_DASHBOARD_BASE = "https://fub-nurture-phfprjui.manus.space";
+
+/** New Lifestyle Bot Dashboard base URL */
+const NEW_DASHBOARD_BASE = "https://lifestyledash-wpnl8v84.manus.space";
 
 /**
  * Leaders who see the full multi-agent dashboard (/).
@@ -1027,17 +754,17 @@ export async function sendClockinEmail(opts: {
   // Build Power Queue + agent dashboard links
   const pqAgentName = isCombined ? null : POWER_QUEUE_AGENT_NAME[agentFirstName.toLowerCase()];
   const powerQueueUrl = pqAgentName
-    ? `${DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
-    : `${DASHBOARD_BASE}/sms-queue`;
+    ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
+    : `${OLD_DASHBOARD_BASE}/sms-queue`;
   const agentSlug = isCombined ? null : AGENT_DASHBOARD_SLUG[agentFirstName.toLowerCase()];
   const isLeader = isCombined || (agentFirstName && LEADER_AGENTS.has(agentFirstName.toLowerCase()));
   const agentDashboardUrl = isLeader
-    ? `${DASHBOARD_BASE}/`
+    ? `${NEW_DASHBOARD_BASE}/`
     : agentSlug
-      ? `${DASHBOARD_BASE}/agent/${agentSlug}`
+      ? `${NEW_DASHBOARD_BASE}/agent/${agentSlug}`
       : null;
-  const stevenDashUrl = `${DASHBOARD_BASE}/`;
-  const peterDashUrl = `${DASHBOARD_BASE}/`;
+  const stevenDashUrl = `${NEW_DASHBOARD_BASE}/`;
+  const peterDashUrl = `${NEW_DASHBOARD_BASE}/`;
 
   const subject = `☀️ ${botName} — Good Morning! Clocking In`;
   const html = `<!DOCTYPE html>
@@ -1578,8 +1305,8 @@ export async function sendBotIntroEmail(botSlug: string): Promise<void> {
     ? "Steven and Peter"
     : agentFirstName;
 
-  const powerQueueUrl = "https://lifestyledash-wpnl8v84.manus.space/sms-queue";
-  const dashUrl = "https://lifestyledash-wpnl8v84.manus.space";
+  const powerQueueUrl = "https://fub-nurture-phfprjui.manus.space/sms-queue";
+  const newDashUrl = "https://lifestyledash-wpnl8v84.manus.space";
 
   const subject = `🤖 Introducing Your Assigned Lifestyle Bot — ${botName}`;
 
@@ -1665,7 +1392,7 @@ export async function sendBotIntroEmail(botSlug: string): Promise<void> {
                   <a href="${powerQueueUrl}" style="display:inline-block;background:#f59e0b;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.3px;">⚡ Launch Power Queue</a>
                 </td>
                 <td>
-                  <a href="${dashUrl}" style="display:inline-block;background:${accentColor};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.3px;">📊 View Dashboard</a>
+                  <a href="${newDashUrl}" style="display:inline-block;background:${accentColor};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.3px;">📊 View Dashboard</a>
                 </td>
               </tr>
             </table>

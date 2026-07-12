@@ -26,7 +26,7 @@ describe("isEligible", () => {
     emails: [{ value: "john@example.com" }],
     textOptOut: false,
     assignedPondId: null,
-    lastActivity: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(), // 10 days ago (inside 3-19 day window)
+    lastActivityAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(), // 25 days ago
     assignedUserId: 1,
   };
 
@@ -58,20 +58,12 @@ describe("isEligible", () => {
     expect(isEligible({ ...baseLead, tags: [{ name: "opt-out" }] })).toBe(false);
   });
 
-  it("returns false for leads active within threshold (too fresh)", () => {
+  it("returns false for leads active within threshold", () => {
     const recentLead = {
       ...baseLead,
-      lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago (too fresh, under 3 days)
+      lastActivityAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
     };
     expect(isEligible(recentLead)).toBe(false);
-  });
-
-  it("returns false for leads beyond bot window (20+ days)", () => {
-    const oldLead = {
-      ...baseLead,
-      lastActivity: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(), // 25 days ago (beyond 19 day max)
-    };
-    expect(isEligible(oldLead)).toBe(false);
   });
 
   it("returns false for Under Contract stage", () => {
@@ -111,28 +103,21 @@ describe("hasDncTag", () => {
 // ─── daysStale ────────────────────────────────────────────────────────────────
 
 describe("daysStale", () => {
-  it("returns threshold for leads with no lastActivity", () => {
-    const lead: FubPerson = { id: 1, lastActivity: null };
+  it("returns threshold for leads with no lastActivityAt", () => {
+    const lead: FubPerson = { id: 1, lastActivityAt: null };
     expect(daysStale(lead)).toBe(STALE_DAYS_THRESHOLD);
   });
 
   it("calculates correct days for a 30-day-old lead", () => {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const lead: FubPerson = { id: 1, lastActivity: thirtyDaysAgo };
+    const lead: FubPerson = { id: 1, lastActivityAt: thirtyDaysAgo };
     expect(daysStale(lead)).toBeGreaterThanOrEqual(29);
     expect(daysStale(lead)).toBeLessThanOrEqual(31);
   });
 
   it("returns 0 for a lead active today", () => {
-    const lead: FubPerson = { id: 1, lastActivity: new Date().toISOString() };
+    const lead: FubPerson = { id: 1, lastActivityAt: new Date().toISOString() };
     expect(daysStale(lead)).toBe(0);
-  });
-
-  it("falls back to lastActivityAt if lastActivity is missing", () => {
-    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-    const lead: FubPerson = { id: 1, lastActivityAt: tenDaysAgo };
-    expect(daysStale(lead)).toBeGreaterThanOrEqual(9);
-    expect(daysStale(lead)).toBeLessThanOrEqual(11);
   });
 });
 

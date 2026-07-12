@@ -35,11 +35,8 @@ export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
   const db = await getDb();
   if (!db) return ALL_BOTS.map(b => ({ ...b, lastRanAt: null, sent: 0, errored: 0, skipped: 0, status: "not_run" as const, ranToday: false }));
 
-  // The health check runs at 4 AM CT — before the bots' 10 AM CT window.
-  // Bots run at ~10 AM CT daily. Checking "ran today" at 4 AM would always be false
-  // because today's run hasn't happened yet. Instead, check if the bot ran within
-  // the last 24 hours — this correctly captures yesterday's 10 AM run.
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
   const results: BotHealthResult[] = [];
 
@@ -53,7 +50,7 @@ export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
       .limit(1);
 
     const ranToday = lastRun
-      ? new Date(lastRun.ranAt) >= twentyFourHoursAgo
+      ? new Date(lastRun.ranAt) >= todayStart
       : false;
 
     let status: BotHealthResult["status"] = "not_run";
@@ -127,7 +124,7 @@ export async function runBotMonitor(): Promise<void> {
             <th style="padding: 8px; text-align: left;">Last Run</th>
             <th style="padding: 8px; text-align: left;">Sent</th>
             <th style="padding: 8px; text-align: left;">Errors</th>
-            <th style="padding: 8px; text-align: left;">Ran (last 24h)?</th>
+            <th style="padding: 8px; text-align: left;">Ran Today?</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>

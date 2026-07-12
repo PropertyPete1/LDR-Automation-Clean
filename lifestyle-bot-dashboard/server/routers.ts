@@ -189,7 +189,7 @@ export const appRouter = router({
       }),
   }),
 
-  // ─── Pond Nurture metrics ──────────────────────────────────────────────────
+  // ─── Pond Nurture (mirrors old fub-nurture dashboard) ───────────────────────
   pondNurture: router({
     agentStats: protectedProcedure.query(async () => {
       if (!FUB_API_KEY) return [];
