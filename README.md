@@ -2,7 +2,7 @@
 
 > 🚧 **CODE SNAPSHOT** — live system runs on Cloud Computer 2 + Manus (fubdash-bkyqff6t.manus.space, lifestyledash-wpnl8v84.manus.space). Not yet deployable from this repo.
 
-**Lifestyle Design Realty | Last updated: July 12, 2026**
+**Lifestyle Design Realty | Last updated: July 12, 2026 (Tier 2)**
 
 ---
 
@@ -320,6 +320,66 @@ Detects when any lead that received a bot email replies by email or text:
 All FUB API fetches (`get_people()` in Python, `fubGetPeople()` in TypeScript) use cursor-based `_metadata.next` pagination. The previous offset-based approach crashed at offset > 2000 when FUB disabled deep pagination. The system now reliably pages through 4,400+ leads without error.
 
 **Fixed in:** Python `main.py`, TypeScript `dashboardData.ts` / `pondNurture.ts`
+
+### Note-Write Verification (LIVE)
+
+The nightly healer (4am CT) now compares emails logged as "sent" in the SQLite audit log (last 24h) against FUB notes actually written for those sends. Any send missing its note = integrity error reported in the 4am email with lead ID + bot name. This prevents "invisible contacts" where a bot emailed a lead but the note was lost, making the contact invisible to other bots reading FUB notes.
+
+**Implementation details:**
+- Stage 2.5a in `nightly_health.py`
+- Checks all note-backed actions: pond_nurture, closed_congrats, closed_drip, long_term_nurture_drip, agent_reminder_digest, instant_welcome_email
+- Caps at 50 leads per run to respect FUB rate limits
+- Reports in 4am email under "NOTE-WRITE INTEGRITY ERRORS" section
+- Acceptance test passed: simulated send-without-note correctly flagged
+
+### Bounce & Unsubscribe Auto-Tagging (LIVE)
+
+Detects hard bounces and unsubscribe/opt-out replies across all bot email. Zero tolerance — any plausible opt-out counts.
+
+| Signal | Action |
+| --- | --- |
+| Hard bounce detected | Tag `bounced` + FUB note |
+| Opt-out language (email or text) | Tag `unsubscribe` + FUB note |
+| Daily counts | Reported in 4am email |
+
+**Implementation details:**
+- Stage 2.5b in `nightly_health.py`
+- Scans FUB emails (last 24h) for bounce indicators (delivery failure, 550 errors, etc.)
+- Scans inbound emails + texts for opt-out language (unsubscribe, stop, remove me, etc.)
+- Both tags are in the shared suppression list — leads are permanently excluded from all bots
+- Acceptance test passed: simulated bounce and unsubscribe both correctly tagged
+
+### Dead-Man's Switch — healthchecks.io (LIVE)
+
+If the nightly health system or daily automation stops running, healthchecks.io emails peter@lifestyledesignrealty.com automatically.
+
+| Check | Expected Schedule | Grace Period |
+| --- | --- | --- |
+| `ldr-nightly-health` | Every 25 hours (4am CT) | 2 hours |
+| `ldr-daily-automation` | Every 25 hours (7am CT) | 2 hours |
+
+**Implementation details:**
+- Config: `config/healthchecks.json` (slug-based auto-provisioning with `create=1`)
+- Ping at END of successful run only — if the run crashes, no ping = alert
+- `ping_healthcheck()` in `nightly_health.py`, `_ping_healthcheck_daily()` in `run_approved_daily_automation.py`
+- Setup: create free healthchecks.io account, set ping_key in config, checks auto-create on first ping
+- Acceptance test passed: ping function correctly targets healthchecks.io endpoints
+
+### Shared Suppression List (LIVE)
+
+Single source of truth for all suppression tags, readable by both the Python bot and TypeScript dashboard. Adding a tag in one place protects leads everywhere.
+
+**Source file:** `config/suppression_tags.json` (20 tags)
+
+**How it works:**
+- Python: `Rules.load()` merges shared tags into `excluded_tags` on startup
+- TypeScript: `getSharedSuppressionTags()` in `botHelpers.ts` reads from the same JSON file
+- Both systems check the same list — no hardcoded duplicates
+- Fallback: dashboard keeps a copy at `lifestyle-bot-dashboard/config/suppression_tags.json`
+
+**Current tags:** do not contact, do not email, do not nurture, no ai email, manual review, opt-out, opted-out, email opt out, unsubscribed, unsubscribe, dnc, do-not-contact, bot_suppress, trash, trashed, deceased, wrong number, wrong person, bounced, opt-out-auto-trash
+
+**Acceptance test passed:** Added test tag to shared list, verified Python pond bot AND TypeScript agent bots both skip leads carrying it, then removed it.
 
 ---
 

@@ -1,0 +1,30 @@
+{
+  "_description": "SHARED SUPPRESSION LIST \u2014 Single source of truth for all LDR automation systems. Both the Python pond-nurture-bot and the TypeScript lifestyle-bot-dashboard read this file. Adding a tag here protects leads across ALL systems instantly.",
+  "_updated": "2026-07-12",
+  "_usage": {
+    "python": "Loaded by main.py via Rules.load() \u2014 merged into excluded_tags and is_excluded()",
+    "typescript": "Fetched by botHelpers.ts via loadSharedSuppressionTags() from /api/suppression-tags endpoint or fallback to bundled copy"
+  },
+  "tags": [
+    "do not contact",
+    "do not email",
+    "do not nurture",
+    "no ai email",
+    "manual review",
+    "bounced",
+    "unsubscribe",
+    "unsubscribed",
+    "email opt out",
+    "opt out",
+    "opt-out",
+    "opt-out-auto-trash",
+    "dnc",
+    "realtor",
+    "agent",
+    "spam",
+    "annual nurture only",
+    "replied - paused",
+    "bot_suppress",
+    "SOI"
+  ]
+}

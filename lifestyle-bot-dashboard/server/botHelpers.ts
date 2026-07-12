@@ -13,10 +13,59 @@
  */
 
 import nodemailer from "nodemailer";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import { getDb } from "./db";
-import { botObservations, botRunLogs, smsSentToday, contactedLeads } from "../drizzle/schema";
+import { botObservations, botRunLog, smsSentToday, contactedLeads } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import { invokeLLM } from "./_core/llm";
+
+// ESM-safe __dirname
+const __botHelpers_filename = fileURLToPath(import.meta.url);
+const __botHelpers_dirname = path.dirname(__botHelpers_filename);
+
+// ─── Shared Suppression List (single source of truth) ────────────────────────
+// Both Python (pond-nurture-bot) and TypeScript (lifestyle-bot-dashboard) read
+// from config/suppression_tags.json. Adding a tag there protects leads everywhere.
+const SUPPRESSION_TAGS_PATH = path.resolve(__botHelpers_dirname, "../../fub_automation/config/suppression_tags.json");
+const FALLBACK_SUPPRESSION_TAGS_PATH = path.resolve(__botHelpers_dirname, "../config/suppression_tags.json");
+
+let _sharedSuppressionTags: string[] | null = null;
+
+/** Load the shared suppression tag list from the canonical JSON file */
+export function getSharedSuppressionTags(): string[] {
+  if (_sharedSuppressionTags !== null) return _sharedSuppressionTags;
+  const paths = [SUPPRESSION_TAGS_PATH, FALLBACK_SUPPRESSION_TAGS_PATH];
+  for (const p of paths) {
+    try {
+      if (fs.existsSync(p)) {
+        const data = JSON.parse(fs.readFileSync(p, "utf-8"));
+        _sharedSuppressionTags = (data.tags ?? []).map((t: string) => t.toLowerCase());
+        console.log(`[botHelpers] Loaded ${_sharedSuppressionTags!.length} shared suppression tags from ${p}`);
+        return _sharedSuppressionTags!;
+      }
+    } catch (e) {
+      console.warn(`[botHelpers] Failed to load suppression tags from ${p}:`, e);
+    }
+  }
+  // Hardcoded fallback if file is missing (should never happen in production)
+  console.warn("[botHelpers] Shared suppression_tags.json not found, using hardcoded fallback");
+  _sharedSuppressionTags = [
+    "do not contact", "do not email", "do not nurture", "no ai email",
+    "manual review", "bounced", "unsubscribe", "unsubscribed",
+    "email opt out", "opt out", "opt-out", "opt-out-auto-trash",
+    "dnc", "realtor", "agent", "spam", "annual nurture only",
+    "replied - paused", "bot_suppress", "soi",
+  ];
+  return _sharedSuppressionTags;
+}
+
+/** Force reload of suppression tags (used after adding a new tag) */
+export function reloadSharedSuppressionTags(): string[] {
+  _sharedSuppressionTags = null;
+  return getSharedSuppressionTags();
+}
 
 // ─── Environment ────────────────────────────────────────────────────────────
 
@@ -207,20 +256,15 @@ export async function postFubNote(personId: number, body: string): Promise<void>
   });
 }
 
-/** Check if a lead has a DNC / opt-out / suppression tag */
+/** Check if a lead has a DNC / opt-out / suppression tag.
+ * Now reads from the shared suppression_tags.json (single source of truth).
+ */
 export function hasDncTag(person: FubPerson): boolean {
+  const suppressionTags = getSharedSuppressionTags();
   const tags = person.tags ?? [];
   return tags.some(t => {
     const tag = (typeof t === "string" ? t : (t as { name?: string })?.name ?? "").toLowerCase();
-    return (
-      tag.includes("opt-out") ||
-      tag.includes("do-not-contact") ||
-      tag.includes("dnc") ||
-      tag.includes("replied - paused") ||
-      tag.includes("bot_suppress") ||
-      tag.includes("unsubscribed") ||
-      tag.includes("opt-out-auto-trash")
-    );
+    return suppressionTags.some(st => tag.includes(st));
   });
 }
 
@@ -260,11 +304,24 @@ export function daysStale(person: FubPerson): number {
  */
 export function isEligible(person: FubPerson): boolean {
   const stage = (person.stage ?? "").trim();
-  if (SKIP_STAGES.has(stage)) return false;
+  const days = daysStale(person);
+
+  // Stale override: Active Client leads with 3+ days no activity still need follow-up.
+  // The agent clearly isn't working them, so the bot steps in.
+  const STALE_OVERRIDE_DAYS = 3;
+  const STALE_OVERRIDE_STAGES = new Set(["Active Client", "Hot Prospect"]);
+  const isStaleOverride = STALE_OVERRIDE_STAGES.has(stage) && days >= STALE_OVERRIDE_DAYS;
+
+  // Skip stages — UNLESS the stale override applies
+  if (SKIP_STAGES.has(stage) && !isStaleOverride) return false;
+
   if (person.assignedPondId) return false; // already on a pond — handled by pond nurture
   if (person.textOptOut) return false;
   if (hasDncTag(person)) return false;
-  const days = daysStale(person);
+
+  // For stale override leads, don't apply the normal day window — they're already past it
+  if (isStaleOverride) return true;
+
   if (days < STALE_DAYS_THRESHOLD) return false;   // too fresh — agent is on it
   if (days >= BOT_WINDOW_MAX_DAYS) return false;    // 20+ days → pond reassignment handles it (correct — this is the boundary)
   return true;
@@ -322,12 +379,11 @@ export async function fetchPowerQueueCount(
 export async function getSmsSentTodayIds(): Promise<Set<number>> {
   const db = await getDb();
   if (!db) return new Set();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   const rows = await db
     .select({ personId: smsSentToday.personId })
     .from(smsSentToday)
-    .where(gte(smsSentToday.sentAt, todayStart));
+    .where(eq(smsSentToday.sentDate, today));
   return new Set(rows.map(r => r.personId));
 }
 
@@ -340,8 +396,8 @@ export async function recordSmsSentToday(
   if (!db) return;
   await db
     .insert(smsSentToday)
-    .values({ personId, agentName, sentAt: new Date() })
-    .onDuplicateKeyUpdate({ set: { agentName, sentAt: new Date() } });
+    .values({ personId, agentName, sentDate: new Date().toISOString().slice(0, 10) })
+    .onDuplicateKeyUpdate({ set: { agentName, sentDate: new Date().toISOString().slice(0, 10) } });
 }
 
 // ─── Contacted Leads audit log ───────────────────────────────────────────────
@@ -1124,7 +1180,6 @@ export async function writeObservation(opts: {
     severity: opts.severity,
     message: opts.message,
     createdAt: new Date(),
-    resolved: false,
   });
 }
 
@@ -1140,14 +1195,12 @@ export async function logBotRun(opts: {
 }): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.insert(botRunLogs).values({
-    botName: opts.botName,
-    botSlug: opts.botSlug,
-    sent: opts.sent,
-    errored: opts.errored,
-    skipped: opts.skipped,
-    status: opts.status,
-    ranAt: new Date(),
+  await db.insert(botRunLog).values({
+    leadsTexted: opts.sent,
+    leadsFailed: opts.errored,
+    leadsEvaluated: opts.sent + opts.errored + opts.skipped,
+    summary: `${opts.botName} (${opts.botSlug}): ${opts.status} — sent=${opts.sent}, errored=${opts.errored}, skipped=${opts.skipped}`,
+    triggeredBy: "cron",
   });
 }
 

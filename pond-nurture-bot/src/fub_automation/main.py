@@ -164,12 +164,26 @@ class Rules:
     def load(cls, path: str) -> "Rules":
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+        # ── Shared Suppression List: merge tags from the single source of truth ──
+        suppression_json_path = os.path.join(os.path.dirname(path), "suppression_tags.json")
+        shared_suppression_tags: List[str] = []
+        if os.path.exists(suppression_json_path):
+            try:
+                with open(suppression_json_path, "r", encoding="utf-8") as sf:
+                    shared_data = json.loads(sf.read())
+                    shared_suppression_tags = shared_data.get("tags", [])
+                LOGGER.info("Loaded %d shared suppression tags from %s", len(shared_suppression_tags), suppression_json_path)
+            except Exception as e:
+                LOGGER.warning("Failed to load shared suppression_tags.json: %s", e)
+        # Merge shared tags into excluded_tags (deduplicating, case-insensitive)
+        yaml_excluded = data.get("excluded_tags", ["do not contact", "past client", "closed"])
+        merged_excluded = list({t.lower() for t in yaml_excluded + shared_suppression_tags})
         return cls(
             stale_stages=data.get("stale_stages", ["Stale", "Cold", "Long Term Nurture"]),
             stale_tags=data.get("stale_tags", ["stale", "cold", "long-term"]),
             unresponsive_tags=data.get("unresponsive_tags", ["unresponsive", "no response"]),
             excluded_stages=data.get("excluded_stages", ["Trash", "Closed", "Under Contract"]),
-            excluded_tags=data.get("excluded_tags", ["do not contact", "past client", "closed"]),
+            excluded_tags=merged_excluded,
             sms_consent_tags=data.get("sms_consent_tags", ["sms opt in", "text consent"]),
             email_opt_out_tags=data.get("email_opt_out_tags", ["email opt out", "unsubscribe"]),
             sms_opt_out_tags=data.get("sms_opt_out_tags", ["sms opt out", "stop texting"]),
