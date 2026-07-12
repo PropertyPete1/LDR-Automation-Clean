@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1781554546258,
+      "tag": "0000_typical_doctor_doom",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1781554959479,
+      "tag": "0001_noisy_synch",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1781557675507,
+      "tag": "0002_great_ricochet",
+      "breakpoints": true
+    }
+  ]
+}

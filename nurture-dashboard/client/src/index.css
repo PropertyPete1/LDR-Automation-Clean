@@ -1,0 +1,363 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  /* Gold custom tokens */
+  --color-gold: var(--gold);
+  --color-gold-dim: var(--gold-dim);
+  --color-gold-muted: var(--gold-muted);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+}
+
+/* ─── Luxury Gold/Black Design System ────────────────────────────────────────
+   Palette: near-black bg, obsidian card surfaces, warm gold accent (#C9A84C),
+   subtle gold glow, Inter font, refined 0.5rem radius.
+   Inspired by: premium fintech, luxury real estate dashboards.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Gold accent — warm, restrained, premium */
+  --gold:              oklch(0.76 0.14 78);   /* #C9A84C warm gold */
+  --gold-dim:          oklch(0.65 0.12 78);   /* dimmer gold for hover */
+  --gold-muted:        oklch(0.40 0.07 78);   /* very muted gold for backgrounds */
+
+  --primary:           oklch(0.76 0.14 78);
+  --primary-foreground: oklch(0.10 0.01 78);
+
+  --sidebar-primary:   oklch(0.76 0.14 78);
+  --sidebar-primary-foreground: oklch(0.10 0.01 78);
+
+  /* Chart palette — gold / teal / blue / rose / violet */
+  --chart-1: oklch(0.76 0.14 78);
+  --chart-2: oklch(0.62 0.17 185);
+  --chart-3: oklch(0.60 0.20 250);
+  --chart-4: oklch(0.65 0.22 350);
+  --chart-5: oklch(0.60 0.22 290);
+
+  --radius: 0.5rem;
+
+  /* Dark surfaces — obsidian black */
+  --background:        oklch(0.09 0.006 260);  /* #0C0D11 near-black */
+  --foreground:        oklch(0.94 0.005 80);   /* warm off-white */
+  --surface:           oklch(0.12 0.006 260);  /* card base */
+  --surface-raised:    oklch(0.15 0.006 260);  /* elevated card */
+  --card:              oklch(0.12 0.006 260);
+  --card-foreground:   oklch(0.94 0.005 80);
+  --popover:           oklch(0.13 0.006 260);
+  --popover-foreground: oklch(0.94 0.005 80);
+
+  /* Secondary / muted */
+  --secondary:         oklch(0.17 0.006 260);
+  --secondary-foreground: oklch(0.75 0.005 80);
+  --muted:             oklch(0.17 0.006 260);
+  --muted-foreground:  oklch(0.55 0.008 80);
+  --accent:            oklch(0.17 0.006 260);
+  --accent-foreground: oklch(0.94 0.005 80);
+
+  /* Destructive */
+  --destructive:       oklch(0.60 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  /* Borders & inputs */
+  --border:            oklch(1 0 0 / 9%);
+  --input:             oklch(1 0 0 / 12%);
+  --ring:              oklch(0.76 0.14 78 / 60%);
+
+  /* Sidebar */
+  --sidebar:           oklch(0.10 0.006 260);
+  --sidebar-foreground: oklch(0.94 0.005 80);
+  --sidebar-accent:    oklch(0.15 0.006 260);
+  --sidebar-accent-foreground: oklch(0.94 0.005 80);
+  --sidebar-border:    oklch(1 0 0 / 8%);
+  --sidebar-ring:      oklch(0.76 0.14 78);
+}
+
+/* Dark is the only theme — same values */
+.dark {
+  --gold:              oklch(0.76 0.14 78);
+  --gold-dim:          oklch(0.65 0.12 78);
+  --gold-muted:        oklch(0.40 0.07 78);
+  --primary:           oklch(0.76 0.14 78);
+  --primary-foreground: oklch(0.10 0.01 78);
+  --sidebar-primary:   oklch(0.76 0.14 78);
+  --sidebar-primary-foreground: oklch(0.10 0.01 78);
+  --background:        oklch(0.09 0.006 260);
+  --foreground:        oklch(0.94 0.005 80);
+  --surface:           oklch(0.12 0.006 260);
+  --surface-raised:    oklch(0.15 0.006 260);
+  --card:              oklch(0.12 0.006 260);
+  --card-foreground:   oklch(0.94 0.005 80);
+  --popover:           oklch(0.13 0.006 260);
+  --popover-foreground: oklch(0.94 0.005 80);
+  --secondary:         oklch(0.17 0.006 260);
+  --secondary-foreground: oklch(0.75 0.005 80);
+  --muted:             oklch(0.17 0.006 260);
+  --muted-foreground:  oklch(0.55 0.008 80);
+  --accent:            oklch(0.17 0.006 260);
+  --accent-foreground: oklch(0.94 0.005 80);
+  --destructive:       oklch(0.60 0.22 25);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border:            oklch(1 0 0 / 9%);
+  --input:             oklch(1 0 0 / 12%);
+  --ring:              oklch(0.76 0.14 78 / 60%);
+  --chart-1: oklch(0.76 0.14 78);
+  --chart-2: oklch(0.62 0.17 185);
+  --chart-3: oklch(0.60 0.20 250);
+  --chart-4: oklch(0.65 0.22 350);
+  --chart-5: oklch(0.60 0.22 290);
+  --sidebar:           oklch(0.10 0.006 260);
+  --sidebar-foreground: oklch(0.94 0.005 80);
+  --sidebar-accent:    oklch(0.15 0.006 260);
+  --sidebar-accent-foreground: oklch(0.94 0.005 80);
+  --sidebar-border:    oklch(1 0 0 / 8%);
+  --sidebar-ring:      oklch(0.76 0.14 78);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+
+  /* Snappy button press feedback */
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active {
+    transform: scale(0.97);
+    transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  /* ── iOS Safari / WebKit: prevent autofill from overriding text color ── */
+  textarea,
+  input,
+  select {
+    -webkit-text-fill-color: inherit;
+    color: inherit;
+  }
+  textarea:-webkit-autofill,
+  input:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: #ffffff;
+    -webkit-box-shadow: 0 0 0px 1000px oklch(0.10 0.006 260) inset;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1280px;
+    }
+  }
+
+  /* ── Luxury dark card — obsidian surface, gold border glow ── */
+  .luxury-card {
+    background: oklch(0.12 0.006 260);
+    border: 1px solid oklch(1 0 0 / 9%);
+    border-radius: 0.75rem;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+  .luxury-card:hover {
+    border-color: oklch(0.76 0.14 78 / 30%);
+    box-shadow: 0 0 20px oklch(0.76 0.14 78 / 8%);
+  }
+
+  /* ── Gold KPI number ── */
+  .stat-number {
+    font-size: 1.875rem;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    color: oklch(0.76 0.14 78);
+    line-height: 1;
+  }
+
+  /* ── Gold glow button ── */
+  .btn-gold {
+    background: oklch(0.76 0.14 78);
+    color: oklch(0.10 0.01 78);
+    font-weight: 600;
+    border-radius: 0.5rem;
+    padding: 0.5rem 1.25rem;
+    transition: background 160ms ease, box-shadow 160ms ease;
+  }
+  .btn-gold:hover {
+    background: oklch(0.82 0.14 78);
+    box-shadow: 0 0 16px oklch(0.76 0.14 78 / 40%);
+  }
+
+  /* ── Gold accent badge ── */
+  .badge-gold {
+    background: oklch(0.76 0.14 78 / 15%);
+    color: oklch(0.76 0.14 78);
+    border: 1px solid oklch(0.76 0.14 78 / 30%);
+    border-radius: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  /* ── Legacy aliases ── */
+  .tech-card {
+    background: oklch(0.12 0.006 260);
+    border: 1px solid oklch(1 0 0 / 9%);
+    border-radius: 0.75rem;
+    transition: border-color 200ms ease, box-shadow 200ms ease;
+  }
+  .tech-card:hover {
+    border-color: oklch(0.76 0.14 78 / 30%);
+    box-shadow: 0 0 20px oklch(0.76 0.14 78 / 8%);
+  }
+  .badge-amber {
+    background: oklch(0.76 0.14 78 / 15%);
+    color: oklch(0.76 0.14 78);
+    border: 1px solid oklch(0.76 0.14 78 / 30%);
+    border-radius: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .section-heading {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: oklch(0.94 0.005 80);
+    letter-spacing: -0.01em;
+  }
+  .muted-label {
+    font-size: 0.75rem;
+    color: oklch(0.55 0.008 80);
+    font-weight: 500;
+  }
+
+  /* ── Top-center gold glow burst (reference image signature effect) ── */
+  .gold-glow-bg {
+    position: relative;
+  }
+  .gold-glow-bg::before {
+    content: '';
+    position: fixed;
+    top: -120px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 400px;
+    background: radial-gradient(ellipse at center top,
+      oklch(0.76 0.14 78 / 18%) 0%,
+      oklch(0.76 0.14 78 / 6%)  35%,
+      transparent 70%
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Smooth dropdown/modal entrance ── */
+  @media (prefers-reduced-motion: no-preference) {
+    .animate-in {
+      animation: enter 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+    }
+    @keyframes enter {
+      from { opacity: 0; transform: scale(0.97) translateY(-4px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+  }
+
+  /* ── Gold shimmer line on active sidebar item ── */
+  .sidebar-active-gold {
+    background: oklch(0.76 0.14 78 / 12%);
+    border-left: 2px solid oklch(0.76 0.14 78);
+    color: oklch(0.76 0.14 78);
+  }
+}
+
+/* Global Overrides to Hide Platform Watermarks, Badges, and Overlays */
+[class*="manus"],
+[id*="manus"],
+[class*="watermark"],
+[id*="watermark"],
+div[style*="fixed"][style*="bottom-right"],
+div[style*="fixed"][style*="bottom: 1rem"],
+div[style*="fixed"][style*="z-index: 9999"],
+div[style*="fixed"][style*="z-index:9999"] {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  width: 0 !important;
+}

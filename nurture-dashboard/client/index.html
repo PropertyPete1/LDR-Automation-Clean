@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>{{project_title}}</title>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- iOS PWA: enables standalone (full-screen) mode when added to home screen -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="LC Command" />
+
+    <!-- iOS touch icons (Safari uses these for Add to Home Screen) -->
+    <link rel="apple-touch-icon" href="/manus-storage/pwa-icon-180_035bc8a7.png" />
+    <link rel="apple-touch-icon" sizes="192x192" href="/manus-storage/pwa-icon-192_6a50f53c.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/manus-storage/pwa-icon-512-final_5feabb45.png" />
+
+    <!-- Inter font — light-tech design system -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+    <!-- Theme color for browser chrome (Android Chrome / Safari tab bar) -->
+    <meta name="theme-color" content="#0C0D11" />
+
+    <!-- Prevent iOS from auto-linking phone numbers -->
+    <meta name="format-detection" content="telephone=no" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <!-- Service Worker registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function (reg) {
+              console.log('[PWA] Service worker registered:', reg.scope);
+              // Detect when a new service worker is waiting (new version available)
+              reg.addEventListener('updatefound', function () {
+                var newWorker = reg.installing;
+                if (!newWorker) return;
+                newWorker.addEventListener('statechange', function () {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    // A new version is waiting — notify the React app
+                    window.dispatchEvent(new CustomEvent('sw-update-available'));
+                  }
+                });
+              });
+              // Also check for an already-waiting worker on page load
+              if (reg.waiting && navigator.serviceWorker.controller) {
+                window.dispatchEvent(new CustomEvent('sw-update-available'));
+              }
+            })
+            .catch(function (err) {
+              console.warn('[PWA] Service worker registration failed:', err);
+            });
+        });
+      }
+    </script>
+    <script
+      defer
+      src="%VITE_ANALYTICS_ENDPOINT%/umami"
+      data-website-id="%VITE_ANALYTICS_WEBSITE_ID%"></script>
+  </body>
+
+</html>

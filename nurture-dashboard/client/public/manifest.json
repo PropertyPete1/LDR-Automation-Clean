@@ -1,0 +1,53 @@
+{
+  "name": "Lifestyle Command Center",
+  "short_name": "LC Command",
+  "description": "Lifestyle Design Realty — Agent Power Queue & Performance Dashboard",
+  "start_url": "/sms-queue",
+  "display": "standalone",
+  "background_color": "#1c1917",
+  "theme_color": "#1c1917",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-US",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "/manus-storage/pwa-icon-192_6a50f53c.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/manus-storage/pwa-icon-512-final_5feabb45.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Power Queue",
+      "short_name": "Queue",
+      "description": "Open the agent tap-to-text Power Queue",
+      "url": "/sms-queue",
+      "icons": [
+        {
+          "src": "/manus-storage/pwa-icon-192_6a50f53c.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Open the admin performance dashboard",
+      "url": "/",
+      "icons": [
+        {
+          "src": "/manus-storage/pwa-icon-192_6a50f53c.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

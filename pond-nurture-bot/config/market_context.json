@@ -1,0 +1,4 @@
+{
+  "REPLACE WITH PRIMARY CITY": "Add current local market facts here, such as inventory trend, median price movement, days on market, seller concessions, new-build incentives, or rate/payment context. Do not include numbers unless they are verified.",
+  "REPLACE WITH SECONDARY CITY": "Add current local market facts here. The AI will use this context and is instructed not to invent exact statistics."
+}
