@@ -82,11 +82,12 @@ def main() -> int:
         f'email_cap={rules.phase2_max_customer_emails_per_run}; '
         f'reassignment_cap={rules.phase2_max_reassignments_per_run}'
     )
-    # Generate personalized agent videos dynamically tailored to today's best deal and weekly themes
-    try:
+    # ── DISABLED: Daily deals/captions/videos email content removed (replaced by Power Queue) ──
+    # The video generation, PDF deal sheets, and social media captions are no longer sent
+    # to agents in the clock-in email. Power Queue handles all lead engagement now.
+    if False:  # Disabled 2026-06-25
         print("Generating fresh daily personalized videos for agents...")
         import subprocess, glob, re, json
-        # Run from fub_automation root directory to find configs/modules correctly
         subprocess.run(["python3", "/home/ubuntu/fub_automation/generate_personalized_videos.py"], check=True)
         
         # Upload the freshly rendered videos to S3 to refresh the CDN links
@@ -136,9 +137,8 @@ def main() -> int:
             print(f"Auto-patched video_cdn_map in main.py for: {list(new_cdn_map.keys())}")
 
         print("Daily video generation and CDN refresh completed successfully!")
-    except Exception as v_exc:
-        print(f"Warning: Failed to generate or upload daily agent videos: {v_exc}")
 
+    engine.scan_all_leads_for_disqualification()  # Reply Intent Handler: auto-trash relocated/bought-elsewhere leads (ALL leads)
     engine.scan_pond_responses_for_intent()
     engine.scan_stale_agent_no_note_reassignment()
     engine.scan_stale_leads()
@@ -147,6 +147,7 @@ def main() -> int:
     engine.process_new_lead_timers()
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
     engine.scan_closed_drip()  # Phase 3: quarterly check-in emails for Closed/Past Client/Sphere leads
+    engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
     engine.send_phase2_daily_summary()
     
     # Auto-refresh the dashboard data

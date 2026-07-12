@@ -7,13 +7,13 @@ company_address: "1209 S Saint Marys St #232, San Antonio, TX 78210"
 owner_email: "peter@lifestyledesignrealty.com"
 default_agent_reminder_cc: "peter@lifestyledesignrealty.com"
 # Agent reminder digest emails: DISABLED — replaced by Lifestyle Bot clock-in/clock-out emails.
-agent_reminder_emails_enabled: false
+agent_reminder_emails_enabled: true
 agent_reminder_broadcast_mode_enabled: true
 agent_reminder_cc_owner: true
 agent_reminder_delivery_mode: "daily_digest"
 email_outreach_enabled: true
 customer_reengagement_emails_enabled: true
-sms_outreach_enabled: true
+sms_outreach_enabled: false
 use_agent_sender_for_assigned_leads: false
 email_sender_domain: "lifestyledesignrealty.com"
 customer_default_sender_email: "peter@lifestyledesignrealty.com"
@@ -37,6 +37,8 @@ phase2_manual_suppression_tags:
   - "No AI Email"
   - "Do Not Email"
   - "Manual Review"
+  - "SOI"  # Sphere of Influence — personal contacts, never touch
+  - "Replied - Paused"  # Lead replied to a bot email — pause all automation until agent reviews
 stale_reassignment_excluded_stages:
   - "Active Client"
   - "Pending"
@@ -54,6 +56,7 @@ peter_user_id: 2
 excluded_user_ids:
   - 16
   - 34
+  - 20  # Tiffany Proske — removed from all automation per owner request 2026-07-07
 
 # Confirmed account stages from read-only probe:
 # Lead, Hot Prospect, Nurture, Active Client, Pending, Closed, Past Client, Sphere, Trash, Unresponsive.
@@ -135,7 +138,7 @@ email_address_update_scan_enabled: true
 # Pond nurture SMS — FUB native SMS sent alongside the daily pond nurture emails
 # Uses the same FUB /textMessages API as the Lifestyle Bot (NOT Twilio)
 # Deduplication: leads already texted by Lifestyle Bot today are skipped
-pond_nurture_sms_enabled: true
+pond_nurture_sms_enabled: false
 pond_nurture_sms_daily_cap: 300
 pond_nurture_sms_from_number: "5203737839"
 

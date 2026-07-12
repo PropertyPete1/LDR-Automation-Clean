@@ -460,19 +460,26 @@ class FollowUpBossClient:
 
     def _request(self, method: str, path: str, *, params: Optional[dict] = None, json_body: Optional[dict] = None, registered: bool = False) -> dict:
         url = f"{self.BASE}{path}"
-        max_retries = 4
+        max_retries = 5
         for attempt in range(max_retries):
-            response = requests.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                headers=self._headers(registered=registered),
-                auth=(self.settings.fub_api_key, ""),
-                timeout=30,
-            )
+            try:
+                response = requests.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers=self._headers(registered=registered),
+                    auth=(self.settings.fub_api_key, ""),
+                    timeout=60,
+                )
+            except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+                wait = 2 ** (attempt + 1)
+                LOGGER.warning("FUB API timeout/connection error on %s %s — retrying in %ss (attempt %s/%s): %s",
+                               method, path, wait, attempt + 1, max_retries, str(e)[:100])
+                time.sleep(wait)
+                continue
             if response.status_code == 429:
-                # FUB rate limit hit — back off exponentially (2s, 4s, 8s, 16s)
+                # FUB rate limit hit — back off exponentially (2s, 4s, 8s, 16s, 32s)
                 wait = 2 ** (attempt + 1)
                 LOGGER.warning("FUB API rate limit (429) on %s %s — retrying in %ss (attempt %s/%s)",
                                method, path, wait, attempt + 1, max_retries)
@@ -483,7 +490,7 @@ class FollowUpBossClient:
             if not response.text:
                 return {}
             return response.json()
-        raise RuntimeError(f"FUB API {method} {path} failed after {max_retries} retries due to rate limiting (429)")
+        raise RuntimeError(f"FUB API {method} {path} failed after {max_retries} retries (timeout/rate-limit)")
 
     def get_people(self, **params: Any) -> List[dict]:
         # If offset or limit are explicitly set, don't auto-paginate to respect custom requests
@@ -601,11 +608,11 @@ class ContentGenerator:
         api_key = os.getenv("OPENAI_API_KEY") or getattr(settings, "openai_api_key", None)
         base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or None
         if api_key and base_url:
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=120.0)
         elif api_key:
-            self.client = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key, timeout=120.0)
         else:
-            self.client = OpenAI()
+            self.client = OpenAI(timeout=120.0)
         self.model = settings.openai_model
         self.rules = rules
 
@@ -707,7 +714,7 @@ class ContentGenerator:
             LOGGER.warning("LLM skip check failed for person %s: %s", person.get("id"), exc)
             return False, ""
 
-    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "") -> dict:
+    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "") -> dict:
         first_name = person.get("firstName") or "there"
         person_id = int(person.get("id") or 0)
         cycle_seed = f"{person_id}-{dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
@@ -737,6 +744,38 @@ class ContentGenerator:
         )
         safe_lead_context = lead_context or "No safe lead-specific note context is available beyond the first name and city guidance."
         safe_recent_note = recent_note_text or "No recent note was available."
+        today_str = dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+        # Holiday-aware email generation
+        holiday_instruction = ""
+        if holiday:
+            holiday_instruction = (
+                f"HOLIDAY CONTEXT: Today is {holiday}! This is a holiday, so the email should "
+                f"warmly acknowledge {holiday} in the opening or subject line. Wish them a happy {holiday} "
+                f"and keep the tone celebratory and festive. The email should still be about real estate "
+                f"and their home search, but lead with the holiday greeting. Make it feel like Peter is "
+                f"sending a quick personal holiday note to a friend, not a mass blast."
+            )
+
+        # Thread-aware email generation: if there's a recent email thread, prioritize continuing it
+        thread_section = ""
+        thread_instruction = ""
+        if recent_email_thread:
+            thread_section = f"\n        Recent email thread (chronological, most recent at bottom):\n        {recent_email_thread}\n"
+            thread_instruction = (
+                "\n        CRITICAL THREAD CONTINUATION RULES:\n"
+                "        - There is an active email thread with this lead shown above. You MUST continue that conversation naturally.\n"
+                "        - Reference what was last asked or said in the thread and follow up on it directly.\n"
+                f"        - CRITICAL: Only reference actions that are EXPLICITLY documented in the thread or FUB notes. NEVER claim you sent listings, options, properties, or resources unless the thread or notes explicitly confirm it. If the previous emails discussed the market generally, continue that general conversation - do NOT escalate to claiming you sent specific things.\n"
+                f"        - CRITICAL DATE AWARENESS: Today's date is {today_str}. Notes include dates. If a note is more than 30 days old, treat it as HISTORICAL - never reference old meetings, calls, or conversations as if they are current or upcoming. Old notes with phrases like 'this Friday' or 'next week' refer to dates that have LONG PASSED.\n"
+                "        - Do NOT start a new unrelated topic or ignore the existing thread.\n"
+                "        - If Peter asked a question in the last email, follow up on THAT question (e.g. 'Just checking in, did you get a chance to think about your timeline?').\n"
+                "        - If the lead replied with information, acknowledge it and advance the conversation.\n"
+                "        - Keep the same conversational tone as the thread. This should feel like the next natural message in an ongoing chat.\n"
+                "        - The subject line should relate to the thread topic, not introduce a random new angle.\n"
+                "        - IGNORE the freshness angle below when a thread exists. The thread topic IS your angle.\n"
+            )
+
         prompt = f"""
         You are writing as Peter Allen from {self.rules.company_name}.
         Draft a warm, personal two-week nurture email to a real estate lead in a Follow Up Boss pond.
@@ -747,7 +786,9 @@ class ContentGenerator:
         Most recent FUB note: {safe_recent_note}
         Freshness angle for this cycle: {angle}
         Local or market context: {market_context or 'Use general, non-fabricated language. You may mention broad themes like inventory, rates, neighborhood fit, local restaurants, coffee shops, weekend events, and lifestyle, but do not invent specific openings, exact statistics, named businesses, or rate numbers unless provided in the context.'}
-
+        {thread_section}
+        {thread_instruction}
+        {holiday_instruction}
         Requirements:
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, campaign, or transactional automation.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor talking to a friend, not marketing copywriter.
@@ -757,9 +798,13 @@ class ContentGenerator:
         - CRITICAL STYLE RESTRICTION: Do not use bullet points, numbered lists, or list structures of any kind. Keep it strictly conversational prose.
         - Write exactly ONE greeting line at the top, for example "Hey Matthew,". Use only the first name. Do not repeat the name in the opening sentence.
         - Read the most recent FUB note and reference it naturally when helpful, without sounding creepy or quoting it directly.
-        - If the most recent note says listings were sent, naturally ask "Did you get a chance to look at those?"
+        - CRITICAL DATE AWARENESS: Today's date is {today_str}. Notes include their dates in brackets like [2024-10-15]. If a note is more than 30 days old, treat it as HISTORICAL context only. NEVER reference events, meetings, conversations, or actions from old notes as if they are current or upcoming. For example, if an 8-month-old note says "this Friday" or "setting a time," those events are LONG PAST — do not mention them. If the most recent note is very old (60+ days), acknowledge the time gap naturally (e.g., "It's been a while" or "Wanted to reach back out") rather than pretending there's an active ongoing conversation.
+        - ONLY reference listings, options, or properties being sent if the FUB notes EXPLICITLY state that listings/options were sent to this specific lead. If no note confirms it, NEVER claim you sent them anything. This is critical — hallucinating that you sent listings when you did not will destroy trust with the lead.
+        - If the notes DO confirm listings were sent, naturally ask "Did you get a chance to look at those?"
         - If the most recent note says the lead is pre-approved, reference that naturally in the body.
         - Use the safe lead context only if it helps; do not over-reference old notes.
+        - CRITICAL: Do NOT state where the lead is relocating FROM as a fact (e.g. "hope the move from Minnesota is going well"). Notes may contain inaccurate third-party data. Only reference the DESTINATION city/area. If you want to reference a move, say something generic like "how's the move going" or "hope the transition is smooth" without naming the origin state or city.
+        - CRITICAL: Do NOT invent or assume personal details about the lead (family status, job, hobbies, pets) unless explicitly stated in the notes. When in doubt, keep it general.
         - Vary the angle naturally using the freshness angle, so each two-week cycle has a different subject, opening, and question.
         - Tailor to the detected city when known. If no city is known, emphasize that we help clients across Texas and can narrow the right city together.
         - Discuss useful topics such as market feel, rates or payment context, neighborhoods, lifestyle, commute, restaurants, bars, weekend events, or home-search strategy.
@@ -771,15 +816,6 @@ class ContentGenerator:
         - Ask exactly one simple question that makes it easy for the lead to respond.
         - Never end with any question about automating an agent's workflow or anything internal. This is a client email only.
         - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
-
-        ANTI-HALLUCINATION RULES (ABSOLUTE, NEVER VIOLATE):
-        - NEVER invent, fabricate, or assume meetings, phone calls, conversations, appointments, or any interaction that is not EXPLICITLY stated in the notes above.
-        - PAY CLOSE ATTENTION TO NOTE DATES. If a note says "[X days ago]" and X is greater than 30, that note is OLD. Any events it mentions ("this Friday", "next week", "our meeting") have LONG PASSED or never happened. Do NOT reference them as current or upcoming.
-        - If the notes contain a warning like "THIS NOTE IS X DAYS OLD" or "ANCIENT HISTORY", you MUST write a gentle re-engagement email that acknowledges it has been a while. Use language like "Hope you have been well" or "It has been a while since we last connected". NEVER pretend there was a recent conversation.
-        - NEVER use phrases like "our recent chat", "our conversation", "that Friday meeting", "following up on our call" UNLESS a note from within the last 14 days explicitly describes that specific interaction.
-        - If you are unsure whether something happened recently, DO NOT MENTION IT. Only reference facts that are clearly stated AND recent (within 30 days) in the notes.
-        - NEVER say "I just wanted to follow up on our chat" or "great talking to you" unless a note from the last 14 days confirms a real conversation occurred.
-
         - Return strict JSON with exactly these keys: subject, email_body.
         """
         response = self.client.chat.completions.create(
@@ -1145,16 +1181,26 @@ class ContentGenerator:
           "not moving yet but will", or any signal of real intent with a delayed timeline.
           IMPORTANT: This is NOT the same as opt-out. The lead still wants to buy/sell — just later.
 
+        "no_longer_looking" — The lead is NO LONGER looking to move to Texas or buy/sell in your area.
+          They have moved away, relocated, are no longer in the market, or have explicitly stated
+          they are not planning to move to Texas anymore. This is DIFFERENT from opt-out (they are
+          not angry or asking to be removed — they are politely informing you of a life change).
+          Examples: "I am no longer living in Texas", "I moved to another state", "I've decided
+          not to relocate", "we ended up buying somewhere else", "no longer in the market",
+          "we moved to Florida", "not planning to move to Texas anymore".
+          IMPORTANT: This is NOT opt-out. They may still be a referral source. They just don't
+          need your services personally anymore.
+
         "none" — The communication does not clearly fit any of the above. Examples: a generic
           greeting, a question about something unrelated, a message that is ambiguous, or
           a communication that is outbound (from the agent), not inbound (from the lead).
 
         CONFIDENCE REQUIREMENT:
-        Only assign buying_intent, future_timeline, or opt_out if you are at least 75% confident.
+        Only assign buying_intent, future_timeline, no_longer_looking, or opt_out if you are at least 75% confident.
         If you are unsure, assign "none".
 
         Return strict JSON with exactly these keys:
-        - intent: one of "opt_out", "buying_intent", "future_timeline", "none"
+        - intent: one of "opt_out", "buying_intent", "future_timeline", "no_longer_looking", "none"
         - confidence: integer 0-100
         - reason: plain-English explanation of your reasoning, maximum 30 words
         - trigger_snippet: the exact text from the communication that most strongly signals the intent (max 200 chars, empty string if none)
@@ -1514,7 +1560,7 @@ class RuleEngine:
         hard_suppress_tags = {
             "do not contact", "dnc", "do not nurture", "no ai email", "do not email",
             "email opt out", "unsubscribe", "unsubscribed", "bounced", "manual review",
-            "opt out", "spam", "realtor", "agent",
+            "opt out", "spam", "realtor", "agent", "annual nurture only", "replied - paused",
         }
         all_suppress = hard_suppress_tags.union({t.lower() for t in self.rules.phase2_manual_suppression_tags})
         if self.has_any_tag(person, all_suppress):
@@ -1642,7 +1688,7 @@ class RuleEngine:
         hard_suppress_tags = {
             "do not contact", "dnc", "do not nurture", "no ai email", "do not email",
             "email opt out", "unsubscribe", "unsubscribed", "bounced", "manual review",
-            "opt out", "spam", "realtor", "agent",
+            "opt out", "spam", "realtor", "agent", "annual nurture only", "replied - paused",
         }
         all_suppress = hard_suppress_tags.union({t.lower() for t in self.rules.phase2_manual_suppression_tags})
         if self.has_any_tag(person, all_suppress):
@@ -1801,7 +1847,7 @@ class RuleEngine:
         hard_suppress_tags = {
             "do not contact", "dnc", "do not nurture", "no ai email", "do not email",
             "email opt out", "unsubscribe", "unsubscribed", "bounced", "manual review",
-            "opt out", "spam", "realtor", "agent",
+            "opt out", "spam", "realtor", "agent", "annual nurture only", "replied - paused",
         }
         all_suppress = hard_suppress_tags.union({t.lower() for t in self.rules.phase2_manual_suppression_tags})
         if self.has_any_tag(person, all_suppress):
@@ -1917,6 +1963,7 @@ class RuleEngine:
             LOGGER.warning("Daily scans have already completed successfully today at %s. Skipping duplicate run.", successful_summaries[0].get("created_at"))
             return
 
+        self.scan_all_leads_for_disqualification()  # Reply Intent Handler
         self.scan_stale_agent_no_note_reassignment()
         self.scan_stale_leads()
         self.scan_agent_followup()
@@ -2170,11 +2217,216 @@ class RuleEngine:
                             "snippet": trigger_snippet[:200],
                         })
 
+                elif intent == "no_longer_looking":
+                    # AI detected the lead is no longer looking to move to Texas
+                    # Move to annual nurture (1 email/year) instead of full suppression
+                    LOGGER.info(
+                        "Lead %s AI-classified as no_longer_looking (confidence=%s%%) via %s. Moving to annual nurture. Reason: %s",
+                        person_id, ai_confidence, ai_source, ai_reason,
+                    )
+                    # Tag the lead and move to Nurture stage (not Trash)
+                    self.fub.update_person(person_id, {
+                        "stage": "Nurture",
+                        "assignedPondId": None,
+                    })
+                    self.fub.update_person(
+                        person_id,
+                        {"tags": ["Annual Nurture Only"]},
+                        merge_tags=True,
+                    )
+
+                    note_title = "\U0001f4c5 Automation: Annual Nurture Enrolled (No Longer Looking)"
+                    note_body = (
+                        f"Lead automatically moved to Annual Nurture cadence (1 email per year).\n\n"
+                        f"\U0001f4cb Trigger: AI detected lead is no longer looking to move to Texas (confidence: {ai_confidence}%)\n"
+                        f"\u2022 Source channel: {ai_source}\n"
+                        f"\u2022 AI reasoning: {ai_reason}\n"
+                        f"\u2022 Trigger snippet: \"{trigger_snippet[:200]}\"\n\n"
+                        f"Actions taken:\n"
+                        f"\u2022 Tagged \"Annual Nurture Only\"\n"
+                        f"\u2022 Removed from active email nurture\n"
+                        f"\u2022 Will receive ONE friendly check-in email per year\n\n"
+                        f"This lead is NOT opted out \u2014 they may still be a referral source."
+                    )
+                    self.fub.add_note(person_id, note_title, note_body)
+                    self.db.log("annual_nurture_enrollment", "enrolled", person_id, {
+                        "ai_reason": ai_reason,
+                        "confidence": ai_confidence,
+                        "source": ai_source,
+                        "snippet": trigger_snippet[:200],
+                    })
+
             except Exception as exc:
                 LOGGER.exception("Failed to scan responses for pond lead %s", person_id)
                 self.db.log("pond_keyword_reassignment", "error", person_id, {"error": str(exc)})
-        
         LOGGER.info("Pond response scan complete. Scanned %s active candidates, reassigned %s leads.", scanned_count, reassigned_count)
+        
+    def scan_all_leads_for_disqualification(self) -> None:
+        """Scans ALL leads (assigned AND unassigned) with recent inbound activity for disqualification signals.
+        
+        When a lead replies indicating they have relocated out of Texas, bought a home elsewhere,
+        or are otherwise permanently disqualified from the market, this handler:
+          1. Moves the lead to Trash stage
+          2. Adds suppression tags (bot_suppress, relocated_out_of_market)
+          3. Logs a detailed FUB note explaining the AI's reasoning
+          4. Logs the event in the audit DB
+        
+        This covers the gap where assigned leads (not in Pond) were previously not scanned
+        for disqualification signals from their replies.
+        """
+        LOGGER.info("=== REPLY INTENT HANDLER: Scanning ALL leads with recent inbound activity for disqualification ===")
+        
+        # Fetch leads sorted by most recently updated, limit to 200 most active
+        # This catches both assigned and unassigned leads who have replied recently
+        candidates = self.fub.get_people(sort="-updated", limit=200)
+        
+        trashed_count = 0
+        scanned_count = 0
+        cutoff_dt = dt.datetime.now(UTC) - dt.timedelta(days=3)  # Look at last 3 days of activity
+        
+        for person in candidates:
+            person_id = int(person["id"])
+            
+            # Skip if already excluded (trash, opt-out, suppressed, etc.)
+            if self.is_excluded(person):
+                continue
+            
+            # Skip leads already in Pond — those are handled by scan_pond_responses_for_intent
+            assigned_pond_id = person.get("assignedPondId")
+            if assigned_pond_id and int(assigned_pond_id) in {int(pid) for pid in self.rules.pond_ids}:
+                continue
+            
+            # ── FIX: The list endpoint does NOT return lastReceivedEmail/Text/IncomingCall.
+            # We must call get_person(id) individually to get these fields.
+            # Use the 'updated' field from the list response as a pre-filter: if the lead
+            # hasn't been updated in the last 3 days, skip the expensive individual fetch.
+            updated_str = person.get("updated")
+            if updated_str:
+                updated_dt = parse_fub_datetime(updated_str)
+                if updated_dt and updated_dt < cutoff_dt:
+                    # Lead not updated recently — skip (sorted by -updated so all remaining are older)
+                    LOGGER.debug("Stopping disqualification scan at person %s (updated %s, older than cutoff)", person_id, updated_str)
+                    break
+            
+            # Fetch individual person details to get real inbound activity fields
+            try:
+                person_detail = self.fub.get_person(person_id)
+            except Exception as fetch_exc:
+                LOGGER.debug("Could not fetch person detail for %s: %s", person_id, fetch_exc)
+                continue
+            if not person_detail:
+                continue
+            
+            # Now check for recent INBOUND activity using the individual endpoint data
+            has_recent_inbound = False
+            for key in ("lastReceivedEmail", "lastReceivedText", "lastIncomingCall"):
+                val = person_detail.get(key)
+                if val:
+                    try:
+                        parsed = parse_fub_datetime(val)
+                        if parsed and parsed > cutoff_dt:
+                            has_recent_inbound = True
+                            break
+                    except Exception:
+                        pass
+            
+            if not has_recent_inbound:
+                continue
+            
+            scanned_count += 1
+            person_name = f"{person_detail.get('firstName', '')} {person_detail.get('lastName', '')}".strip()
+            
+            try:
+                # Fetch recent inbound communications
+                texts = self.fub.get_text_messages(person_id, limit=10)
+                emails = self.fub.get_emails(person_id, limit=10)
+                notes = self.safe_get_notes(person_id)
+                
+                # Run AI intent classification
+                classification = self.content.classify_lead_intent(person, texts, emails, notes)
+                intent = classification.get("intent", "none")
+                ai_confidence = classification.get("confidence", 0)
+                ai_reason = classification.get("reason", "")
+                trigger_snippet = classification.get("trigger_snippet", "")
+                ai_source = classification.get("source", "none")
+                
+                if intent == "no_longer_looking" and ai_confidence >= 75:
+                    # Lead has permanently relocated or bought elsewhere — move to Trash
+                    LOGGER.info(
+                        "DISQUALIFIED: Lead %s (%s) AI-classified as no_longer_looking (confidence=%s%%) via %s. Moving to Trash. Reason: %s",
+                        person_id, person_name, ai_confidence, ai_source, ai_reason,
+                    )
+                    if not self.settings.dry_run:
+                        self.fub.update_person(person_id, {"stage": "Trash", "assignedPondId": None, "assignedUserId": None})
+                        self.fub.update_person(person_id, {"tags": ["bot_suppress", "relocated_out_of_market"]}, merge_tags=True)
+                    
+                    note_title = "\U0001f6ab Automation: Lead Disqualified & Trashed (Relocated/Bought Elsewhere)"
+                    note_body = (
+                        f"Lead automatically moved to **Trash** stage — permanently disqualified.\n\n"
+                        f"\U0001f6d1 Trigger: AI detected lead is no longer in the Texas market (confidence: {ai_confidence}%)\n"
+                        f"\u2022 Source channel: {ai_source}\n"
+                        f"\u2022 AI reasoning: {ai_reason}\n"
+                        f"\u2022 Trigger snippet: \"{trigger_snippet[:200]}\"\n\n"
+                        f"Actions taken:\n"
+                        f"\u2022 Stage → Trash\n"
+                        f"\u2022 Tagged \"bot_suppress\" + \"relocated_out_of_market\"\n"
+                        f"\u2022 Unassigned from agent\n"
+                        f"\u2022 All automated outreach permanently stopped\n\n"
+                        f"This lead confirmed they have relocated out of the Texas market or purchased a home elsewhere."
+                    )
+                    self.fub.add_note(person_id, note_title, note_body)
+                    self.db.log("reply_intent_disqualification", "trashed", person_id, {
+                        "ai_reason": ai_reason,
+                        "confidence": ai_confidence,
+                        "source": ai_source,
+                        "snippet": trigger_snippet[:200],
+                        "person_name": person_name,
+                        "dry_run": self.settings.dry_run,
+                    })
+                    trashed_count += 1
+                    
+                elif intent == "opt_out" and ai_confidence >= 75:
+                    # Lead wants to stop receiving messages — also move to Trash
+                    LOGGER.info(
+                        "OPT-OUT: Lead %s (%s) AI-classified as opt_out (confidence=%s%%) via %s. Moving to Trash. Reason: %s",
+                        person_id, person_name, ai_confidence, ai_source, ai_reason,
+                    )
+                    if not self.settings.dry_run:
+                        self.fub.update_person(person_id, {"stage": "Trash", "assignedPondId": None, "assignedUserId": None})
+                        self.fub.update_person(person_id, {"tags": ["unsubscribed", "opt-out-auto-trash", "bot_suppress"]}, merge_tags=True)
+                    
+                    note_title = "\U0001f6ab Automation: Lead Opted Out & Moved to Trash"
+                    note_body = (
+                        f"Lead automatically unsubscribed and moved to **Trash** stage.\n\n"
+                        f"\U0001f6d1 Trigger: AI detected opt-out intent (confidence: {ai_confidence}%)\n"
+                        f"\u2022 Source channel: {ai_source}\n"
+                        f"\u2022 AI reasoning: {ai_reason}\n"
+                        f"\u2022 Trigger snippet: \"{trigger_snippet[:200]}\"\n\n"
+                        f"Actions taken:\n"
+                        f"\u2022 Stage → Trash\n"
+                        f"\u2022 Tagged \"unsubscribed\" + \"opt-out-auto-trash\" + \"bot_suppress\"\n"
+                        f"\u2022 Unassigned from agent\n"
+                        f"\u2022 All automated outreach permanently stopped"
+                    )
+                    self.fub.add_note(person_id, note_title, note_body)
+                    self.db.log("reply_intent_disqualification", "opt_out_trashed", person_id, {
+                        "ai_reason": ai_reason,
+                        "confidence": ai_confidence,
+                        "source": ai_source,
+                        "snippet": trigger_snippet[:200],
+                        "person_name": person_name,
+                        "dry_run": self.settings.dry_run,
+                    })
+                    trashed_count += 1
+                    
+            except Exception as exc:
+                LOGGER.exception("Reply intent scan failed for person %s (%s)", person_id, person_name)
+                self.db.log("reply_intent_disqualification", "error", person_id, {"error": str(exc)})
+        
+        LOGGER.info(
+            "Reply intent disqualification scan complete. Scanned %s leads with recent inbound activity, trashed %s.",
+            scanned_count, trashed_count,
+        )
 
     def scan_email_address_updates(self) -> None:
         """Scans recent inbound emails from ALL non-excluded leads for email address change notifications.
@@ -2265,11 +2517,21 @@ class RuleEngine:
         LOGGER.info("Email address update scan complete. Updated %s lead(s).", updated_count)
 
     def has_recent_omnichannel_touch(self, person: dict, days: int) -> bool:
-        """Checks if the lead has had any direct outreach (calls, texts, emails, or activities) within the specified days."""
+        """Checks if the LEAD has responded (inbound only) within the specified days.
+        
+        Only checks INBOUND activity from the lead:
+        - lastReceivedEmail: lead sent an email
+        - lastReceivedText: lead sent a text
+        - lastIncomingCall: lead called in
+        
+        Does NOT check outbound (lastSentEmail, lastSentText, lastCall) because
+        bot/agent outreach should NOT reset the stale timer. The lead must actually
+        RESPOND for the agent to keep them.
+        """
         cutoff_dt = dt.datetime.now(UTC) - dt.timedelta(days=days)
         
-        # Check standard FUB activity and communication fields
-        for key in ("lastCommunication", "lastActivity", "lastSentEmail", "lastSentText", "lastCall"):
+        # Only check INBOUND activity from the lead
+        for key in ("lastReceivedEmail", "lastReceivedText", "lastIncomingCall"):
             val = person.get(key)
             if val:
                 try:
@@ -2278,35 +2540,27 @@ class RuleEngine:
                         return True
                 except Exception:
                     pass
-                    
-        # Check FUB contacted flag
-        if person.get("contacted"):
-            # If contacted is True, check if lastActivity is within the cutoff
-            val = person.get("lastActivity")
-            if val:
-                try:
-                    parsed = parse_fub_datetime(val)
-                    if parsed and parsed > cutoff_dt:
-                        return True
-                except Exception:
-                    pass
-                    
+        
         return False
 
     def scan_agent_followup(self) -> None:
         if not self.rules.agent_reminder_emails_enabled:
             LOGGER.info("Agent reminder email scan is disabled by rules.yaml")
             return
-        cutoff_dt = dt.datetime.now(UTC) - dt.timedelta(days=self.rules.agent_followup_days)
-        cutoff = cutoff_dt.strftime("%Y-%m-%d %H:%M:%S")
-        candidates = self.fub.get_people(lastActivityBefore=cutoff)
+        # ── FIXED: Use createdAfter/createdBefore to only include leads CREATED 1-20 days ago ──
+        # Previously used lastActivityBefore which pulled ALL leads (even years old) whose
+        # lastActivity was stale. This caused inflated counts (e.g. Steven showing 212 leads
+        # when only 11 were actually fresh). Now matches the Power Queue logic exactly.
+        now = dt.datetime.now(UTC)
+        created_after = (now - dt.timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        created_before = (now - dt.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        LOGGER.info("Agent followup scan: fetching leads created between %s and %s", created_after, created_before)
+        candidates = self.fub.get_people(createdAfter=created_after, createdBefore=created_before)
+        LOGGER.info("Agent followup scan: %s candidates found in 1-20 day window", len(candidates))
         reminders_by_agent: Dict[int, List[dict]] = {}
         _excluded_agent_ids: set = set(getattr(self.rules, "excluded_user_ids", []))
         for person in candidates:
             if self.is_excluded(person) or person.get("assignedPondId"):
-                continue
-            # Omnichannel Touch Detection: Skip if lead had any call, text, email, or activity within 14 days
-            if self.has_recent_omnichannel_touch(person, self.rules.agent_followup_days):
                 continue
             assigned_user_id = person.get("assignedUserId")
             if not assigned_user_id:
@@ -2411,11 +2665,11 @@ class RuleEngine:
             subject = f"🚀 Now Introducing: The Lifestyle Command Center, {first_name}"
         elif lead_count == 0:
             subject = pick([
-                f"🏡 {first_name.upper()} — Fresh Video Content & Today's Hot Deal Sheet",
-                f"🔥 TODAY'S BEST DEAL: Post this script & generate leads today!",
-                f"⚡ DAILY VIDEO SPOTLIGHT: Click to get today's copy-paste script",
-                f"📈 SOCIAL BOOST: Today's Featured Builder Deal & Video Script",
-                f"🌟 {first_name.upper()} — Your Daily Social Media Lead Magnet",
+                f"🏡 {first_name.upper()} — You're All Caught Up! Pipeline Looking Clean",
+                f"✅ ZERO STALE LEADS: Great work keeping FUB clean, {first_name}!",
+                f"⚡ {first_name.upper()} — Pipeline Clear, Keep the Momentum Going!",
+                f"📈 ALL CAUGHT UP: Your follow-up game is on point today",
+                f"🌟 {first_name.upper()} — Clean Pipeline Report",
             ])
         else:
             subject = pick([
@@ -2441,7 +2695,7 @@ class RuleEngine:
         if lead_count == 0:
             intro = "I checked your pipeline this morning, and you are completely up to date with zero stale leads requiring immediate follow-up! Incredible work keeping FUB clean."
             focus = ""
-            ask = "Since your pipeline is in great shape, let's focus on generating new business today. Here is today's featured builder deal and a custom video script you can post on social media to attract new buyer leads."
+            ask = "Since your pipeline is in great shape, keep the momentum going — check in on any hot prospects, update your notes, and stay proactive. You're crushing it."
         else:
             intro = pick([
                 f"I’m working through follow-up this morning and these are the {lead_word} assigned to you that look like they need a touch in FUB.",
@@ -2472,20 +2726,14 @@ class RuleEngine:
 
         try:
             from fub_automation.sms_helpers import get_upcoming_holiday, generate_personalized_sms, make_sms_uri
-            from fub_automation.pdf_generator import get_deal_for_city, generate_deal_pdf, upload_pdf_to_storage
-            from fub_automation.video_generator import generate_video_script_and_caption
         except ModuleNotFoundError:
             from src.fub_automation.sms_helpers import get_upcoming_holiday, generate_personalized_sms, make_sms_uri
-            from src.fub_automation.pdf_generator import get_deal_for_city, generate_deal_pdf, upload_pdf_to_storage
-            from src.fub_automation.video_generator import generate_video_script_and_caption
 
         local_date = dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()
         holiday = get_upcoming_holiday(local_date)
 
-        # Determine if this agent has a specific city focus
+        # City focus for SMS personalization (still used for tap-to-text suggestions)
         city_focus = "San Antonio"
-        
-        # 1. Try to scan the agent's active leads for a dominant city
         if people:
             city_counts = {}
             for person in people:
@@ -2495,116 +2743,33 @@ class RuleEngine:
             if city_counts:
                 city_focus = max(city_counts, key=city_counts.get)
         else:
-            # 2. Manual fallback mapping based on agent's user ID or email
             agent_id_map = {
-                33: "DFW",           # Irma Vidic Crisp
-                31: "San Antonio",   # Stefanie Graham
-                35: "San Antonio",   # Laila Maria
-                28: "Austin",        # Abby Martinez
-                20: "Austin",        # Tiffany Proske
-                16: "Austin",        # Luke Durbin
-                1: "Austin",         # Steven Van Orden
-                2: "San Antonio",    # Peter Allen
+                33: "DFW", 31: "San Antonio", 35: "San Antonio",
+                28: "Austin", 20: "Austin", 16: "Austin",
+                1: "Austin", 2: "San Antonio",
             }
             city_focus = agent_id_map.get(int(assigned_user_id), "San Antonio")
-
-        # Generate the daily builder deal PDF asset for this specific city/market
-        deal = get_deal_for_city(city_focus)
-        pdf_filename = f"LDR_Deal_Spotlight_{deal['id']}_{local_date.strftime('%Y%m%d')}.pdf"
-        import tempfile as _tempfile
-        pdf_storage_key = f"pdf/{pdf_filename}"
-        # Write PDF to a temp file first, then upload to S3 (works on any machine)
-        with _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as _tmp:
-            pdf_local_path = _tmp.name
-        try:
-            generate_deal_pdf(deal, pdf_local_path, agent_name=first_name)
-            LOGGER.info("Successfully generated daily deal PDF at: %s", pdf_local_path)
-            # Upload to S3 so the URL works regardless of which machine runs the automation
-            pdf_url = upload_pdf_to_storage(pdf_local_path, pdf_storage_key)
-            LOGGER.info("PDF uploaded to storage: %s", pdf_url)
-        except Exception as pdf_exc:
-            LOGGER.warning("Failed to generate or upload daily deal PDF: %s", pdf_exc)
-            pdf_url = "https://lifestyledesignrealty.com/deals"  # Fallback URL
-        finally:
-            try:
-                import os as _os
-                _os.unlink(pdf_local_path)
-            except Exception:
-                pass
-
-        # Generate Video Script and Caption
-        video_assets = generate_video_script_and_caption(first_name, city_focus)
-
-        # Map agents to their pre-uploaded high-speed CDN video URLs with phone overlays
-        video_cdn_map = {
-            "tiffany": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/xlsPDNVculOVmZHv.mp4",
-            "steven": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/xJSpzlBKrzolLXgM.mp4",
-            "abby": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/jtzMcWKGccNxfskC.mp4",
-            "stefanie": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/HHcIzogIsNrCgcSW.mp4",
-            "laila": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/nKLQpJLflByLplpu.mp4",
-            "peter": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/AkTZXhxLwompgOHK.mp4",
-            "irma": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/RPEeAYLIlYChDsLF.mp4"
-        }
-        agent_key = first_name.lower().strip()
-        # Use the dashboard's /api/download-video endpoint which forces a browser download
-        # (direct CDN URLs stream in-browser instead of downloading)
-        if agent_key in video_cdn_map:
-            video_download_url = f"https://fub-nurture-phfprjui.manus.space/api/download-video?agent={agent_key}"
-        else:
-            video_download_url = "https://lifestyledesignrealty.com/videos"
-
-        # HTML formatting for the Video Content Box
-        video_html_box = f"""
-        <div style="background-color: #f1f5f9; border-left: 4px solid #d97706; padding: 16px; margin-bottom: 24px; border-radius: 4px; font-family: Helvetica, Arial, sans-serif;">
-            <h3 style="margin-top: 0; color: #0f172a; font-size: 16px;">🎥 DAILY VIDEO CONTENT TO POST (Instagram / TikTok)</h3>
-            <p style="color: #475569; font-size: 13px; margin-bottom: 12px;">
-                Record a quick 30-60 second video on your phone of a gorgeous new build (use any beautiful kitchen/interior footage) and copy-paste the exact caption below. 
-                <strong>Crucially, tell viewers to "Comment {video_assets['keyword']}" (never DM!).</strong> 
-                This boosts comments, explodes your organic views, and lets you DM them today's custom deal sheet!
-            </p>
-            
-            <div style="background-color: #ffffff; border: 1px solid #cbd5e1; padding: 12px; margin-bottom: 12px; border-radius: 4px; font-size: 13px; max-height: 180px; overflow-y: auto;">
-                {video_assets['script']}
-            </div>
-            
-            <h4 style="margin-bottom: 6px; color: #0f172a; font-size: 13px;">📝 COPY-PASTE CAPTION (Includes Peter's Winning Bio/Structure):</h4>
-            <div style="background-color: #ffffff; border: 1px solid #cbd5e1; padding: 12px; margin-bottom: 12px; border-radius: 4px; font-size: 12px; font-family: monospace; white-space: pre-wrap; max-height: 180px; overflow-y: auto;">{video_assets['caption']}</div>
-            
-            <h4 style="margin-bottom: 6px; color: #0f172a; font-size: 13px;">📥 YOUR DAILY PDF LEAD MAGNET TO SEND:</h4>
-            <p style="color: #475569; font-size: 13px; margin-bottom: 8px;">
-                When buyers comment <strong>"{video_assets['keyword']}"</strong>, DM them, ask for their email, and copy-paste this custom, professionally designed PDF link to them:
-            </p>
-            <a href="{pdf_url}" style="display: inline-block; padding: 8px 14px; background-color: #0f172a; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px; margin-right: 10px;" target="_blank">📥 Download Today's PDF Deal Sheet</a>
-            
-            <h4 style="margin-top: 15px; margin-bottom: 6px; color: #0f172a; font-size: 13px;">🎬 YOUR PERSONALIZED 10-SECOND WATERMARKED VIDEO TO POST:</h4>
-            <p style="color: #475569; font-size: 13px; margin-bottom: 8px;">
-                Download your personalized 10-second high-converting vertical video with your name on it and a subtle <strong>Lifestyle Design Realty</strong> watermark, ready to post directly to Reels, Shorts, or TikTok:
-            </p>
-            <a href="{video_download_url}" style="display: inline-block; padding: 8px 14px; background-color: #d97706; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px;" target="_blank">🎬 Download Your Personalized Promo Video</a>
-        </div>
-        """
 
         # Build both HTML and Plain Text bodies for the email
         if lead_count == 0:
             lines = [
                 f"Hi {first_name},",
                 "",
-                "🎥 DAILY VIDEO TO POST:",
-                "We have generated a fresh, high-converting video script and caption for you to post on Instagram/TikTok today!",
-                f"Download your daily PDF lead magnet to send to people who comment: {pdf_url}",
-                "",
                 intro,
                 "",
                 ask,
-                "",
             ]
             html_lines = [
                 f"<p>Hi {first_name},</p>",
-                video_html_box,
                 f"<p>{intro}</p>",
                 f"<p>{ask}</p>",
             ]
         else:
+            # ── REMOVED: Power Queue tap-to-text digest email ──
+            # Agents already receive their AI bot clock-in email which includes the Power Queue button.
+            # This digest was redundant. Only the Clean Pipeline (0 stale leads) email is kept.
+            # Skip sending for agents who have leads — their AI bot handles it.
+            return
             # Base URL of the live dashboard where the queue is hosted
             dashboard_base_url = "https://fub-nurture-phfprjui.manus.space"
             queue_url = f"{dashboard_base_url}/agent/{first_name.lower()}"
@@ -2753,16 +2918,7 @@ class RuleEngine:
                 lines = [
                     f"Hi {first_name},",
                     "",
-                    "🎥 DAILY VIDEO TO POST:",
-                    "We have generated a fresh, high-converting video script and caption for you to post on Instagram/TikTok today!",
-                    f"Download your daily PDF lead magnet to send to people who comment: {pdf_url}",
-                    "",
-                    f"⚡ NEW: Launch Your Daily Tap-to-Text Power Queue: {queue_url}",
-                    "Instead of going back and forth clicking emails, use the link above to text all your stale leads from a single, high-speed page!",
-                    "How it works:",
-                    "1. Click the link to open your queue.",
-                    "2. Tap 'Text Lead' next to a lead — it pre-fills your Messages app.",
-                    "3. Press Send, swipe back to the browser, and tap the next lead in line!",
+                    f"⚡ Launch Your Daily Tap-to-Text Power Queue: {queue_url}",
                     "",
                     intro,
                     "",
@@ -2775,7 +2931,6 @@ class RuleEngine:
             if is_launch_day:
                 html_lines = [
                     f"<p>Hi {first_name},</p>",
-                    video_html_box,
                     queue_html_banner,
                     f"<p>{intro}</p>",
                     f"<p>{focus} {ask}</p>",
@@ -2785,7 +2940,6 @@ class RuleEngine:
             else:
                 html_lines = [
                     f"<p>Hi {first_name},</p>",
-                    video_html_box,
                     queue_html_banner,
                     f"<p>{intro}</p>",
                     f"<p>{focus} {ask}</p>",
@@ -2814,6 +2968,18 @@ class RuleEngine:
                     except Exception:
                         pass
 
+                # ── Thread-Aware Context: Fetch recent email thread for this lead ──
+                thread_summary = ""
+                try:
+                    thread_raw = self.get_recent_email_thread(lead_id, limit=3, max_age_days=30)
+                    if thread_raw:
+                        # Extract just the last exchange for a compact summary
+                        last_exchange = thread_raw.strip().split("\n\n")[-1] if thread_raw else ""
+                        # Truncate to keep the email manageable
+                        thread_summary = last_exchange[:200].strip()
+                except Exception:
+                    pass
+
                 # Generate SMS text
                 sms_body = generate_personalized_sms(
                     first_name=person_first_name,
@@ -2828,15 +2994,29 @@ class RuleEngine:
                 phones = person.get("phones") or []
                 phone_val = phones[0].get("value") or phones[0].get("phone") if phones else None
                 
+                # Build thread context snippet for display
+                thread_html_snippet = ""
+                thread_text_snippet = ""
+                if thread_summary:
+                    thread_text_snippet = f"  └─ Last conversation: {thread_summary}"
+                    thread_html_snippet = (
+                        f"<br/><span style='color: #4a5568; font-size: 11px; background: #f7fafc; "
+                        f"padding: 3px 6px; border-radius: 3px; border-left: 2px solid #667eea;'>"
+                        f"💬 Last: {thread_summary}</span>"
+                    )
+
                 if phone_val:
                     sms_link = make_sms_uri(phone_val, sms_body, agent_name=first_name, lead_id=str(lead_id))
                     # Plain text line
-                    lines.append(f"- {name} ({stage}) — FUB ID {lead_id} ➔ [Tap to Text]: {sms_link}")
-                    # HTML line with a beautiful clickable button
+                    lines.append(f"- {name} ({stage}) — FUB ID {lead_id} ➤ [Tap to Text]: {sms_link}")
+                    if thread_text_snippet:
+                        lines.append(thread_text_snippet)
+                    # HTML line with a beautiful clickable button + thread context
                     html_lines.append(
                         f"<li style='margin-bottom: 12px; list-style-type: none;'>"
                         f"📱 <strong>{name}</strong> ({stage}) — "
                         f"<a href='{sms_link}' style='display: inline-block; padding: 4px 10px; background-color: #25D366; color: white; text-decoration: none; border-radius: 4px; font-weight: bold; font-size: 13px;'>📲 Tap to Text</a>"
+                        f"{thread_html_snippet}"
                         f"<br/><span style='color: #666; font-size: 12px; font-style: italic;'>Suggested: \"{sms_body}\"</span>"
                         f"</li>"
                     )
@@ -2848,12 +3028,21 @@ class RuleEngine:
                             f"Automated click-to-text follow-up reminder sent to assigned agent ({first_name}).\n\n"
                             f"Suggested text message:\n\"{sms_body}\""
                         )
+                        if thread_summary:
+                            note_body += f"\n\nThread context: {thread_summary}"
                         self.fub.add_note(lead_id, note_title, note_body)
                     except Exception as note_exc:
                         LOGGER.warning("Failed to log click-to-text FUB note for person %s: %s", lead_id, note_exc)
                 else:
                     lines.append(f"- {name} ({stage}) — FUB ID {lead_id} (No phone number on file)")
-                    html_lines.append(f"<li style='margin-bottom: 12px; list-style-type: none;'>📱 <strong>{name}</strong> ({stage}) — <span style='color: #999;'>No phone number on file</span></li>")
+                    if thread_text_snippet:
+                        lines.append(thread_text_snippet)
+                    html_lines.append(
+                        f"<li style='margin-bottom: 12px; list-style-type: none;'>📱 <strong>{name}</strong> ({stage}) — "
+                        f"<span style='color: #999;'>No phone number on file</span>"
+                        f"{thread_html_snippet}"
+                        f"</li>"
+                    )
 
         if lead_count > 0:
             if len(people) > 100:
@@ -2897,30 +3086,44 @@ class RuleEngine:
         cleaned = re.sub(r"<[^>]+>", " ", raw)
         cleaned = re.sub(r"https?://\S+", "[link]", cleaned)
         cleaned = re.sub(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", cleaned)
-        cleaned = re.sub(r"\b\d{3}[-.\)\s]*\d{3}[-.\s]*\d{4}\b", "[phone]", cleaned)
-        text = re.sub(r"\s+", " ", cleaned).strip()[:500]
-        # Add date awareness so the AI knows how old this note is
-        note_date_raw = note.get("created") or note.get("createdAt") or note.get("createdDate") or note.get("updated") or note.get("updatedAt")
-        note_dt = parse_fub_datetime(note_date_raw)
-        if note_dt:
-            days_ago = int((dt.datetime.now(UTC) - note_dt).total_seconds() / 86400)
-            if days_ago > 180:
-                text = f"\u26a0\ufe0f THIS NOTE IS {days_ago} DAYS OLD (over {days_ago // 30} months). It is ANCIENT HISTORY, NOT a recent event. " + text
-            elif days_ago > 90:
-                text = f"\u26a0\ufe0f This note is {days_ago} days old. Events in it are NOT current. " + text
-            elif days_ago > 30:
-                text = f"[Note from {days_ago} days ago] " + text
-            else:
-                text = f"[Note from {days_ago} days ago] " + text
-        return text
+        cleaned = re.sub(r"\b\d{3}[-.)\ s]*\d{3}[-.\s]*\d{4}\b", "[phone]", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()[:500]
+        # Include the note date so the AI knows how old it is
+        note_date = note.get("created") or note.get("date") or note.get("createdAt") or ""
+        if note_date:
+            return f"[Note dated {note_date[:10]}]: {cleaned}"
+        return cleaned
 
     def was_contacted_recently(self, person: dict, days: int = 3) -> bool:
+        """Check if the lead has been contacted recently (within `days` days).
+        
+        Checks three sources:
+        1. Our own database (last bot email sent)
+        2. FUB person-level inbound fields (lastReceivedEmail, etc.)
+        3. FUB emails API timeline (catches synced Gmail, manual emails, replies)
+        """
         person_id = int(person["id"])
         cutoff = dt.datetime.now(UTC) - dt.timedelta(days=days)
         last = self.db.get_last_reengagement(person_id)
         if last and last >= cutoff:
             return True
-        return self.has_recent_omnichannel_touch(person, days)
+        if self.has_recent_omnichannel_touch(person, days):
+            return True
+        # Also check FUB emails API — person-level fields are unreliable for synced emails
+        try:
+            emails = self.fub.get_emails(person_id, limit=5)
+            for e in emails:
+                created = e.get("created", "")
+                if created:
+                    try:
+                        email_dt = parse_fub_datetime(created)
+                        if email_dt and email_dt >= cutoff:
+                            return True
+                    except Exception:
+                        pass
+        except Exception as exc:
+            LOGGER.debug("Failed to check FUB emails API for person %s: %s", person_id, exc)
+        return False
 
     def process_reengagement_candidate(self, person: dict) -> str:
         person_id = int(person["id"])
@@ -2970,7 +3173,17 @@ class RuleEngine:
         city, lead_context, city_source = self.customer_nurture_context(person, notes=notes)
         market_context = self.market.get(city) if city else ""
         recent_note_text = self.most_recent_note_text(notes)
-        generated = self.content.generate(person, city or "Texas", market_context, lead_context, recent_note_text=recent_note_text)
+        # Fetch recent email thread for thread-aware follow-ups
+        recent_email_thread = self.get_recent_email_thread(person_id, limit=5)
+        if recent_email_thread:
+            LOGGER.info("Thread-aware mode: found email thread for person %s, will continue conversation", person_id)
+        # Detect holiday for holiday-aware emails
+        try:
+            from fub_automation.sms_helpers import get_upcoming_holiday as _get_holiday
+        except ModuleNotFoundError:
+            from src.fub_automation.sms_helpers import get_upcoming_holiday as _get_holiday
+        _today_holiday = _get_holiday(dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()) or ""
+        generated = self.content.generate(person, city or "Texas", market_context, lead_context, recent_note_text=recent_note_text, recent_email_thread=recent_email_thread, holiday=_today_holiday)
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
             sender_email = self.rules.owner_email
@@ -3198,6 +3411,16 @@ class RuleEngine:
         if not person.get("assignedUserId"):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "no assigned agent"})
             return "suppressed"
+        # CRITICAL: Never reassign agent-imported SOI leads (these are personal contacts agents brought in)
+        source = str(person.get("source") or "").lower()
+        created_via = str(person.get("createdVia") or "").lower()
+        if source == "import" or created_via == "import":
+            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "agent-imported SOI lead", "source": source, "createdVia": created_via})
+            return "suppressed"
+        # CRITICAL: Never reassign leads that have an active deal in any pipeline (Deal Room)
+        if self._has_active_deal(person_id):
+            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "lead has active deal in Deal Room"})
+            return "suppressed"
             
         # Omnichannel Touch Detection: Skip if lead had any call, text, email, or activity within 20 days
         if self.has_recent_omnichannel_touch(person, self.rules.stale_agent_no_note_days):
@@ -3216,8 +3439,8 @@ class RuleEngine:
             self.fub.add_note(
                 person_id,
                 "🚨 Automation: Reassigned to Lead Pond",
-                f"Lead went untouched for {self.rules.stale_agent_no_note_days}+ days by assigned agent ({prev_agent}).\n\n"
-                f"Automatically reassigned back to Lead Pond for automated re-engagement nurturing."
+                f"Lead had NO inbound response (no texts, emails, or calls from the lead) for {self.rules.stale_agent_no_note_days}+ days while assigned to {prev_agent}.\n\n"
+                f"Automatically reassigned to Lead Pond for automated re-engagement nurturing. Will auto-reassign back if buying intent detected."
             )
         except Exception as note_exc:
             LOGGER.warning("Failed to log stale agent reassignment FUB note for person %s: %s", person_id, note_exc)
@@ -3225,11 +3448,30 @@ class RuleEngine:
         self.db.log("stale_agent_pond_reassignment", "completed", person_id, {
             "assignedPondId": pond_id,
             "days_without_note": self.rules.stale_agent_no_note_days,
-            "reason": f"No qualifying FUB note found in {self.rules.stale_agent_no_note_days}+ days; reassigned to Lead Pond by approved Phase 2 automation.",
+            "reason": f"No inbound response from lead in {self.rules.stale_agent_no_note_days}+ days; reassigned to Lead Pond by approved Phase 2 automation.",
             "previous_assigned_user_id": person.get("assignedUserId"),
             "stage": stage,
         })
         return "completed"
+
+    def _has_active_deal(self, person_id: int) -> bool:
+        """Check if a lead has any active deal in FUB (Deal Room).
+        
+        Returns True if the person is attached to any deal with status 'Active',
+        meaning they should NEVER be reassigned to the pond.
+        """
+        try:
+            resp = self.fub._request("GET", "deals", params={"personId": person_id, "limit": 5})
+            deals = resp.get("deals", [])
+            for deal in deals:
+                if str(deal.get("status", "")).lower() == "active":
+                    LOGGER.info("Person %s has active deal '%s' in pipeline '%s' — protected from reassignment",
+                                person_id, deal.get("name"), deal.get("pipelineName"))
+                    return True
+            return False
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Could not check deals for person %s (assuming no deal): %s", person_id, exc)
+            return False
 
     def customer_nurture_context(self, person: dict, notes: Optional[List[dict]] = None) -> Tuple[str, str, str]:
         loaded_notes: List[dict] = list(notes or [])
@@ -3256,6 +3498,84 @@ class RuleEngine:
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Could not fetch FUB notes for person %s: %s", person_id, exc)
             return []
+
+    def get_recent_email_thread(self, person_id: int, limit: int = 5, max_age_days: int = 30) -> str:
+        """Fetch the most recent emails for a lead and format them as a readable thread.
+
+        Returns a formatted string showing the last few email exchanges (who sent what,
+        when, subject) so the AI can continue the conversation naturally.
+        Returns empty string if no emails found, all are older than max_age_days, or on error.
+
+        Args:
+            person_id: FUB person ID
+            limit: Max number of emails to fetch from API
+            max_age_days: Ignore emails older than this many days (default 30).
+                          Prevents the bot from referencing stale conversations.
+        """
+        try:
+            emails = self.fub.get_emails(person_id, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("Could not fetch FUB emails for thread context, person %s: %s", person_id, exc)
+            return ""
+        if not emails:
+            return ""
+
+        # Filter out emails older than max_age_days (staleness threshold)
+        staleness_cutoff = dt.datetime.now(UTC) - dt.timedelta(days=max_age_days)
+        fresh_emails = []
+        for e in emails:
+            created = e.get("created") or e.get("createdAt") or ""
+            parsed = parse_fub_datetime(created)
+            if parsed and parsed >= staleness_cutoff:
+                fresh_emails.append(e)
+            elif not parsed:
+                # If we can't parse the date, include it (benefit of the doubt)
+                fresh_emails.append(e)
+
+        if not fresh_emails:
+            LOGGER.debug("All emails for person %s are older than %d days, ignoring thread", person_id, max_age_days)
+            return ""
+
+        # Sort by created date ascending (oldest first) so the thread reads chronologically
+        def email_sort_key(e: dict):
+            created = e.get("created") or e.get("createdAt") or ""
+            parsed = parse_fub_datetime(created)
+            return parsed or dt.datetime.min.replace(tzinfo=UTC)
+
+        sorted_emails = sorted(fresh_emails, key=email_sort_key)
+
+        thread_lines: List[str] = []
+        for e in sorted_emails:
+            is_incoming = e.get("isIncoming") or e.get("direction") == "incoming"
+            direction_label = "LEAD REPLIED" if is_incoming else "PETER SENT"
+            subject = (e.get("subject") or "").strip()
+            body = (e.get("body") or e.get("message") or "").strip()
+            created = e.get("created") or e.get("createdAt") or ""
+
+            # Sanitize body: strip HTML, redact sensitive info, truncate
+            body = re.sub(r"<[^>]+>", " ", body)
+            body = re.sub(r"https?://\S+", "[link]", body)
+            body = re.sub(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", body)
+            body = re.sub(r"\b\d{3}[-.)\ s]*\d{3}[-.\s]*\d{4}\b", "[phone]", body)
+            body = re.sub(r"\s+", " ", body).strip()[:400]
+
+            # Format the date nicely
+            date_str = ""
+            parsed_dt = parse_fub_datetime(created)
+            if parsed_dt:
+                date_str = parsed_dt.strftime("%b %d, %Y %I:%M %p")
+
+            entry = f"[{direction_label}] ({date_str})"
+            if subject:
+                entry += f" Subject: {subject}"
+            if body:
+                entry += f"\n  {body}"
+            thread_lines.append(entry)
+
+        if not thread_lines:
+            return ""
+
+        return "\n\n".join(thread_lines)
 
     def has_recent_note(self, notes: List[dict], within_days: int) -> bool:
         cutoff = dt.datetime.now(UTC) - dt.timedelta(days=within_days)
@@ -3700,6 +4020,70 @@ class RuleEngine:
                 self.db.add_new_lead_timer(person_id, int(assigned_user_id), created_at)
                 self.db.log("new_lead_timer", "started_polling", person_id, {"assignedUserId": assigned_user_id, "created_at": created_at})
                 LOGGER.info("API Polling: Started speed-to-lead timer for Lead %s (Assigned to Agent %s)", person_id, assigned_user_id)
+                # Send immediate email notification to the agent with click-to-text link
+                self._send_speed_to_lead_agent_alert(person, int(assigned_user_id))
+
+    def _send_speed_to_lead_agent_alert(self, person: dict, assigned_user_id: int) -> None:
+        """Send an immediate email to the assigned agent when a new lead is assigned.
+        Includes a click-to-text link for instant mobile engagement."""
+        try:
+            users_map = self.user_cache_by_id()
+            agent_user = users_map.get(assigned_user_id)
+            if not agent_user:
+                LOGGER.warning("Speed-to-lead alert: could not find agent user %s", assigned_user_id)
+                return
+            agent_email = agent_user.get("email")
+            agent_name = agent_user.get("name") or "Agent"
+            if not agent_email:
+                return
+            lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person['id']}"
+            # Get lead phone for click-to-text link
+            lead_phone = ""
+            phones = person.get("phones") or []
+            for ph in phones:
+                if isinstance(ph, dict):
+                    lead_phone = ph.get("value") or ph.get("number") or ""
+                    if lead_phone:
+                        break
+                elif isinstance(ph, str) and ph:
+                    lead_phone = ph
+                    break
+            # Build click-to-text link (sms: protocol works on mobile)
+            sms_link = f"sms:{lead_phone}" if lead_phone else ""
+            phone_display = lead_phone or "(no phone on file)"
+            subject = f"\U0001f6a8 NEW LEAD ASSIGNED: {lead_name} — Contact within 30 min!"
+            body = (
+                f"<h2>\U0001f6a8 New Lead Assigned to You</h2>"
+                f"<p>Hi {agent_name.split()[0] if agent_name else 'Agent'},</p>"
+                f"<p>A new lead has been assigned to you. Please make first contact within <strong>30 minutes</strong> "
+                f"or the lead will be reassigned to {self.rules.peter_name}.</p>"
+                f"<table style='border-collapse:collapse;margin:16px 0;'>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Name:</td><td style='padding:4px 12px;'>{lead_name}</td></tr>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Phone:</td><td style='padding:4px 12px;'>{phone_display}</td></tr>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Source:</td><td style='padding:4px 12px;'>{person.get('source', 'Unknown')}</td></tr>"
+                f"</table>"
+            )
+            if sms_link:
+                body += (
+                    f"<p style='margin:20px 0;'>"
+                    f"<a href='{sms_link}' style='display:inline-block;padding:12px 24px;background:#22c55e;color:white;"
+                    f"text-decoration:none;border-radius:8px;font-weight:bold;font-size:16px;'>\U0001f4f1 Tap to Text {lead_name.split()[0]}</a>"
+                    f"</p>"
+                )
+            body += (
+                f"<p style='color:#666;font-size:12px;'>\u23f0 Timer: 30-min warning \u2192 60-min auto-reassignment to {self.rules.peter_name}</p>"
+            )
+            self.email.send(
+                agent_email,
+                subject,
+                body,
+                from_email=self.rules.owner_email,
+                cc=[self.rules.owner_email],
+            )
+            self.db.log("speed_to_lead_alert", "sent", int(person["id"]), {"agent_email": agent_email, "agent_name": agent_name})
+            LOGGER.info("Speed-to-lead agent alert sent to %s for lead %s", agent_email, person["id"])
+        except Exception as exc:
+            LOGGER.warning("Failed to send speed-to-lead agent alert for lead %s: %s", person.get("id"), exc)
 
     def reassign_to_peter(self, person: dict) -> None:
         person_id = int(person["id"])
@@ -3708,6 +4092,33 @@ class RuleEngine:
         self.fub.update_person(person_id, {"tags": ["auto-reassigned-speed-to-lead"]}, merge_tags=True)
         self.fub.add_note(person_id, "Automation: reassigned for no first touch", f"No assigned-agent touch detected within {self.rules.new_lead_reassign_minutes} business-time minutes. Lead reassigned to {self.rules.peter_name}.")
         self.db.log("new_lead_reassigned", "completed", person_id, payload)
+        # Send reassignment notification email to Peter
+        lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
+        prev_agent_id = person.get("assignedUserId")
+        prev_agent_name = "Unknown Agent"
+        if prev_agent_id:
+            users_map = self.user_cache_by_id()
+            prev_user = users_map.get(int(prev_agent_id))
+            if prev_user:
+                prev_agent_name = prev_user.get("name") or "Unknown Agent"
+        try:
+            reassign_subject = f"\u26a0\ufe0f Lead Reassigned: {lead_name} (no agent contact in {self.rules.new_lead_reassign_minutes} min)"
+            reassign_body = (
+                f"<h2>\u26a0\ufe0f Speed-to-Lead Reassignment</h2>"
+                f"<p><strong>{lead_name}</strong> has been automatically reassigned to you.</p>"
+                f"<p><strong>Reason:</strong> {prev_agent_name} did not make first contact within "
+                f"{self.rules.new_lead_reassign_minutes} business minutes.</p>"
+                f"<p><strong>Source:</strong> {person.get('source', 'Unknown')}</p>"
+                f"<p>Please review and reassign or contact this lead.</p>"
+            )
+            self.email.send(
+                self.rules.owner_email,
+                reassign_subject,
+                reassign_body,
+                from_email=self.rules.owner_email,
+            )
+        except Exception as mail_exc:
+            LOGGER.warning("Failed to send reassignment email to Peter for lead %s: %s", person_id, mail_exc)
 
     def is_excluded(self, person: dict) -> bool:
         # 1. Check FUB built-in unsubscribe/opt-out fields
@@ -3734,7 +4145,7 @@ class RuleEngine:
         unsubscribe_tags = {
             "unsubscribe", "unsubscribed", "email opt out", "opt out", "do not email", 
             "do not contact", "dnc", "bounced", "realtor", "agent", "do not nurture",
-            "manual review", "no ai email", "spam"
+            "manual review", "no ai email", "spam", "annual nurture only", "replied - paused"
         }
         # Merge with rules.excluded_tags to be absolutely thorough
         all_excluded_tags = unsubscribe_tags.union({t.lower() for t in self.rules.excluded_tags})
@@ -3882,8 +4293,157 @@ class RuleEngine:
         # the 60-min reassignment timer the moment the 30-min warning note is posted,
         # preventing reassignment from ever firing. Only explicit human actions
         # (calls, texts, emails, non-automation notes) count as a qualifying touch.
-        return False
+                return False
 
+    def scan_reply_detection(self) -> None:
+        """Scans leads that received a bot email in the last 7 days for incoming replies.
+        When a reply is detected:
+          1. Tags the lead "Replied - Paused" to suppress all future automation
+          2. Sends a hot-lead alert email to the owning agent (or Peter for pond leads)
+          3. Logs a FUB note documenting the reply
+        Runs every 10 minutes via scheduler.
+        """
+        LOGGER.info("Reply detection scan starting...")
+        since = dt.datetime.now(UTC) - dt.timedelta(days=7)
+        # Get all leads that received any bot email in the last 7 days
+        email_actions = ["pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
+                         "long_term_nurture_drip", "instant_welcome_email"]
+        recent_sends = self.db.recent_audit_rows(email_actions, since)
+        # Filter to only "sent" or "email_sent" status rows
+        sent_rows = [r for r in recent_sends if r.get("status") in ("sent", "email_sent", "completed")]
+        # Deduplicate by person_id — keep the most recent send per lead
+        latest_send_by_person: Dict[int, str] = {}
+        for row in sent_rows:
+            pid = row.get("person_id")
+            if pid and pid not in latest_send_by_person:
+                latest_send_by_person[int(pid)] = row["created_at"]
+        if not latest_send_by_person:
+            LOGGER.info("Reply detection: no recent bot emails found in last 7 days. Nothing to scan.")
+            return
+        LOGGER.info("Reply detection: checking %s leads that received bot emails in last 7 days.", len(latest_send_by_person))
+        # Check which leads already have the "Replied - Paused" tag (skip them)
+        already_paused = set()
+        # Also check which leads we already detected a reply for today (avoid duplicate alerts)
+        today_detections = self.db.recent_audit_rows(["reply_detected"], since)
+        already_detected_today = {int(r["person_id"]) for r in today_detections if r.get("person_id")}
+        alerts_sent = 0
+        cap = 20  # Max alerts per scan to avoid flooding
+        for person_id, send_time_str in latest_send_by_person.items():
+            if alerts_sent >= cap:
+                LOGGER.info("Reply detection: alert cap (%s) reached. Stopping.", cap)
+                break
+            if person_id in already_detected_today:
+                continue
+            try:
+                person = self.fub.get_person(person_id)
+                if not person:
+                    continue
+                # Skip if already tagged
+                if self.has_any_tag(person, ["Replied - Paused"]):
+                    continue
+                if self.is_excluded(person):
+                    continue
+                # Parse the send time to compare against incoming emails
+                send_dt = parse_fub_datetime(send_time_str)
+                if not send_dt:
+                    continue
+                # Fetch recent emails for this lead
+                emails = self.fub.get_emails(person_id, limit=10)
+                # Look for incoming emails AFTER the bot email was sent
+                reply_found = None
+                for em in emails:
+                    # Incoming emails have isReceived=True or direction="incoming"
+                    is_incoming = em.get("isReceived") or em.get("direction") == "incoming" or em.get("type") == "received"
+                    if not is_incoming:
+                        continue
+                    em_date_str = em.get("dateCreated") or em.get("created") or em.get("date")
+                    if not em_date_str:
+                        continue
+                    em_dt = parse_fub_datetime(em_date_str)
+                    if em_dt and em_dt > send_dt:
+                        reply_found = em
+                        break
+                # Also check incoming texts
+                if not reply_found:
+                    texts = self.fub.get_text_messages(person_id, limit=10)
+                    for txt in texts:
+                        is_incoming = txt.get("isReceived") or txt.get("direction") == "incoming" or txt.get("type") == "received"
+                        if not is_incoming:
+                            continue
+                        txt_date_str = txt.get("dateCreated") or txt.get("created") or txt.get("date")
+                        if not txt_date_str:
+                            continue
+                        txt_dt = parse_fub_datetime(txt_date_str)
+                        if txt_dt and txt_dt > send_dt:
+                            reply_found = txt
+                            break
+                if reply_found:
+                    # REPLY DETECTED — take action
+                    reply_body = reply_found.get("body") or reply_found.get("message") or reply_found.get("text") or "(no body)"
+                    reply_snippet = reply_body[:300]
+                    reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
+                    LOGGER.info("Reply detected for lead %s via %s: %s", person_id, reply_channel, reply_snippet[:80])
+                    # 1. Tag the lead
+                    self.fub.update_person(person_id, {"tags": ["Replied - Paused"]}, merge_tags=True)
+                    # 2. Add FUB note
+                    note_title = "\U0001f525 Automation: Lead Replied — All Automation Paused"
+                    note_body = (
+                        f"This lead replied to an automated email. All automation has been **paused** until an agent reviews.\n\n"
+                        f"\U0001f4e8 Reply channel: {reply_channel}\n"
+                        f"\U0001f4ac Reply snippet: \"{reply_snippet}\"\n\n"
+                        f"\u2705 Action required: Review the reply and either:\n"
+                        f"  \u2022 Continue the conversation manually\n"
+                        f"  \u2022 Remove the \"Replied - Paused\" tag to resume automation\n"
+                        f"  \u2022 Move to Trash if the reply is an opt-out"
+                    )
+                    self.fub.add_note(person_id, note_title, note_body)
+                    # 3. Send alert email to owning agent (or Peter for pond leads)
+                    assigned_user_id = person.get("assignedUserId")
+                    agent_email = None
+                    agent_name = "Agent"
+                    if assigned_user_id:
+                        user_info = self.user_cache_by_id().get(int(assigned_user_id))
+                        if user_info:
+                            agent_email = user_info.get("email")
+                            agent_name = user_info.get("name") or "Agent"
+                    # For pond leads or if agent email not found, alert Peter
+                    if not agent_email or person.get("assignedPondId"):
+                        agent_email = self.rules.owner_email
+                        agent_name = self.rules.peter_name
+                    lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
+                    alert_subject = f"\U0001f525 HOT LEAD REPLY: {lead_name} responded!"
+                    alert_body = (
+                        f"<h2>\U0001f525 Lead Reply Detected</h2>"
+                        f"<p><strong>{lead_name}</strong> replied to an automated email.</p>"
+                        f"<p><strong>Channel:</strong> {reply_channel}</p>"
+                        f"<p><strong>Reply:</strong></p>"
+                        f"<blockquote>{reply_snippet}</blockquote>"
+                        f"<p><strong>Action:</strong> Review the conversation in FUB and respond personally.</p>"
+                        f"<p>All automation for this lead has been paused (tagged \"Replied - Paused\").</p>"
+                        f"<p>To resume automation later, simply remove the tag.</p>"
+                    )
+                    try:
+                        self.email.send(
+                            agent_email,
+                            alert_subject,
+                            alert_body,
+                            from_email=self.rules.owner_email,
+                            cc=[self.rules.owner_email] if agent_email != self.rules.owner_email else [],
+                        )
+                    except Exception as mail_exc:
+                        LOGGER.warning("Reply detection: failed to send alert email for lead %s: %s", person_id, mail_exc)
+                    # 4. Log to audit DB
+                    self.db.log("reply_detected", "alert_sent", person_id, {
+                        "reply_channel": reply_channel,
+                        "reply_snippet": reply_snippet[:200],
+                        "agent_email": agent_email,
+                        "agent_name": agent_name,
+                    })
+                    alerts_sent += 1
+            except Exception as exc:
+                LOGGER.exception("Reply detection: error processing lead %s: %s", person_id, exc)
+                self.db.log("reply_detected", "error", person_id, {"error": str(exc)})
+        LOGGER.info("Reply detection scan complete. Alerts sent: %s", alerts_sent)
 
 class WebhookPayload(BaseModel):
     eventId: str
@@ -3928,6 +4488,8 @@ def create_app() -> FastAPI:
         scheduler.add_job(engine.poll_new_leads, "interval", minutes=5, id="poll_new_leads", replace_existing=True)
         # Process existing speed-to-lead timers every 5 minutes
         scheduler.add_job(engine.process_new_lead_timers, "interval", minutes=5, id="new_lead_timers", replace_existing=True)
+        # Reply detection: scan for incoming replies every 10 minutes
+        scheduler.add_job(engine.scan_reply_detection, "interval", minutes=10, id="reply_detection", replace_existing=True)
         scheduler.start()
 
     @app.get("/health")
@@ -4035,11 +4597,9 @@ def summarize_lead_context_from_notes(notes: List[dict], city: str, target_citie
 
     The output is used only to guide copy tone and relevance. It intentionally
     removes direct contact details and avoids long verbatim note excerpts.
-    Now includes note age (days ago) to prevent the AI from treating old notes as current.
     """
     snippets: List[str] = []
     seen: set[str] = set()
-    now = dt.datetime.now(UTC)
     useful_terms = [
         city,
         *target_cities,
@@ -4062,7 +4622,6 @@ def summarize_lead_context_from_notes(notes: List[dict], city: str, target_citie
         "preapproved",
         "pre-approved",
     ]
-    oldest_note_days = 0
     for note in notes[:10]:
         raw = str(note.get("body") or note.get("text") or note.get("note") or "")
         if not raw.strip():
@@ -4070,39 +4629,26 @@ def summarize_lead_context_from_notes(notes: List[dict], city: str, target_citie
         cleaned = re.sub(r"<[^>]+>", " ", raw)
         cleaned = re.sub(r"https?://\S+", "[link]", cleaned)
         cleaned = re.sub(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", cleaned)
-        cleaned = re.sub(r"\b\d{3}[-.\)\s]*\d{3}[-.\s]*\d{4}\b", "[phone]", cleaned)
+        cleaned = re.sub(r"\b\d{3}[-.)\s]*\d{3}[-.\s]*\d{4}\b", "[phone]", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         if not cleaned:
             continue
         lowered = cleaned.lower()
         if not any(term and term.lower() in lowered for term in useful_terms):
             continue
-        # Calculate note age for date-awareness
-        note_date_raw = note.get("created") or note.get("createdAt") or note.get("createdDate") or note.get("updated") or note.get("updatedAt")
-        note_dt = parse_fub_datetime(note_date_raw)
-        days_ago = int((now - note_dt).total_seconds() / 86400) if note_dt else None
-        if days_ago is not None and days_ago > oldest_note_days:
-            oldest_note_days = days_ago
-        # Include days-ago label so AI knows note age
-        age_label = f" [{days_ago} days ago]" if days_ago is not None else ""
-        snippet = cleaned[:180] + age_label
-        if cleaned[:180].lower() in seen:
+        snippet = cleaned[:180]
+        if snippet.lower() in seen:
             continue
-        seen.add(cleaned[:180].lower())
-        snippets.append(snippet)
+        seen.add(snippet.lower())
+        # Include note date for AI date-awareness
+        note_date = note.get("created") or note.get("date") or note.get("createdAt") or ""
+        date_prefix = f"[{note_date[:10]}] " if note_date else ""
+        snippets.append(f"{date_prefix}{snippet}")
         if len(snippets) >= 3:
             break
     if not snippets:
         return ""
-    # Add staleness warning if all notes are old
-    prefix = ""
-    if oldest_note_days > 180:
-        prefix = f"\u26a0\ufe0f CRITICAL: These notes are {oldest_note_days}+ days old (over {oldest_note_days // 30} months). They are ANCIENT HISTORY. Do NOT reference events in them as current or upcoming. "
-    elif oldest_note_days > 90:
-        prefix = f"\u26a0\ufe0f WARNING: These notes are {oldest_note_days}+ days old. Events mentioned are NOT current. "
-    elif oldest_note_days > 30:
-        prefix = f"Note: These notes are {oldest_note_days}+ days old. Do not treat events in them as recent. "
-    return prefix + "FUB notes context: " + " | ".join(snippets)
+    return "FUB notes (with dates): " + " | ".join(snippets)
 
 
 def infer_city(person: dict, target_cities: List[str]) -> str:
