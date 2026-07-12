@@ -306,6 +306,24 @@ class AuditDB:
                     subject TEXT,
                     message_hash TEXT
                 );
+                CREATE TABLE IF NOT EXISTS engagement_tier (
+                    person_id INTEGER PRIMARY KEY,
+                    tier TEXT NOT NULL DEFAULT 'standard',
+                    last_classified_at TEXT NOT NULL,
+                    reason TEXT
+                );
+                CREATE TABLE IF NOT EXISTS email_angle_log (
+                    person_id INTEGER PRIMARY KEY,
+                    last_angle TEXT NOT NULL,
+                    sent_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reply_time_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id INTEGER NOT NULL,
+                    reply_hour INTEGER NOT NULL,
+                    reply_day_of_week INTEGER NOT NULL,
+                    detected_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -455,6 +473,63 @@ class AuditDB:
     def cancel_timer(self, person_id: int) -> None:
         with self.connect() as con:
             con.execute("UPDATE new_lead_timers SET canceled_at=? WHERE person_id=?", (now_iso(), person_id))
+
+    # ── Engagement Tier (Tier 3 Feature 1) ──
+    def upsert_engagement_tier(self, person_id: int, tier: str, reason: str) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO engagement_tier(person_id, tier, last_classified_at, reason)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(person_id) DO UPDATE SET
+                    tier=excluded.tier,
+                    last_classified_at=excluded.last_classified_at,
+                    reason=excluded.reason
+                """,
+                (person_id, tier, now_iso(), reason),
+            )
+
+    def get_engagement_tier(self, person_id: int) -> Optional[str]:
+        with self.connect() as con:
+            row = con.execute("SELECT tier FROM engagement_tier WHERE person_id=?", (person_id,)).fetchone()
+        return row[0] if row else None
+
+    def get_engagement_tier_counts(self) -> dict:
+        with self.connect() as con:
+            rows = con.execute("SELECT tier, COUNT(*) as cnt FROM engagement_tier GROUP BY tier").fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    # ── Email Angle Log (Tier 3 Feature 2) ──
+    def get_last_email_angle(self, person_id: int) -> Optional[str]:
+        with self.connect() as con:
+            row = con.execute("SELECT last_angle FROM email_angle_log WHERE person_id=?", (person_id,)).fetchone()
+        return row[0] if row else None
+
+    def upsert_email_angle(self, person_id: int, angle: str) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO email_angle_log(person_id, last_angle, sent_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(person_id) DO UPDATE SET
+                    last_angle=excluded.last_angle,
+                    sent_at=excluded.sent_at
+                """,
+                (person_id, angle, now_iso()),
+            )
+
+    # ── Reply Time Log (Tier 3 Feature 4) ──
+    def log_reply_time(self, person_id: int, reply_hour: int, reply_day_of_week: int) -> None:
+        with self.connect() as con:
+            con.execute(
+                "INSERT INTO reply_time_log(person_id, reply_hour, reply_day_of_week, detected_at) VALUES (?, ?, ?, ?)",
+                (person_id, reply_hour, reply_day_of_week, now_iso()),
+            )
+
+    def get_reply_time_count(self) -> int:
+        with self.connect() as con:
+            row = con.execute("SELECT COUNT(*) FROM reply_time_log").fetchone()
+        return row[0] if row else 0
 
 
 class FollowUpBossClient:
@@ -728,7 +803,7 @@ class ContentGenerator:
             LOGGER.warning("LLM skip check failed for person %s: %s", person.get("id"), exc)
             return False, ""
 
-    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "") -> dict:
+    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "") -> dict:
         first_name = person.get("firstName") or "there"
         person_id = int(person.get("id") or 0)
         cycle_seed = f"{person_id}-{dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
@@ -742,6 +817,11 @@ class ContentGenerator:
         ]
         seed_hash = int(hashlib.sha256(cycle_seed.encode('utf-8')).hexdigest(), 16)
         angle = angle_options[seed_hash % len(angle_options)]
+        # ── Tier 3 Feature 2: Angle Rotation — never repeat the same angle twice in a row ──
+        if last_angle_used and angle == last_angle_used and len(angle_options) > 1:
+            # Pick the next angle in the list
+            current_idx = angle_options.index(angle)
+            angle = angle_options[(current_idx + 1) % len(angle_options)]
 
         ask_referral = (seed_hash % 4 == 0)
         referral_instruction = ""
@@ -790,15 +870,35 @@ class ContentGenerator:
                 "        - IGNORE the freshness angle below when a thread exists. The thread topic IS your angle.\n"
             )
 
+        # ── Tier 3 Feature 2: Expanded context for deeper personalization ──
+        lead_source = person.get("source") or person.get("leadSource") or "Unknown"
+        price_range = person.get("priceRange") or person.get("price") or ""
+        # Calculate days in pond from created date
+        created_str = person.get("created") or person.get("createdAt") or ""
+        days_in_pond = ""
+        if created_str:
+            try:
+                created_dt = parse_fub_datetime(created_str)
+                if created_dt:
+                    days_in_pond = str((dt.datetime.now(UTC) - created_dt).days)
+            except Exception:
+                pass
+        safe_full_notes = full_note_history or safe_lead_context
+
         prompt = f"""
         You are writing as Peter Allen from {self.rules.company_name}.
         Draft a warm, personal two-week nurture email to a real estate lead in a Follow Up Boss pond.
 
         Lead first name: {first_name}
+        Lead source: {lead_source}
+        Price range (if known): {price_range or 'Not specified'}
+        Days in pond: {days_in_pond or 'Unknown'}
+        Engagement tier: {engagement_tier} ({'highly responsive, keep momentum' if engagement_tier == 'engaged' else 'cold/unresponsive, try to re-spark interest' if engagement_tier == 'cold' else 'standard cadence'})
         City or area guidance: {city_instruction}
-        Safe lead context from FUB notes or profile: {safe_lead_context}
+        Full FUB note history (use strategically, most recent first): {safe_full_notes}
         Most recent FUB note: {safe_recent_note}
         Freshness angle for this cycle: {angle}
+        IMPORTANT: Do NOT use the same angle as last time. Last angle was: {last_angle_used or 'none/first email'}
         Local or market context: {market_context or 'Use general, non-fabricated language. You may mention broad themes like inventory, rates, neighborhood fit, local restaurants, coffee shops, weekend events, and lifestyle, but do not invent specific openings, exact statistics, named businesses, or rate numbers unless provided in the context.'}
         {thread_section}
         {thread_instruction}
@@ -3148,8 +3248,11 @@ class RuleEngine:
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "not in configured pond"})
             return "suppressed"
         last = self.db.get_last_reengagement(person_id)
-        if last and dt.datetime.now(UTC) - last < dt.timedelta(days=self.rules.reengagement_cadence_days):
-            self.db.log("pond_nurture", "skipped", person_id, {"reason": "14-day cadence cap"})
+        # ── Engagement-Based Cadence (Tier 3) ──
+        tier = self.classify_engagement_tier(person)
+        cadence_days = {"engaged": 10, "standard": 14, "cold": 21}.get(tier, self.rules.reengagement_cadence_days)
+        if last and dt.datetime.now(UTC) - last < dt.timedelta(days=cadence_days):
+            self.db.log("pond_nurture", "skipped", person_id, {"reason": f"{tier}-tier cadence cap ({cadence_days}d)"})
             return "skipped"
         emails = person.get("emails") or []
         if not self.rules.email_outreach_enabled or not emails:
@@ -3197,7 +3300,27 @@ class RuleEngine:
         except ModuleNotFoundError:
             from src.fub_automation.sms_helpers import get_upcoming_holiday as _get_holiday
         _today_holiday = _get_holiday(dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()) or ""
-        generated = self.content.generate(person, city or "Texas", market_context, lead_context, recent_note_text=recent_note_text, recent_email_thread=recent_email_thread, holiday=_today_holiday)
+        # ── Tier 3 Feature 2: Gather expanded context for deeper personalization ──
+        last_angle_used = self.db.get_last_email_angle(person_id) or ""
+        # Build full note history (up to 20 notes, chronological)
+        full_note_history = ""
+        if notes:
+            note_snippets = []
+            for n in notes[:20]:
+                n_body = n.get("body") or n.get("note") or ""
+                n_date = n.get("created") or n.get("dateCreated") or ""
+                if n_body:
+                    note_snippets.append(f"[{n_date[:10]}] {n_body[:300]}")
+            full_note_history = "\n".join(note_snippets)
+        generated = self.content.generate(
+            person, city or "Texas", market_context, lead_context,
+            recent_note_text=recent_note_text,
+            recent_email_thread=recent_email_thread,
+            holiday=_today_holiday,
+            engagement_tier=tier,
+            full_note_history=full_note_history,
+            last_angle_used=last_angle_used,
+        )
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
             sender_email = self.rules.owner_email
@@ -3254,7 +3377,12 @@ class RuleEngine:
                 "city_source": city_source,
                 "freshness_angle": generated.get("freshness_angle"),
                 "subject": generated.get("subject"),
+                "engagement_tier": tier,
             })
+            # Tier 3 Feature 2: Track which angle was used for this lead
+            used_angle = generated.get("freshness_angle") or ""
+            if used_angle:
+                self.db.upsert_email_angle(person_id, used_angle)
             return "sent"
         self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
         return "suppressed"
@@ -4165,6 +4293,65 @@ class RuleEngine:
         all_excluded_tags = unsubscribe_tags.union({t.lower() for t in self.rules.excluded_tags})
         return self.has_any_tag(person, all_excluded_tags)
 
+    def classify_engagement_tier(self, person: dict) -> str:
+        """Classify a pond lead into engagement tiers based on inbound activity.
+
+        Tiers:
+          - 'engaged': Any reply/inbound activity in last 60 days → 10-day cadence
+          - 'cold': Zero inbound activity in 90+ days → 21-day cadence
+          - 'standard': Everyone else → 14-day cadence (current default)
+
+        Data source: FUB person fields (lastReceivedEmail, lastReceivedText, lastIncomingCall)
+        + our audit_log reply_detected entries. FUB does NOT expose email open/click
+        tracking via API, so we use replies + inbound activity as the engagement signal.
+        """
+        person_id = int(person["id"])
+        now = dt.datetime.now(UTC)
+
+        # Check FUB person-level inbound fields
+        latest_inbound: Optional[dt.datetime] = None
+        for key in ("lastReceivedEmail", "lastReceivedText", "lastIncomingCall"):
+            val = person.get(key)
+            if val:
+                try:
+                    parsed = parse_fub_datetime(val)
+                    if parsed and (latest_inbound is None or parsed > latest_inbound):
+                        latest_inbound = parsed
+                except Exception:
+                    pass
+
+        # Also check our own reply_detected audit log for this lead
+        try:
+            since_90 = now - dt.timedelta(days=90)
+            reply_rows = self.db.recent_audit_rows(["reply_detected"], since_90)
+            for row in reply_rows:
+                if row.get("person_id") == person_id:
+                    row_dt = parse_dt(row["created_at"])
+                    if row_dt and (latest_inbound is None or row_dt > latest_inbound):
+                        latest_inbound = row_dt
+        except Exception:
+            pass
+
+        # Classify
+        if latest_inbound:
+            days_since = (now - latest_inbound).days
+            if days_since <= 60:
+                tier = "engaged"
+                reason = f"Inbound activity {days_since}d ago (within 60d)"
+            elif days_since > 90:
+                tier = "cold"
+                reason = f"Last inbound {days_since}d ago (>90d)"
+            else:
+                tier = "standard"
+                reason = f"Last inbound {days_since}d ago (61-90d)"
+        else:
+            tier = "cold"
+            reason = "No inbound activity detected"
+
+        # Persist tier classification
+        self.db.upsert_engagement_tier(person_id, tier, reason)
+        return tier
+
     def qualifies_for_reengagement(self, person: dict) -> bool:
         # Strictly restrict automated re-engagement emails to leads currently inside a configured Pond
         assigned_pond_id = person.get("assignedPondId")
@@ -4453,6 +4640,17 @@ class RuleEngine:
                         "agent_email": agent_email,
                         "agent_name": agent_name,
                     })
+                    # 5. Best-Send-Time Logging (Tier 3 Feature 4) — log reply hour/day
+                    try:
+                        reply_date_str = reply_found.get("dateCreated") or reply_found.get("created") or reply_found.get("date")
+                        if reply_date_str:
+                            reply_dt = parse_fub_datetime(reply_date_str)
+                            if reply_dt:
+                                from zoneinfo import ZoneInfo
+                                local_reply = reply_dt.astimezone(ZoneInfo(self.rules.local_timezone))
+                                self.db.log_reply_time(person_id, local_reply.hour, local_reply.weekday())
+                    except Exception as rt_exc:
+                        LOGGER.debug("Reply time logging failed for person %s: %s", person_id, rt_exc)
                     alerts_sent += 1
             except Exception as exc:
                 LOGGER.exception("Reply detection: error processing lead %s: %s", person_id, exc)

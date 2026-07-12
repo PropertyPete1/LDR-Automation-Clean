@@ -2,7 +2,7 @@
 
 > 🚧 **CODE SNAPSHOT** — live system runs on Cloud Computer 2 + Manus (fubdash-bkyqff6t.manus.space, lifestyledash-wpnl8v84.manus.space). Not yet deployable from this repo.
 
-**Lifestyle Design Realty | Last updated: July 12, 2026 (Tier 2)**
+**Lifestyle Design Realty | Last updated: July 12, 2026 (Tier 3)**
 
 ---
 
@@ -380,6 +380,79 @@ Single source of truth for all suppression tags, readable by both the Python bot
 **Current tags:** do not contact, do not email, do not nurture, no ai email, manual review, opt-out, opted-out, email opt out, unsubscribed, unsubscribe, dnc, do-not-contact, bot_suppress, trash, trashed, deceased, wrong number, wrong person, bounced, opt-out-auto-trash
 
 **Acceptance test passed:** Added test tag to shared list, verified Python pond bot AND TypeScript agent bots both skip leads carrying it, then removed it.
+
+### Engagement-Based Cadence (LIVE)
+
+Pond nurture emails now use dynamic cadence based on lead engagement level:
+
+| Tier | Cadence | Criteria |
+| --- | --- | --- |
+| Engaged | 10 days | Any inbound activity (email reply, text, call) within last 60 days |
+| Standard | 14 days | Last inbound activity 61–90 days ago |
+| Cold | 21 days | No inbound activity in 90+ days (or never) |
+
+**Data source:** FUB person fields `lastReceivedEmail`, `lastReceivedText`, `lastIncomingCall` (replies + inbound activity as engagement signal — FUB API does not expose email open/click tracking per lead).
+
+**Implementation details:**
+- `classify_engagement_tier()` method in main.py — called before cadence check in `process_reengagement_candidate()`
+- Tier stored in `engagement_tier` SQLite table (person_id, tier, last_classified_at, reason)
+- Tier counts reported in 4am email under "ENGAGEMENT TIERS" section
+- No change to existing safety rails: 3-day contact gap and 100-email cap still enforced
+- Acceptance test passed: 3 sample leads classified into 3 tiers correctly (engaged=10d, standard=14d, cold=21d)
+
+### Deeper Email Personalization (LIVE)
+
+Pond nurture AI prompt now receives expanded context for smarter, more tailored emails:
+
+| Input | Source |
+| --- | --- |
+| Full note history (up to 20 notes) | FUB notes API |
+| Lead source | FUB person `source` field |
+| Price range | FUB person `priceRange` field |
+| City/market | FUB addresses |
+| Days in pond | Calculated from `created` date |
+| Engagement tier | Feature 1 classification |
+
+**Angle rotation:** Emails cycle through 6 angles (market update, neighborhood fit, rates/payment, new construction, lifestyle/restaurants, home-search strategy). The system never repeats the same angle twice in a row per lead — tracked in `email_angle_log` SQLite table.
+
+**Implementation details:**
+- `ContentGenerator.generate()` accepts new kwargs: `engagement_tier`, `full_note_history`, `last_angle_used`
+- Angle selection uses deterministic hash + rotation if last angle matches
+- `upsert_email_angle()` / `get_last_email_angle()` in AuditDB
+- Email signature and styling unchanged
+- Acceptance test passed: 2 sample emails for same lead show different angles and use of note history
+
+### Weekly Performance Digest (LIVE — Mondays 8am CT)
+
+Peter receives a weekly summary email every Monday at 8am CT:
+
+| Section | Contents |
+| --- | --- |
+| Email Sends | Per-bot breakdown + total, vs last week |
+| Engagement | Replies detected, hot-lead alerts fired |
+| Speed-to-Lead | New leads, 60-min misses (by agent) |
+| Compliance | Bounces, unsubscribes |
+| Pond Status | Pond size, leads reassigned |
+| Engagement Tiers | Engaged/Standard/Cold counts |
+| Best-Send-Time | Reply-time data points collected |
+
+**Implementation details:**
+- New file: `weekly_digest.py` (standalone script)
+- Cron: `0 8 * * 1` (Monday 8am CT) in `setup_crons.sh`
+- Queries `audit_log`, `new_lead_timers`, `engagement_tier`, `reply_time_log` tables
+- HTML email with color-coded deltas (green ▲ / red ▼) vs previous week
+- Acceptance test passed: digest generated from sample DB data with all key sections
+
+### Best-Send-Time Logging (LIVE — Foundation Only)
+
+Every detected reply now logs the hour-of-day and day-of-week (CT timezone) to build a dataset for future send-window optimization.
+
+**Implementation details:**
+- New SQLite table: `reply_time_log` (person_id, reply_hour 0-23, reply_day_of_week 0-6, detected_at)
+- Logged in `scan_reply_detection()` when a reply is confirmed
+- 4am report includes: "Reply-time data points collected: N"
+- No behavior change yet — after 8+ weeks of data, we'll use it to shift send windows
+- Acceptance test passed: 3 sample replies logged with correct hour/day values
 
 ---
 

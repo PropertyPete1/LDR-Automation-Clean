@@ -12,7 +12,7 @@ mkdir -p "$LOG_DIR"
 crontab - << 'CRONTAB'
 # FUB Automation — Lifestyle Design Realty
 # Cloud Computer crontab — all times in America/Chicago (CT)
-# Last updated: 2026-06-13
+# Last updated: 2026-06-20
 
 # ── Daily main automation ──────────────────────────────────────────────────
 # Pond emails, stale reassignment, agent digests, closed drip, Phase 3 check-ins
@@ -26,8 +26,13 @@ crontab - << 'CRONTAB'
 
 # ── Speed-to-lead intraday checker ────────────────────────────────────────
 # Fires 30-min alert if a new lead hasn't been claimed
-# Runs every 5 minutes Mon–Fri 10am–6pm CT
-*/5 10-17 * * 1-5 cd /home/ubuntu/fub_automation && /usr/bin/python3 run_speed_to_lead_check.py >> /home/ubuntu/fub_automation/logs/speed_to_lead.log 2>&1
+# Runs every 5 minutes 7 days a week 10am-6pm CT (approved by Peter 2026-06-20)
+*/5 10-17 * * * cd /home/ubuntu/fub_automation && /usr/bin/python3 run_speed_to_lead_check.py >> /home/ubuntu/fub_automation/logs/speed_to_lead.log 2>&1
+
+# ── Weekly performance digest ─────────────────────────────────────────────
+# Sends Peter a weekly summary: sends, replies, speed-to-lead, bounces, etc.
+# Runs at 8:00 AM CT every Monday
+0 8 * * 1 cd /home/ubuntu/fub_automation && /usr/bin/python3 weekly_digest.py >> /home/ubuntu/fub_automation/logs/weekly_digest.log 2>&1
 
 # ── Log rotation ───────────────────────────────────────────────────────────
 # Truncates any log over 5MB to 2MB to prevent disk fill

@@ -55,6 +55,8 @@ warnings: List[str] = []
 errors_encountered: List[str] = []
 note_integrity_errors: List[dict] = []  # Feature: Note-Write Verification
 bounce_unsub_counts: dict = {"bounces": 0, "unsubscribes": 0}  # Feature: Bounce & Unsub tagging
+engagement_tier_counts: dict = {}  # Feature: Engagement-Based Cadence (Tier 3)
+reply_time_data_points: int = 0  # Feature: Best-Send-Time Logging (Tier 3)
 
 
 def now_iso() -> str:
@@ -1372,6 +1374,20 @@ def send_morning_email(
         lines.append("✅ No bounces or unsubscribes detected in last 24h")
         lines.append("")
 
+    # ── Engagement Tier & Reply-Time section (Tier 3) ─────────────────
+    try:
+        if engagement_tier_counts:
+            lines.append("📊 ENGAGEMENT TIERS:")
+            for tier_name in ("engaged", "standard", "cold"):
+                cnt = engagement_tier_counts.get(tier_name, 0)
+                cadence = {"engaged": "10d", "standard": "14d", "cold": "21d"}.get(tier_name, "?")
+                lines.append(f"   {tier_name.title()}: {cnt} leads ({cadence} cadence)")
+            lines.append("")
+        lines.append(f"⏱️ Reply-time data points collected: {reply_time_data_points}")
+        lines.append("")
+    except Exception:
+        pass
+
     if warnings:
         lines += [f"📋 NOTES:"]
         for w in warnings:
@@ -1509,6 +1525,26 @@ def main():
     log.info("")
     log.info("STAGE 2.5b: Scanning for bounces & unsubscribes (last 24h)...")
     detect_bounces_and_unsubscribes(dry_run)
+
+    # ── STAGE 2.5c: Engagement Tier & Reply-Time Stats (Tier 3) ──────────
+    log.info("")
+    log.info("STAGE 2.5c: Gathering engagement tier counts and reply-time data...")
+    global engagement_tier_counts, reply_time_data_points
+    try:
+        import sqlite3 as _sq
+        _db_path = os.path.join(AUTO_DIR, "data", "fub_automation.sqlite3")
+        _conn = _sq.connect(_db_path)
+        _conn.row_factory = _sq.Row
+        _tier_rows = _conn.execute("SELECT tier, COUNT(*) as cnt FROM engagement_tier GROUP BY tier").fetchall()
+        engagement_tier_counts = {r["tier"]: r["cnt"] for r in _tier_rows}
+        _rt_row = _conn.execute("SELECT COUNT(*) as cnt FROM reply_time_log").fetchone()
+        reply_time_data_points = _rt_row["cnt"] if _rt_row else 0
+        _conn.close()
+        log.info("Engagement tiers: %s | Reply-time data points: %d", engagement_tier_counts, reply_time_data_points)
+    except Exception as _e:
+        log.warning("Failed to gather Tier 3 stats: %s", _e)
+        engagement_tier_counts = {}
+        reply_time_data_points = 0
 
     # ── STAGE 3: Auto-expand audit checks ─────────────────────────────────
     log.info("")
