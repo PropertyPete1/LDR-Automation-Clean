@@ -2,26 +2,11 @@
   "_comment": "Dead-Man's Switch — healthchecks.io configuration",
   "_docs": "Each check pings hc-ping.com at the END of a successful run. If pings stop, healthchecks.io emails peter@lifestyledesignrealty.com automatically.",
   "nightly_health": {
-    "slug": "ldr-nightly-health",
-    "ping_url": "https://hc-ping.com/ldr-nightly-health",
-    "description": "Nightly Health System (4am CT) — self-healing orchestrator",
-    "expected_period_hours": 25,
-    "grace_period_hours": 2
+    "ping_url": "https://hc-ping.com/419cef9f-2fee-4555-be05-fdd932e4aa0a",
+    "description": "Nightly Health System (4am CT) — self-healing orchestrator"
   },
   "daily_automation": {
-    "slug": "ldr-daily-automation",
-    "ping_url": "https://hc-ping.com/ldr-daily-automation",
-    "description": "Daily Automation Run (7am CT) — pond nurture + agent bots",
-    "expected_period_hours": 25,
-    "grace_period_hours": 2
-  },
-  "ping_key": "",
-  "_setup_instructions": [
-    "1. Create a free account at https://healthchecks.io",
-    "2. Create a project, set notification email to peter@lifestyledesignrealty.com",
-    "3. Get your project's Ping Key from Settings > Ping Key",
-    "4. Set it in this file's 'ping_key' field",
-    "5. The system will auto-create checks on first ping using slug + create=1",
-    "6. Set each check's period to 25h and grace to 2h in the healthchecks.io UI"
-  ]
+    "ping_url": "https://hc-ping.com/10005b64-c282-4f40-a4a9-4b7205de1363",
+    "description": "Daily Automation Run (7am CT) — pond nurture + agent bots"
+  }
 }

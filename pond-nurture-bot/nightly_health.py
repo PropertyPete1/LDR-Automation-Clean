@@ -1555,8 +1555,8 @@ def main():
 def ping_healthcheck(check_name: str) -> None:
     """Ping healthchecks.io dead-man's switch at the END of a successful run.
 
-    Uses slug-based auto-provisioning (create=1) so checks are created on first ping.
-    If ping_key is not configured, falls back to UUID-based ping if available.
+    Simple GET to the configured UUID-based ping URL. Failures are logged but
+    never crash the run.
     """
     import requests as _req
     hc_config_path = AUTO_DIR / "config" / "healthchecks.json"
@@ -1565,20 +1565,11 @@ def ping_healthcheck(check_name: str) -> None:
         return
     try:
         hc_config = json.loads(hc_config_path.read_text())
-        ping_key = hc_config.get("ping_key", "")
         check_cfg = hc_config.get(check_name, {})
-        slug = check_cfg.get("slug", "")
-
-        if ping_key and slug:
-            # Slug-based ping with auto-provisioning
-            url = f"https://hc-ping.com/{ping_key}/{slug}?create=1"
-        elif check_cfg.get("ping_url"):
-            # Fallback to configured ping_url (UUID or slug without key)
-            url = check_cfg["ping_url"]
-        else:
-            log.warning("No ping URL configured for check '%s'", check_name)
+        url = check_cfg.get("ping_url", "")
+        if not url:
+            log.warning("No ping_url configured for check '%s'", check_name)
             return
-
         resp = _req.get(url, timeout=10)
         log.info("Dead-man's switch pinged for '%s': %s %s", check_name, resp.status_code, resp.text.strip())
     except Exception as e:

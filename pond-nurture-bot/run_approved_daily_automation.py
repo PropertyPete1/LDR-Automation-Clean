@@ -167,7 +167,11 @@ def main() -> int:
 
 
 def _ping_healthcheck_daily() -> None:
-    """Ping healthchecks.io dead-man's switch for the daily automation run."""
+    """Ping healthchecks.io dead-man's switch for the daily automation run.
+
+    Simple GET to the configured UUID-based ping URL. Failures are logged but
+    never crash the run.
+    """
     import json as _json
     import requests as _req
     hc_path = Path('/home/ubuntu/fub_automation/config/healthchecks.json')
@@ -176,15 +180,10 @@ def _ping_healthcheck_daily() -> None:
         return
     try:
         hc_config = _json.loads(hc_path.read_text())
-        ping_key = hc_config.get('ping_key', '')
         check_cfg = hc_config.get('daily_automation', {})
-        slug = check_cfg.get('slug', '')
-        if ping_key and slug:
-            url = f'https://hc-ping.com/{ping_key}/{slug}?create=1'
-        elif check_cfg.get('ping_url'):
-            url = check_cfg['ping_url']
-        else:
-            print('  [healthcheck] No ping URL for daily_automation')
+        url = check_cfg.get('ping_url', '')
+        if not url:
+            print('  [healthcheck] No ping_url for daily_automation')
             return
         resp = _req.get(url, timeout=10)
         print(f'  [healthcheck] Pinged daily_automation: {resp.status_code} {resp.text.strip()}')
