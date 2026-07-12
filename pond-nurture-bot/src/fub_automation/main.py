@@ -617,7 +617,7 @@ class FollowUpBossClient:
     def update_person(self, person_id: int, payload: dict, merge_tags: bool = False) -> dict:
         params = {"mergeTags": "true"} if merge_tags else None
         if self.settings.dry_run:
-            LOGGER.info("DRY_RUN update_person %s %s", person_id, payload)
+            LOGGER.info("DRY_RUN update_person %s keys=%s", person_id, list(payload.keys()))
             return {"dry_run": True}
         return self._request("PUT", f"/people/{person_id}", params=params, json_body=payload)
 
@@ -640,7 +640,7 @@ class FollowUpBossClient:
             "remindSecondsBefore": 0,
         }
         if self.settings.dry_run:
-            LOGGER.info("DRY_RUN create_task %s %s", person_id, name)
+            LOGGER.info("DRY_RUN create_task %s", person_id)
             return {"dry_run": True}
         return self._request("POST", "/tasks", json_body=payload)
 
@@ -1424,23 +1424,23 @@ class ContentGenerator:
             # Validate email format minimally
             if changed and ("@" not in new_email or "." not in new_email.split("@")[-1]):
                 LOGGER.warning(
-                    "detect_email_change: AI returned invalid email format '%s' for person %s — ignoring",
-                    new_email, person.get("id"),
+                    "detect_email_change: AI returned invalid email format for person %s — ignoring",
+                    person.get("id"),
                 )
                 return {"changed": False, "new_email": "", "confidence": confidence,
                         "reason": f"Invalid email format returned by AI: {new_email}", "trigger_snippet": trigger_snippet}
             # Confidence gate: 85% required for auto-update
             if changed and confidence < 85:
                 LOGGER.info(
-                    "detect_email_change: low confidence (%s%%) for person %s new_email='%s' — not acting. Reason: %s",
-                    confidence, person.get("id"), new_email, reason,
+                    "detect_email_change: low confidence (%s%%) for person %s — not acting",
+                    confidence, person.get("id"),
                 )
                 return {"changed": False, "new_email": new_email, "confidence": confidence,
                         "reason": f"Low confidence ({confidence}%): {reason}", "trigger_snippet": trigger_snippet}
             if changed:
                 LOGGER.info(
-                    "detect_email_change: person %s new_email='%s' confidence=%s%% — %s",
-                    person.get("id"), new_email, confidence, reason,
+                    "detect_email_change: person %s detected change confidence=%s%%",
+                    person.get("id"), confidence,
                 )
             return {"changed": changed, "new_email": new_email, "confidence": confidence,
                     "reason": reason, "trigger_snippet": trigger_snippet}
@@ -1467,7 +1467,7 @@ class EmailSender:
         selected_from = from_email or self.settings.email_from
         cc = [addr for addr in (cc or []) if addr]
         if self.settings.dry_run:
-            LOGGER.info("DRY_RUN email from=%s to=%s cc=%s subject=%s", selected_from, to_email, cc, subject)
+            LOGGER.info("DRY_RUN email dispatched (subject_len=%d, cc_count=%d)", len(subject), len(cc))
             return
         if not all([self.settings.smtp_host, self.settings.smtp_user, self.settings.smtp_password, selected_from]):
             raise RuntimeError("SMTP settings are incomplete")
@@ -1494,7 +1494,7 @@ class SmsSender:
 
     def send(self, to_number: str, body: str) -> str:
         if self.settings.dry_run:
-            LOGGER.info("DRY_RUN sms to=%s body=%s", to_number, body[:80])
+            LOGGER.info("DRY_RUN sms dispatched (body_len=%d)", len(body))
             return "dry-run"
         if not all([self.settings.twilio_account_sid, self.settings.twilio_auth_token, self.settings.twilio_from_number]):
             raise RuntimeError("Twilio settings are incomplete")
@@ -1562,7 +1562,7 @@ class RuleEngine:
             geo_data = geo_resp.json()
             results = geo_data.get("results", [])
             if not results:
-                LOGGER.info("Phase 3: Geocode returned no results for address: %s", address)
+                LOGGER.info("Phase 3: Geocode returned no results for person address")
                 return []
             location = results[0]["geometry"]["location"]
             lat, lng = location["lat"], location["lng"]
@@ -1599,10 +1599,10 @@ class RuleEngine:
                     unique_spots.append(spot)
                 if len(unique_spots) >= 5:
                     break
-            LOGGER.info("Phase 3: Found %s local spots near %s", len(unique_spots), address)
+            LOGGER.info("Phase 3: Found %s local spots for drip email", len(unique_spots))
             return unique_spots
         except Exception as exc:  # noqa: BLE001
-            LOGGER.warning("Phase 3: Failed to fetch local spots for address %s: %s", address, exc)
+            LOGGER.warning("Phase 3: Failed to fetch local spots: %s", exc)
             return []
 
     def scan_new_closed_leads(self) -> None:
@@ -1719,7 +1719,7 @@ class RuleEngine:
         # Record in audit DB so we never send twice
         self.db.upsert_congrats(person_id, deal_address, subject)
         self.db.log("closed_congrats", "sent", person_id, {"to": to_email, "subject": subject, "deal_address": deal_address})
-        LOGGER.info("Phase 3b: Congrats email sent to %s (person %s, address: %s)", to_email, person_id, deal_address or "unknown")
+        LOGGER.info("Phase 3b: Congrats email sent for person %s", person_id)
         return "sent"
 
     def scan_closed_drip(self) -> None:
@@ -1889,7 +1889,7 @@ class RuleEngine:
             "subject": generated.get("subject"),
             "local_spots_count": len(local_spots),
         })
-        LOGGER.info("Phase 3: Sent quarterly drip to person %s (%s) — %s", person_id, stage, deal_address or "no address")
+        LOGGER.info("Phase 3: Sent quarterly drip to person %s (stage=%s)", person_id, stage)
         return "sent"
 
     def scan_long_term_nurture_drip(self) -> None:
@@ -2516,7 +2516,7 @@ class RuleEngine:
                     trashed_count += 1
                     
             except Exception as exc:
-                LOGGER.exception("Reply intent scan failed for person %s (%s)", person_id, person_name)
+                LOGGER.exception("Reply intent scan failed for person %s", person_id)
                 self.db.log("reply_intent_disqualification", "error", person_id, {"error": str(exc)})
         
         LOGGER.info(
@@ -3490,8 +3490,8 @@ class RuleEngine:
         # ── OPT-OUT DETECTED: Trash the lead immediately ──
         person_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
         LOGGER.warning(
-            "PRE-SEND OPT-OUT DETECTED: Lead %s (%s) has opt-out language in %s. Trashing immediately. Snippet: %s",
-            person_id, person_name, trigger_source, trigger_snippet[:100],
+            "PRE-SEND OPT-OUT DETECTED: Lead %s has opt-out language in %s. Trashing immediately.",
+            person_id, trigger_source,
         )
 
         if not self.settings.dry_run:
@@ -3589,8 +3589,7 @@ class RuleEngine:
             deals = resp.get("deals", [])
             for deal in deals:
                 if str(deal.get("status", "")).lower() == "active":
-                    LOGGER.info("Person %s has active deal '%s' in pipeline '%s' — protected from reassignment",
-                                person_id, deal.get("name"), deal.get("pipelineName"))
+                    LOGGER.info("Person %s has active deal — protected from reassignment", person_id)
                     return True
             return False
         except Exception as exc:  # noqa: BLE001
@@ -4205,7 +4204,7 @@ class RuleEngine:
                 cc=[self.rules.owner_email],
             )
             self.db.log("speed_to_lead_alert", "sent", int(person["id"]), {"agent_email": agent_email, "agent_name": agent_name})
-            LOGGER.info("Speed-to-lead agent alert sent to %s for lead %s", agent_email, person["id"])
+            LOGGER.info("Speed-to-lead agent alert sent for lead %s", person["id"])
         except Exception as exc:
             LOGGER.warning("Failed to send speed-to-lead agent alert for lead %s: %s", person.get("id"), exc)
 
@@ -4565,7 +4564,7 @@ class RuleEngine:
                     reply_body = reply_found.get("body") or reply_found.get("message") or reply_found.get("text") or "(no body)"
                     reply_snippet = reply_body[:300]
                     reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
-                    LOGGER.info("Reply detected for lead %s via %s: %s", person_id, reply_channel, reply_snippet[:80])
+                    LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
                     # 1. Tag the lead
                     self.fub.update_person(person_id, {"tags": ["Replied - Paused"]}, merge_tags=True)
                     # 2. Add FUB note

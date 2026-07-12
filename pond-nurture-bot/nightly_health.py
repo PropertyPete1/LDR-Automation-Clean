@@ -1020,7 +1020,7 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
                                        f"Hard bounce detected on {created}. Email: {subject[:60]}",
                                        headers)
                 bounce_count += 1
-                log.info("BOUNCE detected: person_id=%s subject=%s", person_id, subject[:50])
+                log.info("BOUNCE detected: person_id=%s", person_id)
 
             elif is_optout:
                 # Only flag if the email is INBOUND (from the lead, not from us)
@@ -1031,7 +1031,7 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
                                            f"Opt-out detected on {created}. Message: {body[:80]}",
                                            headers)
                     unsub_count += 1
-                    log.info("OPT-OUT detected: person_id=%s body=%s", person_id, body[:50])
+                    log.info("OPT-OUT detected: person_id=%s", person_id)
 
         # Also scan recent text messages for opt-out language
         resp2 = requests.get(
@@ -1061,7 +1061,7 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
                                            f"Opt-out via text on {created}. Message: {body[:80]}",
                                            headers)
                     unsub_count += 1
-                    log.info("TEXT OPT-OUT detected: person_id=%s body=%s", person_id, body[:50])
+                    log.info("TEXT OPT-OUT detected: person_id=%s", person_id)
 
     except Exception as e:
         errors_encountered.append(f"Bounce/unsub detection error: {e}")
@@ -1425,9 +1425,9 @@ def send_morning_email(
 """
 
     if dry_run:
-        log.info("[DRY-RUN] Would send morning email to %s", to_email)
-        log.info("[DRY-RUN] Subject: %s", subject)
-        log.info("[DRY-RUN] Body preview:\n%s", body[:800])
+        log.info("[DRY-RUN] Would send morning email")
+        log.info("[DRY-RUN] Subject length: %d chars", len(subject))
+        log.info("[DRY-RUN] Body length: %d chars", len(body))
         return
 
     if not all([smtp_host, smtp_user, smtp_password]):
@@ -1448,7 +1448,7 @@ def send_morning_email(
             smtp.login(smtp_user, smtp_password)
             smtp.send_message(msg)
 
-        log.info("Morning email sent to %s", to_email)
+        log.info("Morning email sent successfully")
     except Exception as e:
         errors_encountered.append(f"Morning email failed: {e}")
         log.error("Morning email failed: %s", e)

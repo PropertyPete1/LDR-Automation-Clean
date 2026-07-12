@@ -249,7 +249,7 @@ def send_email(subject: str, html_body: str, to_email: str):
             server.starttls()
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(OWNER_EMAIL, [to_email], msg.as_string())
-        LOGGER.info("Weekly digest sent to %s", to_email)
+        LOGGER.info("Weekly digest sent successfully")
         return True
     except Exception as exc:
         LOGGER.error("Failed to send weekly digest: %s", exc)
@@ -284,7 +284,7 @@ def main():
     if dry_run:
         LOGGER.info("[DRY-RUN] Would send digest: %s", subject)
         LOGGER.info("[DRY-RUN] Digest HTML length: %d chars", len(html))
-        print(html[:2000])  # Print first 2000 chars for inspection
+        # HTML content not printed to avoid PII in public logs
         return True
     success = send_email(subject, html, OWNER_EMAIL)
     if success:
