@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DRY_RUN: "true"
+  DRY_RUN: "false"
   FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   LLM_MODEL: ${{ secrets.LLM_MODEL }}
