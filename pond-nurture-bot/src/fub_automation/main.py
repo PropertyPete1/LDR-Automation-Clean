@@ -3535,12 +3535,52 @@ class RuleEngine:
         if not person.get("assignedUserId"):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "no assigned agent"})
             return "suppressed"
-        # CRITICAL: Never reassign agent-imported SOI leads (these are personal contacts agents brought in)
+        # CRITICAL: Never reassign agent SOI leads (Sphere of Influence — personal contacts agents brought in)
+        # Three conditions — ANY match = protected from pond reassignment:
+        #   1. createdVia == "Manually" AND assigned to any agent EXCEPT Peter (user_id 2)
+        #   2. source == "SOI"
+        #   3. Any tag starting with "SOI"
         source = str(person.get("source") or "").lower()
         created_via = str(person.get("createdVia") or "").lower()
+        assigned_user_id = int(person.get("assignedUserId") or 0)
+        peter_id = int(self.rules.peter_user_id or 2)
+
+        soi_rule_matched = None
+        # Rule 1: Manually added by an agent (not Peter)
+        if created_via == "manually" and assigned_user_id != 0 and assigned_user_id != peter_id:
+            soi_rule_matched = f"createdVia=Manually, assignedUser={assigned_user_id} (not Peter)"
+        # Rule 2: Source is explicitly "SOI"
+        if not soi_rule_matched and source == "soi":
+            soi_rule_matched = "source=SOI"
+        # Rule 3: Any tag starting with "SOI" (e.g., "SOI - Laila", "SOI - Steven")
+        if not soi_rule_matched:
+            raw_tags = person.get("tags") or []
+            for t in raw_tags:
+                tag_name = str(t.get("name") if isinstance(t, dict) else t or "").strip()
+                if tag_name.lower().startswith("soi"):
+                    soi_rule_matched = f"tag={tag_name}"
+                    break
+
+        if soi_rule_matched:
+            self.db.log("stale_agent_pond_reassignment", "soi_protected", person_id, {
+                "reason": "protected: agent SOI",
+                "rule_matched": soi_rule_matched,
+                "source": source,
+                "createdVia": created_via,
+                "assignedUserId": assigned_user_id,
+            })
+            return "soi_protected"
+
+        # Legacy fallback: also protect import-sourced leads
         if source == "import" or created_via == "import":
-            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "agent-imported SOI lead", "source": source, "createdVia": created_via})
-            return "suppressed"
+            self.db.log("stale_agent_pond_reassignment", "soi_protected", person_id, {
+                "reason": "protected: agent SOI",
+                "rule_matched": f"import (source={source}, createdVia={created_via})",
+                "source": source,
+                "createdVia": created_via,
+                "assignedUserId": assigned_user_id,
+            })
+            return "soi_protected"
         # CRITICAL: Never reassign leads that have an active deal in any pipeline (Deal Room)
         if self._has_active_deal(person_id):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "lead has active deal in Deal Room"})

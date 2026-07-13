@@ -59,6 +59,7 @@ note_integrity_errors: List[dict] = []  # Feature: Note-Write Verification
 bounce_unsub_counts: dict = {"bounces": 0, "unsubscribes": 0}  # Feature: Bounce & Unsub tagging
 engagement_tier_counts: dict = {}  # Feature: Engagement-Based Cadence (Tier 3)
 reply_time_data_points: int = 0  # Feature: Best-Send-Time Logging (Tier 3)
+soi_protected_count: int = 0  # Feature: SOI-protected reassignment skips
 
 
 def now_iso() -> str:
@@ -1410,6 +1411,11 @@ def send_morning_email(
         lines.append("✅ No bounces or unsubscribes detected in last 24h")
         lines.append("")
 
+    # ── SOI Protection section ──────────────────────────────────────────
+    if soi_protected_count > 0:
+        lines.append(f"🛡️ Pond reassignments skipped (SOI-protected): {soi_protected_count}")
+        lines.append("")
+
     # ── Engagement Tier & Reply-Time section (Tier 3) ─────────────────
     try:
         if engagement_tier_counts:
@@ -1581,6 +1587,25 @@ def main():
         log.warning("Failed to gather Tier 3 stats: %s", _e)
         engagement_tier_counts = {}
         reply_time_data_points = 0
+
+    # ── STAGE 2.5d: SOI Protection Stats ──────────────────────────────────
+    global soi_protected_count
+    try:
+        import sqlite3 as _sq2
+        _db_path2 = os.path.join(AUTO_DIR, "data", "fub_automation.sqlite3")
+        _conn2 = _sq2.connect(_db_path2)
+        _conn2.row_factory = _sq2.Row
+        _utc_24h_ago = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)).isoformat()
+        _soi_row = _conn2.execute(
+            "SELECT COUNT(*) as cnt FROM audit_log WHERE action='stale_agent_pond_reassignment' AND status='soi_protected' AND timestamp > ?",
+            (_utc_24h_ago,)
+        ).fetchone()
+        soi_protected_count = _soi_row["cnt"] if _soi_row else 0
+        _conn2.close()
+        log.info("SOI-protected reassignment skips (last 24h): %d", soi_protected_count)
+    except Exception as _e2:
+        log.warning("Failed to gather SOI protection stats: %s", _e2)
+        soi_protected_count = 0
 
     # ── STAGE 3: Auto-expand audit checks ─────────────────────────────────
     log.info("")
