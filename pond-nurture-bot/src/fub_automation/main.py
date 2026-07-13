@@ -2119,7 +2119,7 @@ class RuleEngine:
             LOGGER.warning("20-day stale-agent pond reassignment requested but stale_agent_reassign_pond_id is missing")
             return
         cutoff = (dt.datetime.now(UTC) - dt.timedelta(days=self.rules.stale_agent_no_note_days)).strftime("%Y-%m-%d %H:%M:%S")
-        candidates = self.fub.get_people(lastActivityBefore=cutoff)
+        candidates = self.fub.get_people(lastActivityBefore=cutoff, fields="allFields")
         
         # Load existing reassigned count from database for today to enforce cap across restarts
         try:
@@ -3537,18 +3537,19 @@ class RuleEngine:
             return "suppressed"
         # CRITICAL: Never reassign agent SOI leads (Sphere of Influence — personal contacts agents brought in)
         # Three conditions — ANY match = protected from pond reassignment:
-        #   1. createdVia == "Manually" AND assigned to any agent EXCEPT Peter (user_id 2)
+        #   1. createdVia == "Manually" AND createdById != Peter (user_id 2)
+        #      (Peter manually creates company leads and assigns to agents — those stay pond-eligible)
         #   2. source == "SOI"
         #   3. Any tag starting with "SOI"
         source = str(person.get("source") or "").lower()
         created_via = str(person.get("createdVia") or "").lower()
-        assigned_user_id = int(person.get("assignedUserId") or 0)
+        created_by_id = int(person.get("createdById") or 0)
         peter_id = int(self.rules.peter_user_id or 2)
 
         soi_rule_matched = None
-        # Rule 1: Manually added by an agent (not Peter)
-        if created_via == "manually" and assigned_user_id != 0 and assigned_user_id != peter_id:
-            soi_rule_matched = f"createdVia=Manually, assignedUser={assigned_user_id} (not Peter)"
+        # Rule 1: Manually created by an agent (not Peter) — requires ?fields=allFields on the fetch
+        if created_via == "manually" and created_by_id != 0 and created_by_id != peter_id:
+            soi_rule_matched = f"createdVia=Manually, createdById={created_by_id} (not Peter)"
         # Rule 2: Source is explicitly "SOI"
         if not soi_rule_matched and source == "soi":
             soi_rule_matched = "source=SOI"
@@ -3567,7 +3568,7 @@ class RuleEngine:
                 "rule_matched": soi_rule_matched,
                 "source": source,
                 "createdVia": created_via,
-                "assignedUserId": assigned_user_id,
+                "createdById": created_by_id,
             })
             return "soi_protected"
 
@@ -3578,7 +3579,7 @@ class RuleEngine:
                 "rule_matched": f"import (source={source}, createdVia={created_via})",
                 "source": source,
                 "createdVia": created_via,
-                "assignedUserId": assigned_user_id,
+                "createdById": created_by_id,
             })
             return "soi_protected"
         # CRITICAL: Never reassign leads that have an active deal in any pipeline (Deal Room)
