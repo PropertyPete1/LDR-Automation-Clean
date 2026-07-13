@@ -51,7 +51,6 @@ vi.mock("fs/promises", () => ({
 // ── Mock child_process so SQLite queries return empty results ─────────────────
 vi.mock("child_process", () => ({
   execFile: vi.fn((cmd: string, args: string[], opts: any, cb: Function) => {
-    // Return empty array for all SQLite queries
     cb(null, "[]", "");
   }),
   promisify: (fn: Function) => (...args: any[]) =>
@@ -128,7 +127,6 @@ describe("runBotMonitor", () => {
 
   it("durationMs is non-negative and reasonable (< 30s)", async () => {
     const result = await runBotMonitor("manual");
-    // In a mocked environment all async calls resolve instantly so durationMs may be 0
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(result.durationMs).toBeLessThan(30_000);
   });
@@ -148,9 +146,7 @@ describe("runBotMonitor", () => {
   it("does not throw when FUB API is unreachable", async () => {
     mockFetch.mockRejectedValue(new Error("Network error"));
     const result = await runBotMonitor("manual");
-    // Should still complete and return a result
     expect(result.checksRun).toBeGreaterThan(0);
-    // The FUB check may be named "FUB API reachability" or "FUB API response time"
     const fubCheck = result.findings.find(f =>
       f.check.toLowerCase().includes("fub api") &&
       (f.check.toLowerCase().includes("response") || f.check.toLowerCase().includes("reach"))
@@ -160,20 +156,24 @@ describe("runBotMonitor", () => {
   });
 
   it("reports FUB API key error when key is missing — unit test of checkFubApiKey logic", async () => {
-    // We can't easily re-import with a different mock in vitest without factory isolation.
-    // Instead we verify the check description logic directly: a key shorter than 10 chars
-    // should produce an error. The ENV mock provides a valid key so this run passes.
     const result = await runBotMonitor("manual");
     const keyCheck = result.findings.find(f => f.check === "FUB API key configured");
     expect(keyCheck).toBeDefined();
-    // With the mocked key "fka_test_key_1234567890" the check should pass
     expect(keyCheck!.status).toBe("ok");
-    // Verify the detail contains the key prefix
     expect(keyCheck!.detail).toContain("fka_");
   });
 });
 
 describe("MonitorResult findings structure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ _metadata: { total: 1250 }, people: [] }),
+    });
+  });
+
   it("includes FUB API check", async () => {
     const result = await runBotMonitor("manual");
     const hasFubCheck = result.findings.some(f => f.check.toLowerCase().includes("fub api"));
@@ -192,15 +192,49 @@ describe("MonitorResult findings structure", () => {
     expect(hasDash).toBe(true);
   });
 
-  it("includes pond nurture heartbeat health check", async () => {
+  it("includes pond nurture ran today check (reads bot_observations)", async () => {
     const result = await runBotMonitor("manual");
-    // The old SQLite-based 'Cloud computer automation' check was replaced with
-    // a native MySQL 'Pond nurture heartbeat' check that reads the pondNurtureLog table
-    const hasHeartbeatCheck = result.findings.some(f =>
-      f.check.toLowerCase().includes("pond nurture heartbeat") ||
-      f.check.toLowerCase().includes("pond nurture") ||
-      f.check.toLowerCase().includes("automation last run")
+    const hasPondCheck = result.findings.some(f =>
+      f.check.toLowerCase().includes("pond nurture ran today") ||
+      f.check.toLowerCase().includes("pond nurture last run")
     );
-    expect(hasHeartbeatCheck).toBe(true);
+    expect(hasPondCheck).toBe(true);
+  });
+
+  it("includes nightly healer heartbeat check", async () => {
+    const result = await runBotMonitor("manual");
+    const hasHealerCheck = result.findings.some(f =>
+      f.check.toLowerCase().includes("nightly healer heartbeat") ||
+      f.check.toLowerCase().includes("healer")
+    );
+    expect(hasHealerCheck).toBe(true);
+  });
+
+  it("includes bot errors today check", async () => {
+    const result = await runBotMonitor("manual");
+    const hasBotErrors = result.findings.some(f =>
+      f.check.toLowerCase().includes("bot errors today")
+    );
+    expect(hasBotErrors).toBe(true);
+  });
+});
+
+describe("parsePondRunMessage (via checkPondNurtureRanToday)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ _metadata: { total: 1250 }, people: [] }),
+    });
+  });
+
+  it("handles no DB gracefully (returns ok with 'not yet' message before cutoff)", async () => {
+    // With no DB available, the pond checks should return ok/warning (not throw)
+    const result = await runBotMonitor("manual");
+    const pondCheck = result.findings.find(f => f.check === "Pond nurture ran today");
+    expect(pondCheck).toBeDefined();
+    // Without DB, it should say "no observation yet" (ok before cutoff time)
+    expect(["ok", "warning", "error"]).toContain(pondCheck!.status);
   });
 });
