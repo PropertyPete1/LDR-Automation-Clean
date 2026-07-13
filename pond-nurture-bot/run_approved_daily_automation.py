@@ -164,6 +164,9 @@ def main() -> int:
         
     print('Approved daily automation run completed.')
 
+    # ── Post observation to FUB Nurture Dashboard ───────────────────────────────
+    _post_dashboard_observation(db, settings)
+
     # ── Dead-Man's Switch: Ping healthchecks.io on success ─────────────────
     if not settings.dry_run:
         _ping_healthcheck_daily()
@@ -171,6 +174,77 @@ def main() -> int:
         print('  [healthcheck] Skipped in DRY_RUN mode')
 
     return 0
+
+
+def _post_dashboard_observation(db, settings) -> None:
+    """Post pond nurture run results to the FUB Nurture Dashboard's bot_observations.
+
+    Uses the /api/external/write-observation endpoint, authenticated via FUB_API_KEY.
+    Reads today's audit rows to compute sent/skipped/suppressed/error counts.
+    Non-fatal: failures are logged but never crash the run.
+    """
+    import json as _json
+    import datetime as _dt
+    import requests as _req
+
+    dashboard_url = os.environ.get('FUB_NURTURE_DASHBOARD_URL', 'https://fub-nurture-phfprjui.manus.space')
+    fub_api_key = settings.fub_api_key
+    if not fub_api_key:
+        print('  [dashboard-obs] No FUB_API_KEY — skipping observation post')
+        return
+
+    endpoint = f"{dashboard_url.rstrip('/')}/api/external/write-observation"
+
+    # Compute today's pond nurture stats from the audit DB
+    try:
+        from zoneinfo import ZoneInfo
+        ct = ZoneInfo('America/Chicago')
+        local_today_start = _dt.datetime.now(ct).replace(hour=0, minute=0, second=0, microsecond=0)
+        utc_today_start = local_today_start.astimezone(_dt.timezone.utc)
+        rows = db.recent_audit_rows(['pond_nurture'], utc_today_start)
+        sent = sum(1 for r in rows if r.get('status') == 'sent')
+        skipped = sum(1 for r in rows if r.get('status') == 'skipped')
+        suppressed = sum(1 for r in rows if r.get('status') == 'suppressed')
+        errors = sum(1 for r in rows if r.get('status') == 'error')
+    except Exception as e:
+        print(f'  [dashboard-obs] Failed to read audit DB: {e}')
+        sent = skipped = suppressed = errors = 0
+
+    dry_prefix = '[DRY RUN] ' if settings.dry_run else ''
+    severity = 'info' if errors == 0 else ('warning' if sent > 0 else 'error')
+    message = f"{dry_prefix}Pond nurture complete: {sent} emails sent, {skipped} skipped, {suppressed} suppressed, {errors} errors"
+
+    payload = {
+        'source': 'pond_nurture',
+        'severity': severity,
+        'category': 'daily_run',
+        'message': message[:255],
+        'detail': _json.dumps({
+            'sent': sent,
+            'skipped': skipped,
+            'suppressed': suppressed,
+            'errors': errors,
+            'dry_run': settings.dry_run,
+            'runner': 'github_actions',
+            'cap': getattr(settings, 'phase2_max_customer_emails_per_run', None),
+        }),
+        'autoFixable': False,
+        'runId': f"gh-pond-{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%d-%H%M%S')}",
+    }
+
+    try:
+        resp = _req.post(
+            endpoint,
+            json=payload,
+            headers={'Authorization': f'Bearer {fub_api_key}', 'Content-Type': 'application/json'},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            print(f'  [dashboard-obs] Posted observation: {message}')
+        else:
+            print(f'  [dashboard-obs] POST failed ({resp.status_code}): {resp.text[:200]}')
+    except Exception as e:
+        print(f'  [dashboard-obs] POST error: {e}')
 
 
 def _ping_healthcheck_daily() -> None:
