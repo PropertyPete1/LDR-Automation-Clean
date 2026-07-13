@@ -1463,11 +1463,13 @@ class EmailSender:
         reply_to: Optional[str] = None,
         cc: Optional[List[str]] = None,
         html_body: Optional[str] = None,
+        bcc: Optional[List[str]] = None,
     ) -> None:
         selected_from = from_email or self.settings.email_from
         cc = [addr for addr in (cc or []) if addr]
+        bcc = [addr for addr in (bcc or []) if addr]
         if self.settings.dry_run:
-            LOGGER.info("DRY_RUN email dispatched (subject_len=%d, cc_count=%d)", len(subject), len(cc))
+            LOGGER.info("DRY_RUN email dispatched (subject_len=%d, cc_count=%d, bcc_count=%d)", len(subject), len(cc), len(bcc))
             return
         if not all([self.settings.smtp_host, self.settings.smtp_user, self.settings.smtp_password, selected_from]):
             raise RuntimeError("SMTP settings are incomplete")
@@ -1478,6 +1480,8 @@ class EmailSender:
         msg["To"] = to_email
         if cc:
             msg["Cc"] = ", ".join(cc)
+        if bcc:
+            msg["Bcc"] = ", ".join(bcc)
         msg["Subject"] = subject
         msg.set_content(body)
         if html_body:
@@ -3159,14 +3163,17 @@ class RuleEngine:
         ])
 
         # Send both plain text and HTML versions
+        # Per-bot From-name: "AgentFirstName | Lifestyle Design Realty"
+        from_display = f"{first_name} | Lifestyle Design Realty <{self.rules.owner_email}>"
         self.email.send(
             to_email=to_email,
             subject=subject,
             body="\n".join(lines),
-            from_email=self.rules.owner_email,
+            from_email=from_display,
             reply_to=self.rules.owner_email,
             cc=cc,
-            html_body="".join(html_lines)
+            html_body="".join(html_lines),
+            bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
         )
         if lead_count > 0:
             for person in people:
@@ -4418,13 +4425,23 @@ class RuleEngine:
             sender_email = self.sender_email_for_person(person)
             to_email = emails[0].get("value") or emails[0].get("email")
             
+            # Determine agent first name for per-bot From-name display
+            _assigned_uid = person.get("assignedUserId")
+            _agent_first = "Peter"  # default
+            if _assigned_uid:
+                _agent_user = self.user_cache_by_id().get(int(_assigned_uid), {})
+                _agent_name = _agent_user.get("name") or _agent_user.get("firstName") or ""
+                _agent_first = str(_agent_name).strip().split()[0] if str(_agent_name).strip() else "Peter"
+            from_display = f"{_agent_first} | Lifestyle Design Realty <{sender_email}>"
+            
             if to_email:
                 self.email.send(
                     to_email,
                     generated["subject"],
                     append_email_footer(generated["email_body"], self.rules),
-                    from_email=sender_email,
+                    from_email=from_display,
                     reply_to=sender_email,
+                    bcc=[self.rules.owner_email] if sender_email.lower() != self.rules.owner_email.lower() else [],
                 )
                 
                 # Log a note in FUB so agents can see the welcome email went out
