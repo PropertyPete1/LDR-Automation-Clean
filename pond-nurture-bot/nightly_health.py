@@ -975,7 +975,9 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
         "Content-Type": "application/json",
     }
 
-    # Get recent emails (last 24h) to check for bounces and opt-outs
+    # Use FUB Email Marketing Events API (GET /v1/emEvents) for bounce detection.
+    # Also scan /v1/events?type=Unsubscribed for FUB-native unsubscribe events.
+    # Text message opt-outs still use /v1/textMessages (works correctly).
     cutoff_iso = (datetime.datetime.now(datetime.timezone.utc)
                   - datetime.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -983,57 +985,89 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
     unsub_count = 0
 
     try:
-        # Scan recent inbound emails for bounce/opt-out signals
+        # ── 1. Scan /v1/emEvents for hard bounces, soft bounces, and spam reports ──
+        bounce_types = ["hard-bounce", "bounced", "soft-bounce", "spamreport"]
+        for btype in bounce_types:
+            resp = requests.get(
+                "https://api.followupboss.com/v1/emEvents",
+                headers=headers,
+                params={"type": btype, "updatedAfter": cutoff_iso, "limit": 100},
+                timeout=30,
+            )
+            if resp.status_code == 429:
+                warnings.append(f"FUB rate limit during emEvents/{btype} scan — will retry next run")
+                continue
+            if resp.status_code >= 400:
+                log.warning("emEvents/%s returned %d — skipping", btype, resp.status_code)
+                continue
+            events = resp.json().get("emEvents", resp.json().get("data", []))
+            for ev in events:
+                person_id = ev.get("personId")
+                if not person_id:
+                    continue
+                occurred = ev.get("occurred", ev.get("created", ""))
+                if not dry_run:
+                    _apply_tag_and_note(
+                        person_id, "bounced",
+                        f"Email {btype} detected on {occurred} (via emEvents API)",
+                        headers,
+                    )
+                bounce_count += 1
+                log.info("BOUNCE [%s] detected: person_id=%s", btype, person_id)
+
+        # ── 2. Scan /v1/emEvents for unsubscribe events ──
         resp = requests.get(
-            "https://api.followupboss.com/v1/emails",
+            "https://api.followupboss.com/v1/emEvents",
             headers=headers,
-            params={"limit": 100, "sort": "-created"},
+            params={"type": "unsubscribe", "updatedAfter": cutoff_iso, "limit": 100},
             timeout=30,
         )
         if resp.status_code == 429:
-            warnings.append("FUB rate limit during bounce/unsub scan — will retry next run")
-            return
-        resp.raise_for_status()
-        emails = resp.json().get("emails", resp.json().get("data", []))
-
-        for em in emails:
-            created = em.get("created", em.get("createdAt", ""))
-            if created and created < cutoff_iso:
-                continue  # older than 24h
-
-            person_id = em.get("personId")
-            if not person_id:
-                continue
-
-            subject = (em.get("subject", "") or "").lower()
-            body = (em.get("body", "") or "").lower()
-            combined = f"{subject} {body}"
-
-            # Check for bounce
-            is_bounce = any(ind in combined for ind in BOUNCE_INDICATORS)
-            # Check for opt-out
-            is_optout = any(ind in combined for ind in OPT_OUT_INDICATORS)
-
-            if is_bounce:
+            warnings.append("FUB rate limit during emEvents/unsubscribe scan — will retry next run")
+        elif resp.status_code < 400:
+            events = resp.json().get("emEvents", resp.json().get("data", []))
+            for ev in events:
+                person_id = ev.get("personId")
+                if not person_id:
+                    continue
+                occurred = ev.get("occurred", ev.get("created", ""))
                 if not dry_run:
-                    _apply_tag_and_note(person_id, "bounced",
-                                       f"Hard bounce detected on {created}. Email: {subject[:60]}",
-                                       headers)
-                bounce_count += 1
-                log.info("BOUNCE detected: person_id=%s", person_id)
+                    _apply_tag_and_note(
+                        person_id, "unsubscribe",
+                        f"Email unsubscribe detected on {occurred} (via emEvents API)",
+                        headers,
+                    )
+                unsub_count += 1
+                log.info("EMAIL UNSUB detected: person_id=%s", person_id)
 
-            elif is_optout:
-                # Only flag if the email is INBOUND (from the lead, not from us)
-                direction = em.get("direction", em.get("type", ""))
-                if direction in ("inbound", "received", "incoming"):
-                    if not dry_run:
-                        _apply_tag_and_note(person_id, "unsubscribe",
-                                           f"Opt-out detected on {created}. Message: {body[:80]}",
-                                           headers)
-                    unsub_count += 1
-                    log.info("OPT-OUT detected: person_id=%s", person_id)
+        # ── 3. Scan /v1/events?type=Unsubscribed for FUB-native unsubscribe events ──
+        resp = requests.get(
+            "https://api.followupboss.com/v1/events",
+            headers=headers,
+            params={"type": "Unsubscribed", "limit": 100},
+            timeout=30,
+        )
+        if resp.status_code == 429:
+            warnings.append("FUB rate limit during events/Unsubscribed scan — will retry next run")
+        elif resp.status_code < 400:
+            events = resp.json().get("events", resp.json().get("data", []))
+            for ev in events:
+                created = ev.get("created", ev.get("createdAt", ""))
+                if created and created < cutoff_iso:
+                    continue  # older than 24h
+                person_id = ev.get("personId", ev.get("person", {}).get("id"))
+                if not person_id:
+                    continue
+                if not dry_run:
+                    _apply_tag_and_note(
+                        person_id, "unsubscribe",
+                        f"FUB unsubscribe event on {created}",
+                        headers,
+                    )
+                unsub_count += 1
+                log.info("FUB UNSUB EVENT detected: person_id=%s", person_id)
 
-        # Also scan recent text messages for opt-out language
+        # ── 4. Scan recent text messages for opt-out language ──
         resp2 = requests.get(
             "https://api.followupboss.com/v1/textMessages",
             headers=headers,
@@ -1058,7 +1092,7 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
                 if any(ind in body for ind in OPT_OUT_INDICATORS):
                     if not dry_run:
                         _apply_tag_and_note(person_id, "unsubscribe",
-                                           f"Opt-out via text on {created}. Message: {body[:80]}",
+                                           f"Opt-out via text on {created}",
                                            headers)
                     unsub_count += 1
                     log.info("TEXT OPT-OUT detected: person_id=%s", person_id)
