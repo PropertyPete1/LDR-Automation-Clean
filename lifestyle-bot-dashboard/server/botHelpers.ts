@@ -927,10 +927,11 @@ export async function sendLeadFollowUpEmail(opts: {
   `;
 
   await sendEmail({
-    from: `${agentFirstName} ${agentLastName} <${agentEmail}>`,
+    from: `${agentFirstName} | Lifestyle Design Realty <${agentEmail}>`,
     to: leadEmail,
     subject,
     html,
+    bcc: PETER_EMAIL,
   });
 }
 
@@ -956,6 +957,7 @@ export async function sendEmail(opts: {
   html: string;
   from?: string;
   replyTo?: string;
+  bcc?: string | string[];
 }): Promise<void> {
   const transporter = getTransporter();
   await transporter.sendMail({
@@ -964,6 +966,7 @@ export async function sendEmail(opts: {
     subject: opts.subject,
     html: opts.html,
     replyTo: opts.replyTo,
+    bcc: opts.bcc,
   });
 }
 
