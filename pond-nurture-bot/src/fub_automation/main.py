@@ -1639,12 +1639,11 @@ class RuleEngine:
                     break  # Sorted desc — everything after this is older
             try:
                 result = self.process_congrats_candidate(person)
-                if result == "sent":
+                if result in ("sent", "dry_run_sent"):
                     sent_count += 1
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Phase 3b congrats failed for person %s", person.get("id"))
                 self.db.log("closed_congrats", "error", person.get("id"), {"error": str(exc)})
-
         LOGGER.info("Phase 3b: Completed. Congrats emails sent=%s", sent_count)
 
     def process_congrats_candidate(self, person: dict) -> str:
@@ -1722,9 +1721,10 @@ class RuleEngine:
 
         # Record in audit DB so we never send twice
         self.db.upsert_congrats(person_id, deal_address, subject)
-        self.db.log("closed_congrats", "sent", person_id, {"to": to_email, "subject": subject, "deal_address": deal_address})
+        _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.log("closed_congrats", _send_status, person_id, {"to": to_email, "subject": subject, "deal_address": deal_address})
         LOGGER.info("Phase 3b: Congrats email sent for person %s", person_id)
-        return "sent"
+        return _send_status
 
     def scan_closed_drip(self) -> None:
         """Phase 3: Quarterly check-in email for Closed, Past Client, and Sphere leads.
@@ -1769,12 +1769,11 @@ class RuleEngine:
                 break
             try:
                 status = self.process_closed_drip_candidate(person)
-                if status == "sent":
+                if status in ("sent", "dry_run_sent"):
                     sent_count += 1
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Phase 3 closed drip failed for person %s", person.get("id"))
                 self.db.log("closed_drip", "error", person.get("id"), {"error": str(exc)})
-
         LOGGER.info("Phase 3: Completed. Sent=%s", sent_count)
 
     def process_closed_drip_candidate(self, person: dict) -> str:
@@ -1887,14 +1886,15 @@ class RuleEngine:
             LOGGER.warning("Phase 3: Failed to log FUB note for person %s: %s", person_id, note_exc)
 
         self.db.upsert_closed_drip(person_id, deal_address, generated["subject"], generated["email_body"])
-        self.db.log("closed_drip", "sent", person_id, {
+        _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.log("closed_drip", _send_status, person_id, {
             "stage": stage,
             "deal_address": deal_address,
             "subject": generated.get("subject"),
             "local_spots_count": len(local_spots),
         })
         LOGGER.info("Phase 3: Sent quarterly drip to person %s (stage=%s)", person_id, stage)
-        return "sent"
+        return _send_status
 
     def scan_long_term_nurture_drip(self) -> None:
         """Long-Term Nurture Drip: Send a personalized AI email every 60 days to leads tagged
@@ -1931,12 +1931,11 @@ class RuleEngine:
                 break
             try:
                 status = self.process_long_term_nurture_candidate(person)
-                if status == "sent":
+                if status in ("sent", "dry_run_sent"):
                     sent_count += 1
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Long-term nurture drip failed for person %s", person.get("id"))
                 self.db.log("long_term_nurture_drip", "error", person.get("id"), {"error": str(exc)})
-
         LOGGER.info("Long-term nurture drip: completed. Sent=%s", sent_count)
 
     def process_long_term_nurture_candidate(self, person: dict) -> str:
@@ -2034,7 +2033,8 @@ class RuleEngine:
 
         # Update drip log
         self.db.upsert_long_term_nurture_drip(person_id, subject, email_body)
-        self.db.log("long_term_nurture_drip", "sent", person_id, {
+        _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.log("long_term_nurture_drip", _send_status, person_id, {
             "to": to_email,
             "subject": subject,
             "email_number": emails_sent + 1,
@@ -2043,7 +2043,7 @@ class RuleEngine:
             "Long-term nurture drip: sent email #%s to person %s (%s)",
             emails_sent + 1, person_id, to_email
         )
-        return "sent"
+        return _send_status
 
     def run_daily_scans(self) -> None:
         # Safeguard: Check if daily scans have already completed successfully today in the local timezone
@@ -2094,7 +2094,7 @@ class RuleEngine:
         local_today_start = dt.datetime.now(local_tz).replace(hour=0, minute=0, second=0, microsecond=0)
         utc_today_start = local_today_start.astimezone(UTC)
         recent_nurtures = self.db.recent_audit_rows(["pond_nurture"], utc_today_start)
-        sent_count = sum(1 for r in recent_nurtures if r.get("status") == "sent")
+        sent_count = sum(1 for r in recent_nurtures if r.get("status") in ("sent", "dry_run_sent"))
         
         cap = max(0, int(self.rules.phase2_max_customer_emails_per_run))
         for person in candidates:
@@ -2109,7 +2109,7 @@ class RuleEngine:
                 break
             try:
                 status = self.process_reengagement_candidate(person)
-                if status == "sent":
+                if status in ("sent", "dry_run_sent"):
                     sent_count += 1
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("pond nurture failed for person %s", person.get("id"))
@@ -3360,7 +3360,8 @@ class RuleEngine:
             except Exception as note_exc:
                 LOGGER.warning("Failed to log pond nurture FUB note for person %s: %s", person_id, note_exc)
             self.db.upsert_reengagement(person_id, "+".join(sent_channels), city or "Texas/general", json.dumps(generated))
-            self.db.log("pond_nurture", "sent", person_id, {
+            _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+            self.db.log("pond_nurture", _send_status, person_id, {
                 "channels": sent_channels,
                 "city": city or "Texas/general",
                 "city_source": city_source,
@@ -3372,7 +3373,7 @@ class RuleEngine:
             used_angle = generated.get("freshness_angle") or ""
             if used_angle:
                 self.db.upsert_email_angle(person_id, used_angle)
-            return "sent"
+            return _send_status
         self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
         return "suppressed"
 
@@ -3821,7 +3822,7 @@ class RuleEngine:
             action = row.get("action")
             person_id = row.get("person_id")
             
-            if len(examples) < 20 and status in {"sent", "completed", "error", "launch_cap_reached"}:
+            if len(examples) < 20 and status in {"sent", "dry_run_sent", "completed", "error", "launch_cap_reached"}:
                 try:
                     details = json.loads(row.get("details") or "{}")
                 except Exception:  # noqa: BLE001
@@ -3856,6 +3857,8 @@ class RuleEngine:
             emoji = "✅"
             if status == "error":
                 emoji = "❌"
+            elif status == "dry_run_sent":
+                emoji = "🧪"
             elif status == "launch_cap_reached":
                 emoji = "⚠️"
             elif "reassignment" in action:
@@ -4051,7 +4054,8 @@ class RuleEngine:
             reply_to=self.rules.owner_email,
             html_body="".join(html_lines)
         )
-        self.db.log("phase2_daily_summary", "sent", None, {"to": self.rules.phase2_daily_summary_email, "row_count": len(rows)})
+        _summary_status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.log("phase2_daily_summary", _summary_status, None, {"to": self.rules.phase2_daily_summary_email, "row_count": len(rows)})
 
     def business_minutes_elapsed(self, start_utc: dt.datetime, end_utc: dt.datetime) -> float:
         """Return elapsed timer minutes, counting only the configured business-hours window.
@@ -4257,7 +4261,8 @@ class RuleEngine:
                 cc=[self.rules.owner_email],
                 html_body=html_body,
             )
-            self.db.log("speed_to_lead_alert", "sent", int(person["id"]), {"agent_email": agent_email, "agent_name": agent_name})
+            _alert_status = "dry_run_sent" if self.settings.dry_run else "sent"
+            self.db.log("speed_to_lead_alert", _alert_status, int(person["id"]), {"agent_email": agent_email, "agent_name": agent_name})
             LOGGER.info("Speed-to-lead agent alert sent for lead %s", person["id"])
         except Exception as exc:
             LOGGER.warning("Failed to send speed-to-lead agent alert for lead %s: %s", person.get("id"), exc)
@@ -4465,14 +4470,15 @@ class RuleEngine:
                 except Exception as note_exc:
                     LOGGER.warning("Failed to log instant welcome email FUB note for person %s: %s", person_id, note_exc)
                     
-                self.db.log("instant_welcome_email", "sent", person_id, {
+                _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+                self.db.log("instant_welcome_email", _send_status, person_id, {
                     "to": to_email,
                     "subject": generated["subject"],
                     "city": city or "Texas/general",
                     "sender": sender_email
                 })
                 LOGGER.info("Instant welcome email successfully sent to lead %s", person_id)
-                return "sent"
+                return _send_status
                 
         except Exception as exc:  # noqa: BLE001
             LOGGER.exception("Failed to send instant welcome email to lead %s", person_id)
@@ -4557,7 +4563,7 @@ class RuleEngine:
         email_actions = ["pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
                          "long_term_nurture_drip", "instant_welcome_email"]
         recent_sends = self.db.recent_audit_rows(email_actions, since)
-        # Filter to only "sent" or "email_sent" status rows
+        # Filter to only real sends — exclude dry_run_sent (no email was actually delivered)
         sent_rows = [r for r in recent_sends if r.get("status") in ("sent", "email_sent", "completed")]
         # Deduplicate by person_id — keep the most recent send per lead
         latest_send_by_person: Dict[int, str] = {}

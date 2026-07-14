@@ -220,16 +220,21 @@ def _post_dashboard_observation(db, settings) -> None:
         utc_today_start = local_today_start.astimezone(_dt.timezone.utc)
         rows = db.recent_audit_rows(['pond_nurture'], utc_today_start)
         sent = sum(1 for r in rows if r.get('status') == 'sent')
+        dry_run_sent = sum(1 for r in rows if r.get('status') == 'dry_run_sent')
         skipped = sum(1 for r in rows if r.get('status') == 'skipped')
         suppressed = sum(1 for r in rows if r.get('status') == 'suppressed')
         errors = sum(1 for r in rows if r.get('status') == 'error')
     except Exception as e:
         print(f'  [dashboard-obs] Failed to read audit DB: {e}')
-        sent = skipped = suppressed = errors = 0
+        sent = dry_run_sent = skipped = suppressed = errors = 0
 
     dry_prefix = '[DRY RUN] ' if settings.dry_run else ''
-    severity = 'info' if errors == 0 else ('warning' if sent > 0 else 'error')
-    message = f"{dry_prefix}Pond nurture complete: {sent} emails sent, {skipped} skipped, {suppressed} suppressed, {errors} errors"
+    total_processed = sent + dry_run_sent
+    severity = 'info' if errors == 0 else ('warning' if total_processed > 0 else 'error')
+    if dry_run_sent > 0:
+        message = f"{dry_prefix}Pond nurture complete: {dry_run_sent} dry-run emails (not actually sent), {skipped} skipped, {suppressed} suppressed, {errors} errors"
+    else:
+        message = f"{dry_prefix}Pond nurture complete: {sent} emails sent, {skipped} skipped, {suppressed} suppressed, {errors} errors"
 
     payload = {
         'source': 'pond_nurture',
@@ -238,6 +243,7 @@ def _post_dashboard_observation(db, settings) -> None:
         'message': message[:255],
         'detail': _json.dumps({
             'sent': sent,
+            'dry_run_sent': dry_run_sent,
             'skipped': skipped,
             'suppressed': suppressed,
             'errors': errors,
