@@ -163,7 +163,8 @@ export async function runLeadReplyChecker(): Promise<{
         message: observationMsg,
       });
       observationsWritten++;
-      console.log(`[leadReplyChecker] Logged reply: ${msg.from} → ${agentEmail}`);
+      // Log without PII — no lead email addresses in log output (public repo)
+      console.log(`[leadReplyChecker] Logged a lead reply for agent inbox routing`);
     } catch (err) {
       console.error("[leadReplyChecker] Failed to write observation:", err);
     }
