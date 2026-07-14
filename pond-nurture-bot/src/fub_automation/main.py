@@ -4223,7 +4223,7 @@ class RuleEngine:
             sms_link = f"sms:{lead_phone}" if lead_phone else ""
             phone_display = lead_phone or "(no phone on file)"
             subject = f"\U0001f6a8 NEW LEAD ASSIGNED: {lead_name} — Contact within 30 min!"
-            body = (
+            html_body = (
                 f"<h2>\U0001f6a8 New Lead Assigned to You</h2>"
                 f"<p>Hi {agent_name.split()[0] if agent_name else 'Agent'},</p>"
                 f"<p>A new lead has been assigned to you. Please make first contact within <strong>30 minutes</strong> "
@@ -4235,21 +4235,23 @@ class RuleEngine:
                 f"</table>"
             )
             if sms_link:
-                body += (
+                html_body += (
                     f"<p style='margin:20px 0;'>"
                     f"<a href='{sms_link}' style='display:inline-block;padding:12px 24px;background:#22c55e;color:white;"
                     f"text-decoration:none;border-radius:8px;font-weight:bold;font-size:16px;'>\U0001f4f1 Tap to Text {lead_name.split()[0]}</a>"
                     f"</p>"
                 )
-            body += (
+            html_body += (
                 f"<p style='color:#666;font-size:12px;'>\u23f0 Timer: 30-min warning \u2192 60-min auto-reassignment to {self.rules.peter_name}</p>"
             )
+            plain_body = f"New lead assigned: {lead_name}\nPhone: {phone_display}\nSource: {person.get('source', 'Unknown')}\n\nPlease make first contact within 30 minutes or the lead will be reassigned to {self.rules.peter_name}."
             self.email.send(
                 agent_email,
                 subject,
-                body,
+                plain_body,
                 from_email=self.rules.owner_email,
                 cc=[self.rules.owner_email],
+                html_body=html_body,
             )
             self.db.log("speed_to_lead_alert", "sent", int(person["id"]), {"agent_email": agent_email, "agent_name": agent_name})
             LOGGER.info("Speed-to-lead agent alert sent for lead %s", person["id"])
@@ -4274,7 +4276,7 @@ class RuleEngine:
                 prev_agent_name = prev_user.get("name") or "Unknown Agent"
         try:
             reassign_subject = f"\u26a0\ufe0f Lead Reassigned: {lead_name} (no agent contact in {self.rules.new_lead_reassign_minutes} min)"
-            reassign_body = (
+            reassign_html = (
                 f"<h2>\u26a0\ufe0f Speed-to-Lead Reassignment</h2>"
                 f"<p><strong>{lead_name}</strong> has been automatically reassigned to you.</p>"
                 f"<p><strong>Reason:</strong> {prev_agent_name} did not make first contact within "
@@ -4282,11 +4284,13 @@ class RuleEngine:
                 f"<p><strong>Source:</strong> {person.get('source', 'Unknown')}</p>"
                 f"<p>Please review and reassign or contact this lead.</p>"
             )
+            reassign_plain = f"Lead Reassigned: {lead_name}\nReason: {prev_agent_name} did not make first contact within {self.rules.new_lead_reassign_minutes} business minutes.\nSource: {person.get('source', 'Unknown')}\n\nPlease review and reassign or contact this lead."
             self.email.send(
                 self.rules.owner_email,
                 reassign_subject,
-                reassign_body,
+                reassign_plain,
                 from_email=self.rules.owner_email,
+                html_body=reassign_html,
             )
         except Exception as mail_exc:
             LOGGER.warning("Failed to send reassignment email to Peter for lead %s: %s", person_id, mail_exc)
@@ -4652,7 +4656,7 @@ class RuleEngine:
                         agent_name = self.rules.peter_name
                     lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
                     alert_subject = f"\U0001f525 HOT LEAD REPLY: {lead_name} responded!"
-                    alert_body = (
+                    alert_html = (
                         f"<h2>\U0001f525 Lead Reply Detected</h2>"
                         f"<p><strong>{lead_name}</strong> replied to an automated email.</p>"
                         f"<p><strong>Channel:</strong> {reply_channel}</p>"
@@ -4662,13 +4666,15 @@ class RuleEngine:
                         f"<p>All automation for this lead has been paused (tagged \"Replied - Paused\").</p>"
                         f"<p>To resume automation later, simply remove the tag.</p>"
                     )
+                    alert_plain = f"Lead Reply Detected: {lead_name} replied to an automated email.\nChannel: {reply_channel}\nReply: {reply_snippet}\n\nAction: Review the conversation in FUB and respond personally.\nAll automation for this lead has been paused (tagged 'Replied - Paused').\nTo resume automation later, simply remove the tag."
                     try:
                         self.email.send(
                             agent_email,
                             alert_subject,
-                            alert_body,
+                            alert_plain,
                             from_email=self.rules.owner_email,
                             cc=[self.rules.owner_email] if agent_email != self.rules.owner_email else [],
+                            html_body=alert_html,
                         )
                     except Exception as mail_exc:
                         LOGGER.warning("Reply detection: failed to send alert email for lead %s: %s", person_id, mail_exc)
