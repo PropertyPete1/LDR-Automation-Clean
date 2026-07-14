@@ -619,18 +619,35 @@ Reference something SPECIFIC from the notes. Make it feel like the agent remembe
           userPrompt = `Write a brief, natural follow-up text for ${leadName} (interested in ${leadCity || "Texas"}, ${daysStale ?? "several"} days since they entered the system). No notes available — keep it simple and friendly. Ask one specific question about their home search. 2 sentences max, under 160 chars.`;
         }
 
-        const result = await invokeLLM({
-          model: "claude-sonnet-4-6",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          maxTokens: 200,
+        // ── Call Anthropic API directly (not Manus/Forge LLM) ──────────────
+        const anthropicKey = ENV.anthropicApiKey;
+        if (!anthropicKey) {
+          throw new Error("ANTHROPIC_API_KEY not configured");
+        }
+        const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": anthropicKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 200,
+            system: systemPrompt,
+            messages: [
+              { role: "user", content: userPrompt },
+            ],
+          }),
         });
-
-        const content = result.choices[0]?.message?.content;
+        if (!anthropicRes.ok) {
+          const errBody = await anthropicRes.text();
+          throw new Error(`Anthropic API error ${anthropicRes.status}: ${errBody}`);
+        }
+        const anthropicData = await anthropicRes.json() as any;
+        const content = anthropicData.content?.[0]?.text;
         if (typeof content !== "string") {
-          throw new Error("Unexpected LLM response format");
+          throw new Error("Unexpected Anthropic response format");
         }
 
         // Strip any surrounding quotes the model might add

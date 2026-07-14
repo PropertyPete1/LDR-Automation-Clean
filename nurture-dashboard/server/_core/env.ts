@@ -8,4 +8,27 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   fubApiKey: process.env.FUB_API_KEY ?? "",
+  anthropicApiKey: sanitizeApiKey(process.env.ANTHROPIC_API_KEY ?? ""),
 };
+
+/**
+ * Sanitize API keys that may contain Cyrillic homoglyphs from copy-paste.
+ * Replaces common Cyrillic lookalikes with their ASCII equivalents.
+ */
+function sanitizeApiKey(key: string): string {
+  // Map of Cyrillic characters that look like Latin ones
+  const cyrillicToLatin: Record<string, string> = {
+    '\u0410': 'A', '\u0412': 'B', '\u0421': 'C', '\u0415': 'E',
+    '\u041D': 'H', '\u041A': 'K', '\u041C': 'M', '\u041E': 'O',
+    '\u0420': 'P', '\u0422': 'T', '\u0425': 'X', '\u0423': 'Y',
+    '\u0417': 'Z', '\u0430': 'a', '\u0435': 'e', '\u043E': 'o',
+    '\u0440': 'p', '\u0441': 'c', '\u0443': 'y', '\u0445': 'x',
+    '\u0456': 'i', '\u0457': 'i', '\u0491': 'g',
+    '\u0130': 'I', // Latin capital I with dot above
+  };
+  let result = '';
+  for (const ch of key) {
+    result += cyrillicToLatin[ch] ?? ch;
+  }
+  return result;
+}
