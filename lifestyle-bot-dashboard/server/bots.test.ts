@@ -16,6 +16,7 @@ import {
 // ─── isEligible ───────────────────────────────────────────────────────────────
 
 describe("isEligible", () => {
+  // Bots work the 3–19 day stale window. 10 days = squarely in-window.
   const baseLead: FubPerson = {
     id: 1,
     firstName: "John",
@@ -26,7 +27,7 @@ describe("isEligible", () => {
     emails: [{ value: "john@example.com" }],
     textOptOut: false,
     assignedPondId: null,
-    lastActivityAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(), // 25 days ago
+    lastActivity: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(), // 10 days ago
     assignedUserId: 1,
   };
 
@@ -34,12 +35,20 @@ describe("isEligible", () => {
     expect(isEligible(baseLead)).toBe(true);
   });
 
-  it("returns false for Hot Prospect stage", () => {
-    expect(isEligible({ ...baseLead, stage: "Hot Prospect" })).toBe(false);
+  it("returns false for Hot Prospect stage with fresh activity", () => {
+    const fresh = { ...baseLead, lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString() };
+    expect(isEligible({ ...fresh, stage: "Hot Prospect" })).toBe(false);
   });
 
-  it("returns false for Active Client stage", () => {
-    expect(isEligible({ ...baseLead, stage: "Active Client" })).toBe(false);
+  it("returns true for Hot Prospect stage gone stale (stale override)", () => {
+    // Agents are supposed to work Hot Prospects — 3+ days of silence means
+    // they aren't, so the bot steps in (documented stale override).
+    expect(isEligible({ ...baseLead, stage: "Hot Prospect" })).toBe(true);
+  });
+
+  it("returns false for Active Client stage with fresh activity", () => {
+    const fresh = { ...baseLead, lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString() };
+    expect(isEligible({ ...fresh, stage: "Active Client" })).toBe(false);
   });
 
   it("returns false for Closed stage", () => {
@@ -58,12 +67,20 @@ describe("isEligible", () => {
     expect(isEligible({ ...baseLead, tags: [{ name: "opt-out" }] })).toBe(false);
   });
 
-  it("returns false for leads active within threshold", () => {
+  it("returns false for leads active within the 3-day threshold", () => {
     const recentLead = {
       ...baseLead,
-      lastActivityAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
+      lastActivity: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
     };
     expect(isEligible(recentLead)).toBe(false);
+  });
+
+  it("returns false for leads beyond the 19-day window (pond takes over)", () => {
+    const pondAgeLead = {
+      ...baseLead,
+      lastActivity: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString(), // 25 days ago
+    };
+    expect(isEligible(pondAgeLead)).toBe(false);
   });
 
   it("returns false for Under Contract stage", () => {
