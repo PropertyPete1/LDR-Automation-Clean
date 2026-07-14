@@ -614,24 +614,33 @@ const AGENT_BOT_ANGLES = [
 
 /** Get the last angle used for a lead from the DB */
 async function getLastAngle(personId: number): Promise<string | null> {
-  const db = await getDb();
-  if (!db) return null;
-  const rows = await db
-    .select({ lastAngle: emailAngleLog.lastAngle })
-    .from(emailAngleLog)
-    .where(eq(emailAngleLog.personId, personId))
-    .limit(1);
-  return rows[0]?.lastAngle ?? null;
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const rows = await db
+      .select({ lastAngle: emailAngleLog.lastAngle })
+      .from(emailAngleLog)
+      .where(eq(emailAngleLog.personId, personId))
+      .limit(1);
+    return rows[0]?.lastAngle ?? null;
+  } catch (e) {
+    console.warn(`[getLastAngle] DB unavailable for person ${personId}, defaulting to null`);
+    return null;
+  }
 }
 
 /** Save the angle used for a lead (upsert) */
 async function saveAngle(personId: number, angle: string): Promise<void> {
-  const db = await getDb();
-  if (!db) return;
-  await db
-    .insert(emailAngleLog)
-    .values({ personId, lastAngle: angle, sentAt: new Date() })
-    .onDuplicateKeyUpdate({ set: { lastAngle: angle, sentAt: new Date() } });
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db
+      .insert(emailAngleLog)
+      .values({ personId, lastAngle: angle, sentAt: new Date() })
+      .onDuplicateKeyUpdate({ set: { lastAngle: angle, sentAt: new Date() } });
+  } catch (e) {
+    console.warn(`[saveAngle] DB unavailable for person ${personId}, skipping save`);
+  }
 }
 
 /** Pick an angle that is NOT the same as lastAngle */
