@@ -22,6 +22,13 @@
       "when": 1781557675507,
       "tag": "0002_great_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1784068127865,
+      "tag": "0003_wild_wolfsbane",
+      "breakpoints": true
     }
   ]
 }

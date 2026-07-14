@@ -8,7 +8,11 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
   fubApiKey: process.env.FUB_API_KEY ?? "",
-  anthropicApiKey: sanitizeApiKey(process.env.ANTHROPIC_API_KEY ?? ""),
+  // Read lazily so the key can be injected after module load (tests set it in
+  // beforeEach; the deployed env injects secrets at boot). Always sanitized.
+  get anthropicApiKey(): string {
+    return sanitizeApiKey(process.env.ANTHROPIC_API_KEY ?? "");
+  },
 };
 
 /**
