@@ -3789,7 +3789,11 @@ class RuleEngine:
             return
         if not (self.rules.customer_reengagement_emails_enabled or self.rules.stale_agent_no_note_reassignment_enabled):
             return
-        since = dt.datetime.now(UTC) - dt.timedelta(hours=24)
+        # Use today midnight CT (not 24h rolling window) to avoid double-counting across days
+        from zoneinfo import ZoneInfo
+        _ct = ZoneInfo('America/Chicago')
+        _local_today_start = dt.datetime.now(_ct).replace(hour=0, minute=0, second=0, microsecond=0)
+        since = _local_today_start.astimezone(UTC)
         rows = self.db.recent_audit_rows(["pond_nurture", "stale_agent_pond_reassignment"], since)
         if not rows:
             return
