@@ -100,3 +100,16 @@ export const contactedLeads = mysqlTable("contacted_leads", {
 
 export type ContactedLead = typeof contactedLeads.$inferSelect;
 export type InsertContactedLead = typeof contactedLeads.$inferInsert;
+// ─── Email Angle Log ──────────────────────────────────────────────────────────
+// Tracks the last email angle used per lead for angle rotation.
+// Ensures agent bots never repeat the same angle twice in a row.
+
+export const emailAngleLog = mysqlTable("email_angle_log", {
+  id: int("id").autoincrement().primaryKey(),
+  personId: int("personId").notNull().unique(),
+  lastAngle: varchar("lastAngle", { length: 128 }).notNull(),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
+});
+
+export type EmailAngleLog = typeof emailAngleLog.$inferSelect;
+export type InsertEmailAngleLog = typeof emailAngleLog.$inferInsert;

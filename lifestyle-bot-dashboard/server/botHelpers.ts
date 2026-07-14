@@ -17,9 +17,9 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getDb } from "./db";
-import { botObservations, botRunLog, smsSentToday, contactedLeads } from "../drizzle/schema";
+import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
-import { invokeLLM } from "./_core/llm";
+import { ENV } from "./_core/env";
 
 // ESM-safe __dirname
 const __botHelpers_filename = fileURLToPath(import.meta.url);
@@ -217,7 +217,15 @@ export interface FubPerson {
   lastActivity?: string | null;
   lastActivityAt?: string | null; // alias — FUB returns lastActivity, kept for backward compat
   assignedUserId?: number | null;
-  notes?: Array<{ body?: string; createdAt?: string }>;
+  notes?: Array<{ body?: string; createdAt?: string; userId?: number }>;
+  // Full context fields (FUB API returns these when available)
+  source?: string | null;
+  leadSource?: string | null;
+  priceRange?: string | null;
+  price?: string | null;
+  created?: string | null;
+  createdAt?: string | null;
+  addresses?: Array<{ city?: string; state?: string }> | null;
 }
 
 /** Fetch all leads assigned to a given FUB user ID using cursor-based pagination.
@@ -379,11 +387,12 @@ export async function fetchPowerQueueCount(
 export async function getSmsSentTodayIds(): Promise<Set<number>> {
   const db = await getDb();
   if (!db) return new Set();
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
   const rows = await db
     .select({ personId: smsSentToday.personId })
     .from(smsSentToday)
-    .where(eq(smsSentToday.sentDate, today));
+    .where(gte(smsSentToday.sentAt, todayStart));
   return new Set(rows.map(r => r.personId));
 }
 
@@ -396,8 +405,8 @@ export async function recordSmsSentToday(
   if (!db) return;
   await db
     .insert(smsSentToday)
-    .values({ personId, agentName, sentDate: new Date().toISOString().slice(0, 10) })
-    .onDuplicateKeyUpdate({ set: { agentName, sentDate: new Date().toISOString().slice(0, 10) } });
+    .values({ personId, agentName, sentAt: new Date() })
+    .onDuplicateKeyUpdate({ set: { agentName, sentAt: new Date() } });
 }
 
 // ─── Contacted Leads audit log ───────────────────────────────────────────────
@@ -448,29 +457,49 @@ export async function logContactedLead(opts: {
 // ─── Highly Intelligent LLM message generation ──────────────────────────────
 
 /**
- * Uses the LLM to intelligently decide whether a lead should be skipped.
+ * Uses Anthropic Claude to intelligently decide whether a lead should be skipped.
  * Understands natural language context — "decided to move to Florida",
  * "bought a house", "working with John at KW", "not in the market anymore" —
  * without needing a hardcoded keyword list.
  *
+ * Also checks: if any note was written by the assigned agent within the last 24h,
+ * the lead is skipped (human is actively talking to the lead).
+ *
  * Returns { skip: true, reason: string } if the lead should be skipped.
  * Returns { skip: false } if it's safe to send a follow-up.
- *
- * This is a fast, cheap single-question LLM call (no email body generated).
  */
 export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
   const notes = person.notes ?? [];
   if (notes.length === 0) return { skip: false };
 
-  // Build a compact note summary (most recent 3, max 300 chars each)
+  // ── Feature 5: 24h agent note check ──────────────────────────────────────
+  // If the assigned agent wrote a note within the last 24 hours, skip.
+  // This means a human is actively working the lead.
+  const now = Date.now();
+  const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+  const assignedUserId = person.assignedUserId;
+  for (const note of notes) {
+    if (!note.createdAt) continue;
+    const noteTime = new Date(note.createdAt).getTime();
+    if (noteTime > twentyFourHoursAgo) {
+      // If the note has a userId matching the assigned agent, or if we can't tell
+      // who wrote it (no userId field), treat any recent note as agent activity
+      if (!assignedUserId || note.userId === assignedUserId || !note.userId) {
+        return { skip: true, reason: "Agent wrote a note within the last 24 hours (active human conversation)" };
+      }
+    }
+  }
+
+  // ── Anthropic Direct: Intelligent skip decision ──────────────────────────
+  // Build a compact note summary (most recent 5, max 400 chars each)
   const sorted = [...notes].sort((a, b) => {
     const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return bDate - aDate;
-  }).slice(0, 3);
+  }).slice(0, 5);
 
   const notesSummary = sorted.map((n, i) =>
-    `Note ${i + 1} (${n.createdAt ?? "unknown date"}): ${(n.body ?? "").substring(0, 300)}`
+    `Note ${i + 1} (${n.createdAt ?? "unknown date"}): ${(n.body ?? "").substring(0, 400)}`
   ).join("\n");
 
   const prompt = `You are a real estate CRM assistant. Your job is to decide whether a lead should be skipped for automated follow-up email outreach.
@@ -478,7 +507,7 @@ export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean
 READ THESE NOTES FROM THE LEAD'S FILE:
 ${notesSummary}
 
-SKIP the lead (answer YES) if the notes indicate ANY of the following:
+SKIP the lead (answer YES) if you are at least 80% confident the notes indicate ANY of the following:
 - They are already working with a real estate agent (any agent, any brokerage)
 - They have already purchased or are under contract on a home
 - They have moved away, relocated, or are no longer in the market
@@ -490,6 +519,7 @@ DO NOT skip (answer NO) if:
 - The notes just show normal sales activity (sent listings, had a call, scheduled a showing)
 - The lead is still actively searching
 - There are no notes or the notes are neutral
+- You are less than 80% confident the lead should be skipped
 
 Respond with EXACTLY one line in this format:
 SKIP: YES | reason: <brief reason>
@@ -497,20 +527,40 @@ or
 SKIP: NO`;
 
   try {
-    const response = await invokeLLM({
-      messages: [
-        { role: "system", content: "You are a precise real estate CRM assistant. Answer only in the exact format requested." },
-        { role: "user", content: prompt },
-      ],
+    const anthropicKey = ENV.anthropicApiKey;
+    if (!anthropicKey) {
+      console.warn("[shouldSkipLead] ANTHROPIC_API_KEY not configured, defaulting to no-skip");
+      return { skip: false };
+    }
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 100,
+        system: "You are a precise real estate CRM assistant. Answer only in the exact format requested.",
+        messages: [{ role: "user", content: prompt }],
+      }),
     });
-    const raw = ((response as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content ?? "").trim();
+    if (!res.ok) {
+      const errBody = await res.text();
+      console.error(`[shouldSkipLead] Anthropic API error ${res.status}: ${errBody}`);
+      return { skip: false };
+    }
+    const data = await res.json() as { content?: Array<{ text?: string }> };
+    const raw = (data.content?.[0]?.text ?? "").trim();
     if (raw.toUpperCase().startsWith("SKIP: YES")) {
       const reasonMatch = raw.match(/reason:\s*(.+)/i);
       return { skip: true, reason: reasonMatch?.[1]?.trim() ?? "Notes indicate lead should be skipped" };
     }
     return { skip: false };
-  } catch {
-    // On LLM error, default to NOT skipping (fail open — better to send than miss)
+  } catch (err) {
+    console.error("[shouldSkipLead] Anthropic call failed:", err);
+    // On error, default to NOT skipping (fail open — better to send than miss)
     return { skip: false };
   }
 }
@@ -528,29 +578,84 @@ export function hasActiveContactNote(_person: FubPerson): boolean {
 
 /**
  * Build rich context from lead notes for the AI prompt.
- * Extracts the 3 most recent notes — the MOST RECENT note is labeled clearly
- * so the LLM knows to base the follow-up on it.
+ * Feature 2: Expanded to 20 notes with dates for full context.
+ * The MOST RECENT note is labeled clearly so the LLM knows to base the follow-up on it.
  */
 function buildLeadContext(person: FubPerson): string {
   const notes = person.notes ?? [];
   if (notes.length === 0) return "No prior notes on this lead. Write a general friendly check-in.";
-  const sorted = notes
+  const sorted = [...notes]
     .sort((a, b) => {
       const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return bDate - aDate;
     })
-    .slice(0, 3);
+    .slice(0, 20);
   const lines = sorted.map((n, i) => {
-    const label = i === 0 ? "MOST RECENT NOTE (base your follow-up on this)" : `Older note ${i + 1}`;
-    return `${label}: ${(n.body ?? "").substring(0, 400)}`;
+    const dateStr = n.createdAt ? `[${n.createdAt.slice(0, 10)}]` : "[unknown date]";
+    const label = i === 0
+      ? `MOST RECENT NOTE ${dateStr} (base your follow-up on this)`
+      : `Note ${i + 1} ${dateStr}`;
+    return `${label}: ${(n.body ?? "").substring(0, 500)}`;
   });
-  return `Notes from Follow Up Boss:\n${lines.join("\n")}`;
+  return `Full FUB note history (most recent first, up to 20 notes):\n${lines.join("\n")}`;
+}
+
+// ── Angle Rotation Helpers ──────────────────────────────────────────────────────────
+
+/** Agent bot angles — tuned for daily cadence during active search */
+const AGENT_BOT_ANGLES = [
+  "continue the last conversation thread (reference the most recent note directly)",
+  "new or relevant inventory angle (mention homes, listings, or options for their criteria)",
+  "market or rate note for their price range and city (rates, payment context, market pulse)",
+  "practical next-step nudge (pre-approval, tour scheduling, neighborhood question)",
+  "light personal check-in (how's the move going, how's the search feeling, any questions)",
+];
+
+/** Get the last angle used for a lead from the DB */
+async function getLastAngle(personId: number): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db
+    .select({ lastAngle: emailAngleLog.lastAngle })
+    .from(emailAngleLog)
+    .where(eq(emailAngleLog.personId, personId))
+    .limit(1);
+  return rows[0]?.lastAngle ?? null;
+}
+
+/** Save the angle used for a lead (upsert) */
+async function saveAngle(personId: number, angle: string): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .insert(emailAngleLog)
+    .values({ personId, lastAngle: angle, sentAt: new Date() })
+    .onDuplicateKeyUpdate({ set: { lastAngle: angle, sentAt: new Date() } });
+}
+
+/** Pick an angle that is NOT the same as lastAngle */
+function pickAngle(personId: number, lastAngle: string | null): string {
+  // Deterministic seed based on personId + today's date
+  const today = new Date().toISOString().slice(0, 10);
+  const seed = `${personId}-${today}`;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % AGENT_BOT_ANGLES.length;
+  let angle = AGENT_BOT_ANGLES[idx]!;
+  // Never repeat same angle twice in a row
+  if (lastAngle && angle === lastAngle && AGENT_BOT_ANGLES.length > 1) {
+    const currentIdx = AGENT_BOT_ANGLES.indexOf(angle);
+    angle = AGENT_BOT_ANGLES[(currentIdx + 1) % AGENT_BOT_ANGLES.length]!;
+  }
+  return angle;
 }
 
 /**
  * Generate a highly personalized, intelligent AI follow-up email for a lead.
- * Uses lead stage, days stale, notes context, and behavioral signals.
+ * Brain Upgrade: Anthropic Direct + Full Context + Angle Rotation + Temporal Reasoning.
  * Returns both the email body AND a context-aware subject line.
  */
 export async function generateFollowUpMessage(opts: {
@@ -569,14 +674,41 @@ export async function generateFollowUpMessage(opts: {
 
   const leadContext = person ? buildLeadContext(person) : "No prior notes available.";
 
+  // ── Feature 2: Full Context ──────────────────────────────────────────────────
+  const leadSource = person?.source ?? person?.leadSource ?? "Unknown";
+  const priceRange = person?.priceRange ?? person?.price ?? "Not specified";
+  const city = person?.addresses?.[0]?.city ?? "Unknown";
+  let daysSinceAssignment = "Unknown";
+  const createdStr = person?.created ?? person?.createdAt;
+  if (createdStr) {
+    try {
+      const createdDate = new Date(createdStr);
+      daysSinceAssignment = String(Math.floor((Date.now() - createdDate.getTime()) / (1000 * 60 * 60 * 24)));
+    } catch { /* ignore */ }
+  }
+  // Engagement signal: count notes in last 14 days
+  const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  const recentNoteCount = (person?.notes ?? []).filter(n =>
+    n.createdAt && new Date(n.createdAt).getTime() > twoWeeksAgo
+  ).length;
+  const engagementSignal = recentNoteCount >= 3 ? "High (3+ notes in 14 days)" :
+    recentNoteCount >= 1 ? "Medium (some recent activity)" : "Low (no recent notes)";
+
+  // ── Feature 3: Angle Rotation ────────────────────────────────────────────────
+  const personId = person?.id ?? 0;
+  const lastAngle = await getLastAngle(personId);
+  const angle = pickAngle(personId, lastAngle);
+
   // Determine urgency/tone based on staleness
   let urgencyNote = "";
   if (staleDays >= 60) {
     urgencyNote = "This lead has been completely cold for 2+ months. Write a gentle re-engagement message that acknowledges time has passed without being pushy.";
   } else if (staleDays >= 40) {
     urgencyNote = "This lead has been inactive for 40+ days. Write a warm check-in that feels natural and not salesy.";
+  } else if (staleDays >= 14) {
+    urgencyNote = "This lead has been inactive for 2+ weeks. Write a friendly, casual follow-up.";
   } else {
-    urgencyNote = "This lead has been inactive for 20-40 days. Write a friendly, casual follow-up.";
+    urgencyNote = "This lead was recently contacted but the agent hasn't followed up in a few days. Write a natural continuation.";
   }
 
   // Stage-specific guidance
@@ -593,9 +725,15 @@ export async function generateFollowUpMessage(opts: {
     case "watch":
       stageGuidance = "This lead is being watched. They may be close to being ready. Be a bit more proactive.";
       break;
+    case "active client":
+    case "hot prospect":
+      stageGuidance = "This is a HOT lead who should be getting active attention. The agent hasn't followed up, so step in with urgency and specificity.";
+      break;
     default:
       stageGuidance = `This lead is in the "${stage}" stage. Tailor your message appropriately.`;
   }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   const prompt = `You are ${agentFirstName} ${agentLastName}, a real estate agent at Lifestyle Design Realty in Texas.
 You are writing a personalized follow-up email to a real estate lead.
@@ -604,8 +742,16 @@ LEAD CONTEXT:
 - ${nameContext}
 - Days since last contact: ${staleDays}
 - Lead stage: ${stage}
+- Lead source: ${leadSource}
+- Price range: ${priceRange}
+- City/Market: ${city}
+- Days since assignment: ${daysSinceAssignment}
+- Engagement signal: ${engagementSignal}
 - ${urgencyNote}
 - ${stageGuidance}
+
+FRESHNESS ANGLE FOR THIS EMAIL: ${angle}
+IMPORTANT: Do NOT use the same angle as last time. Last angle was: ${lastAngle ?? "none/first email"}
 
 PRIOR NOTES:
 ${leadContext}
@@ -615,57 +761,93 @@ CRITICAL INSTRUCTIONS — READ CAREFULLY:
    - If the note says home options/listings were sent → ask "Did you get a chance to look at those options I sent?"
    - If the note says a showing was scheduled → ask how the showing went
    - If the note says they mentioned a specific city/budget/timeline → reference it directly
-   - If there are no notes → write a general friendly check-in
+   - If there are no notes → write a general friendly check-in using the freshness angle
 2. NEVER write a generic "just checking in" email if the notes show a specific prior action. That is unprofessional and confusing to the client.
 3. Write 2-4 sentences only. Warm, casual, genuine — like a real person texting a friend.
 4. Never mention automation, AI, or that this is a follow-up system.
 5. Include a soft call-to-action that makes sense given the note context.
 6. Sign off with just your first name.
+7. CRITICAL DATE AWARENESS: Today's date is ${todayStr}. Notes include their dates in brackets like [2024-10-15]. If a note is more than 30 days old, treat it as HISTORICAL context only. NEVER reference events, meetings, conversations, or actions from old notes as if they are current or upcoming. For example, if an 8-month-old note says "this Friday" or "setting a time," those events are LONG PAST — do not mention them. If the most recent note is very old (60+ days), acknowledge the time gap naturally (e.g., "It's been a while" or "Wanted to reach back out") rather than pretending there's an active ongoing conversation.
+8. TEMPORAL REASONING: Extract any dates or time-bound life events mentioned in notes (lease ending, job start, baby due, "not until spring", "moving in August"). Calculate their relationship to today's date and reference them naturally. For example: a March note saying "lease ends in August" should produce, in July: "your lease is coming up next month, right?" A note from January saying "not ready until summer" should produce, in June: "you mentioned wanting to start looking around summer — is now a good time?"
+9. ONLY reference listings, options, or properties being sent if the FUB notes EXPLICITLY state that listings/options were sent. NEVER claim you sent listings when you did not.
+10. CRITICAL: Do NOT state where the lead is relocating FROM as a fact. Only reference the DESTINATION city/area.
+11. CRITICAL: Do NOT invent or assume personal details about the lead unless explicitly stated in the notes.
 
 FORMAT:
-- Line 1: SUBJECT: <a natural, context-aware subject line — NOT "Checking in". Examples: "Quick question about those listings", "Following up on the homes I sent", "Checking on your search", "Any questions about the options I shared?">
+- Line 1: SUBJECT: <a natural, context-aware subject line — NOT "Checking in". Make it specific to this lead's situation and the angle.>
 - Line 2 onwards: The email body. Start with ONE single greeting line only (e.g. "Hey Matthew,"). Do NOT repeat the name or write two greetings. The very next line after the greeting should be the first sentence of the message.
 
 IMPORTANT:
 1. The subject line MUST reflect the actual context from the notes. Never use a generic subject like "Checking in" if the notes show a specific prior action.
-2. NEVER write "Hey Matthew, Hi Matthew" or any double greeting. One greeting, one name, period.`;
+2. NEVER write "Hey Matthew, Hi Matthew" or any double greeting. One greeting, one name, period.
+3. Keep it concise: 80–150 words, plain text, friendly, and specific enough to invite a reply.`;
 
-  const response = await invokeLLM({
-    messages: [
-      {
-        role: "system",
-        content: "You are an expert real estate agent writing highly personalized, intelligent follow-up emails. Your emails feel handcrafted and genuine, never automated. You always reference specific context when available.",
+  try {
+    const anthropicKey = ENV.anthropicApiKey;
+    if (!anthropicKey) {
+      throw new Error("ANTHROPIC_API_KEY not configured");
+    }
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
       },
-      { role: "user", content: prompt },
-    ],
-  });
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 512,
+        system: "You are an expert real estate agent writing highly personalized, intelligent follow-up emails. Your emails feel handcrafted and genuine, never automated. You always reference specific context when available. You are strategic about temporal reasoning — you know what date it is and reference time-bound events relative to today.",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Anthropic API error ${res.status}: ${errBody}`);
+    }
+    const data = await res.json() as { content?: Array<{ text?: string }> };
+    const raw = (data.content?.[0]?.text ?? "").trim();
 
-  const raw = (response as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content ?? "";
+    // Extract subject line from first line if present
+    const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+    let subject = `Following up — ${opts.agentFirstName} ${opts.agentLastName}, Lifestyle Design Realty`;
+    let bodyLines = lines;
 
-  // Extract subject line from first line if present
-  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-  let subject = `Following up — ${opts.agentFirstName} ${opts.agentLastName}, Lifestyle Design Realty`;
-  let bodyLines = lines;
+    if (lines[0]?.toUpperCase().startsWith("SUBJECT:")) {
+      const subjectText = lines[0].replace(/^SUBJECT:\s*/i, "").trim();
+      if (subjectText) subject = `${subjectText} — ${opts.agentFirstName} ${opts.agentLastName}`;
+      bodyLines = lines.slice(1);
+    }
 
-  if (lines[0]?.toUpperCase().startsWith("SUBJECT:")) {
-    const subjectText = lines[0].replace(/^SUBJECT:\s*/i, "").trim();
-    if (subjectText) subject = `${subjectText} — ${opts.agentFirstName} ${opts.agentLastName}`;
-    bodyLines = lines.slice(1);
+    const body = bodyLines
+      .join("\n")
+      // Strip any leaked automation/AI-assistant lines the LLM may add
+      .replace(/Is there anything else I can automate to make your life easier\?/gi, "")
+      .replace(/Is there anything (else )?I can (help|automate|do) to make your (life|day|work) easier\??/gi, "")
+      .replace(/Would you like me to automate anything[^\n]*/gi, "")
+      .replace(/Let me know if there['’]?s anything (else )?I can automate[^\n]*/gi, "")
+      .replace(/Reply to this email with any(thing)?[^\n]*automate[^\n]*/gi, "")
+      // Remove any trailing blank lines left by the strips
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    // ── Feature 3: Save the angle used ─────────────────────────────────────────
+    if (personId) {
+      await saveAngle(personId, angle);
+    }
+
+    return { body, subject };
+  } catch (err) {
+    console.error("[generateFollowUpMessage] Anthropic call failed:", err);
+    // Fallback: return a generic message so the bot doesn't crash
+    const fallbackBody = hasName
+      ? `Hey ${leadFirstName},\n\nJust wanted to check in and see how your home search is going. Let me know if there's anything I can help with!\n\n${agentFirstName}`
+      : `Hey, it's ${agentFirstName} with Lifestyle Design Realty!\n\nJust wanted to reach out and see if you have any questions about buying a home in Texas. Happy to help anytime!\n\n${agentFirstName}`;
+    return {
+      body: fallbackBody,
+      subject: `Quick note from ${agentFirstName} ${agentLastName}, Lifestyle Design Realty`,
+    };
   }
-
-  const body = bodyLines
-    .join("\n")
-    // Strip any leaked automation/AI-assistant lines the LLM may add
-    .replace(/Is there anything else I can automate to make your life easier\?/gi, "")
-    .replace(/Is there anything (else )?I can (help|automate|do) to make your (life|day|work) easier\??/gi, "")
-    .replace(/Would you like me to automate anything[^\n]*/gi, "")
-    .replace(/Let me know if there['']?s anything (else )?I can automate[^\n]*/gi, "")
-    .replace(/Reply to this email with any(thing)?[^\n]*automate[^\n]*/gi, "")
-    // Remove any trailing blank lines left by the strips
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-
-  return { body, subject };
 }
 
 // ─── Lead email delivery ──────────────────────────────────────────────────────
@@ -1195,12 +1377,14 @@ export async function logBotRun(opts: {
 }): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.insert(botRunLog).values({
-    leadsTexted: opts.sent,
-    leadsFailed: opts.errored,
-    leadsEvaluated: opts.sent + opts.errored + opts.skipped,
-    summary: `${opts.botName} (${opts.botSlug}): ${opts.status} — sent=${opts.sent}, errored=${opts.errored}, skipped=${opts.skipped}`,
-    triggeredBy: "cron",
+  await db.insert(botRunLogs).values({
+    botName: opts.botName,
+    botSlug: opts.botSlug,
+    sent: opts.sent,
+    errored: opts.errored,
+    skipped: opts.skipped,
+    status: opts.status,
+    ranAt: new Date(),
   });
 }
 
