@@ -74,6 +74,23 @@ def main() -> int:
         return 2
 
     db = AuditDB(settings.database_path)
+
+    # ── Guard: exit immediately if a completed daily_run already exists for today ──────────
+    if not settings.dry_run:
+        import datetime as _dt
+        from zoneinfo import ZoneInfo
+        _ct = ZoneInfo('America/Chicago')
+        _local_today_start = _dt.datetime.now(_ct).replace(hour=0, minute=0, second=0, microsecond=0)
+        _utc_today_start = _local_today_start.astimezone(_dt.timezone.utc)
+        _today_rows = db.recent_audit_rows(['pond_nurture'], _utc_today_start)
+        _sent_today = sum(1 for r in _today_rows if r.get('status') == 'sent')
+        if _sent_today > 0:
+            print(
+                f'GUARD: Daily pond nurture already completed today ({_sent_today} emails sent). '
+                f'Exiting to prevent duplicate sends.'
+            )
+            return 0
+
     fub = FollowUpBossClient(settings)
     engine = RuleEngine(settings, rules, fub, db)
     print(
