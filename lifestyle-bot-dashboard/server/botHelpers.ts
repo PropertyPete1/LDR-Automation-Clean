@@ -270,9 +270,12 @@ export async function postFubNote(personId: number, body: string): Promise<void>
 export function hasDncTag(person: FubPerson): boolean {
   const suppressionTags = getSharedSuppressionTags();
   const tags = person.tags ?? [];
+  // Normalize hyphens/underscores to spaces so tag variants like
+  // "do-not-contact" still match the shared list entry "do not contact".
+  const normalize = (s: string) => s.toLowerCase().replace(/[-_]+/g, " ");
   return tags.some(t => {
-    const tag = (typeof t === "string" ? t : (t as { name?: string })?.name ?? "").toLowerCase();
-    return suppressionTags.some(st => tag.includes(st));
+    const tag = normalize(typeof t === "string" ? t : (t as { name?: string })?.name ?? "");
+    return suppressionTags.some(st => tag.includes(normalize(st)));
   });
 }
 
@@ -457,13 +460,39 @@ export async function logContactedLead(opts: {
 // ─── Highly Intelligent LLM message generation ──────────────────────────────
 
 /**
+ * Detect notes written by our own automation (agent bots, pond nurture,
+ * Python automation) as opposed to a human agent. Bots write FUB notes on
+ * every send/skip — those must NOT count as "a human is talking to this lead",
+ * otherwise automation notes would permanently block bot sends.
+ *
+ * Known bot note markers:
+ *   - TS agent bots:  "[S&P500 Lifestyle Bot] …", "[Abby's Lifestyle Bot] …"
+ *   - Python pond bot: "Automated two-week pond nurture outreach sent." /
+ *     "Automation: …" prefixed notes (speed-to-lead, reassignment, opt-out)
+ */
+export function isBotAuthoredNote(body: string | undefined | null): boolean {
+  const b = (body ?? "").trim();
+  if (!b) return false;
+  return (
+    /^\[[^\]]*bot[^\]]*\]/i.test(b) ||
+    b.startsWith("Automation:") ||
+    /^automated /i.test(b) ||
+    b.includes("Automated two-week pond nurture outreach sent") ||
+    b.includes("Skipped automated follow-up") ||
+    /^pond nurture .* sent/i.test(b)
+  );
+}
+
+/**
  * Uses Anthropic Claude to intelligently decide whether a lead should be skipped.
  * Understands natural language context — "decided to move to Florida",
  * "bought a house", "working with John at KW", "not in the market anymore" —
  * without needing a hardcoded keyword list.
  *
- * Also checks: if any note was written by the assigned agent within the last 24h,
- * the lead is skipped (human is actively talking to the lead).
+ * Also checks: if a HUMAN wrote a note within the last 24h, the lead is
+ * skipped (human is actively talking to the lead). Bot-authored notes are
+ * excluded from this check — bots note every send, and that must never be
+ * mistaken for an active human conversation.
  *
  * Returns { skip: true, reason: string } if the lead should be skipped.
  * Returns { skip: false } if it's safe to send a follow-up.
@@ -473,7 +502,7 @@ export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean
   if (notes.length === 0) return { skip: false };
 
   // ── Feature 5: 24h agent note check ──────────────────────────────────────
-  // If the assigned agent wrote a note within the last 24 hours, skip.
+  // If a human agent wrote a note within the last 24 hours, skip.
   // This means a human is actively working the lead.
   const now = Date.now();
   const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
@@ -482,9 +511,13 @@ export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean
     if (!note.createdAt) continue;
     const noteTime = new Date(note.createdAt).getTime();
     if (noteTime > twentyFourHoursAgo) {
+      // Bot-authored notes (our own automation) never count as human activity.
+      if (isBotAuthoredNote(note.body)) continue;
       // If the note has a userId matching the assigned agent, or if we can't tell
-      // who wrote it (no userId field), treat any recent note as agent activity
+      // who wrote it (no userId field), treat the recent human note as agent activity
       if (!assignedUserId || note.userId === assignedUserId || !note.userId) {
+        // person_id only — no lead names/emails in logs (public repo)
+        console.log(`[skipGate] person ${person.id} skipped: human note within 24h`);
         return { skip: true, reason: "Agent wrote a note within the last 24 hours (active human conversation)" };
       }
     }
@@ -521,6 +554,8 @@ DO NOT skip (answer NO) if:
 - There are no notes or the notes are neutral
 - You are less than 80% confident the lead should be skipped
 
+PRIVACY: In your reason, refer to the person only as "lead" — never include names, emails, or phone numbers.
+
 Respond with EXACTLY one line in this format:
 SKIP: YES | reason: <brief reason>
 or
@@ -555,6 +590,8 @@ SKIP: NO`;
     const raw = (data.content?.[0]?.text ?? "").trim();
     if (raw.toUpperCase().startsWith("SKIP: YES")) {
       const reasonMatch = raw.match(/reason:\s*(.+)/i);
+      // person_id only — no lead names/emails in logs (public repo)
+      console.log(`[skipGate] person ${person.id} skipped: LLM intent check`);
       return { skip: true, reason: reasonMatch?.[1]?.trim() ?? "Notes indicate lead should be skipped" };
     }
     return { skip: false };
@@ -848,14 +885,10 @@ IMPORTANT:
     return { body, subject };
   } catch (err) {
     console.error("[generateFollowUpMessage] Anthropic call failed:", err);
-    // Fallback: return a generic message so the bot doesn't crash
-    const fallbackBody = hasName
-      ? `Hey ${leadFirstName},\n\nJust wanted to check in and see how your home search is going. Let me know if there's anything I can help with!\n\n${agentFirstName}`
-      : `Hey, it's ${agentFirstName} with Lifestyle Design Realty!\n\nJust wanted to reach out and see if you have any questions about buying a home in Texas. Happy to help anytime!\n\n${agentFirstName}`;
-    return {
-      body: fallbackBody,
-      subject: `Quick note from ${agentFirstName} ${agentLastName}, Lifestyle Design Realty`,
-    };
+    // Do NOT fall back to a generic "just checking in" email — that is exactly
+    // the low-quality send the brain upgrade exists to prevent. Rethrow so the
+    // bot's per-lead error handling counts it as errored and sends nothing.
+    throw err;
   }
 }
 
