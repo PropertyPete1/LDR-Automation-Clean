@@ -21,6 +21,7 @@ import { runPondNurture } from "../pondNurture";
 import { runAutoPondPromotion } from "../autoPondPromotion";
 import { getSmsSentLastWeekByAgent, insertMonitorLog, pruneOldSmsSentToday, writeObservation } from "../db";
 import { notifyOwner } from "./notification";
+import { bootstrapHeartbeatJobs } from "../heartbeatBootstrap";
 
 
 const CLICKS_FILE_PATH = "/home/ubuntu/fub_automation/data/clicks.json";
@@ -161,6 +162,20 @@ async function startServer() {
     }
   });
 
+  // ── Power Queue 2.0: Public REST endpoint for Python weekly_digest.py ──────────
+  // GET /api/power-queue/weekly-stats?week=2026-W28 (optional, defaults to current week)
+  app.get("/api/power-queue/weekly-stats", async (req, res) => {
+    try {
+      const { getWeeklyQueueStats } = await import("../db");
+      const weekKey = typeof req.query.week === 'string' ? req.query.week : undefined;
+      const stats = await getWeeklyQueueStats(weekKey);
+      res.json({ success: true, weekKey: weekKey || 'current', stats });
+    } catch (err: any) {
+      console.error('[/api/power-queue/weekly-stats] Error:', err);
+      res.status(500).json({ success: false, error: err.message || 'Internal error' });
+    }
+  });
+
   // Run audit on-demand — triggered by the "Run Audit" button on the admin dashboard
   // Runs sevenx_audit.py (~60s) and returns the fresh result
   app.post("/api/scheduled/run-audit", async (req, res) => {
@@ -205,81 +220,28 @@ async function startServer() {
       res.status(403).json({ error: "auth-failed" });
       return;
     }
-    // Speed-to-lead monitoring runs on the cloud computer via nightly_health.py.
-    // The web app container does not have access to the cloud computer filesystem,
-    // so we perform a lightweight FUB API check here instead of running a Python script.
-    const fubApiKey = process.env.FUB_API_KEY;
-    if (!fubApiKey) {
-      await writeObservation({
-        source: "speed_to_lead",
-        severity: "warning",
-        category: "config",
-        message: "Speed-to-lead check skipped — FUB_API_KEY not set",
-        detail: null,
-        autoFixable: 0,
-      }).catch(() => {});
-      res.json({ ok: true, skipped: "no-api-key" });
-      return;
-    }
-
+    // Full speed-to-lead engine: polls new leads, tracks timers, warns at 30 min, reassigns at 60 min
     try {
-      // Check for new leads in the last 35 minutes (fires every 5 min, 10am-6pm CT)
-      const cutoff = new Date(Date.now() - 35 * 60 * 1000).toISOString();
-      const fubRes = await fetch(
-        `https://api.followupboss.com/v1/events?type=New+Lead&minCreated=${encodeURIComponent(cutoff)}&limit=10`,
-        {
-          headers: {
-            Authorization: `Basic ${Buffer.from(fubApiKey + ":").toString("base64")}`,
-            "X-System": "Lifestyle Command Center",
-            "X-System-Key": fubApiKey,
-          },
-          signal: AbortSignal.timeout(10000),
-        }
-      );
-
-      if (!fubRes.ok) {
-        await writeObservation({
-          source: "speed_to_lead",
-          severity: "warning",
-          category: "fub_api",
-          message: `Speed-to-lead FUB check returned ${fubRes.status}`,
-          detail: null,
-          autoFixable: 1,
-        }).catch(() => {});
-        res.json({ ok: true, status: fubRes.status });
+      const { runSpeedToLead } = await import("../speedToLead");
+      const result = await runSpeedToLead();
+      if (result.skipped) {
+        console.log(`[speed-to-lead] Skipped: ${result.skipped}`);
+        res.json({ ok: true, skipped: result.skipped });
         return;
       }
-
-      const data = await fubRes.json() as { events?: Array<{ id: number; created: string; personId?: number }> };
-      const newLeads = data?.events ?? [];
-
-      if (newLeads.length > 0) {
-        await writeObservation({
-          source: "speed_to_lead",
-          severity: "info",
-          category: "new_lead",
-          message: `Speed-to-lead: ${newLeads.length} new lead event${newLeads.length !== 1 ? "s" : ""} in last 35 min`,
-          detail: `Lead IDs: ${newLeads.map(e => e.id).join(", ").slice(0, 300)}`,
-          autoFixable: 0,
-        }).catch(() => {});
-        console.log(`[speed-to-lead] ${newLeads.length} new lead events detected`);
-      } else {
-        // Silent ok — no new leads, no observation needed (keeps DB clean)
-        console.log("[speed-to-lead] No new leads in last 35 min");
-      }
-
-      res.json({ ok: true, newLeads: newLeads.length });
-    } catch (fetchErr: unknown) {
-      const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      res.json({ ok: true, ...result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[speed-to-lead] Engine error:", msg);
       await writeObservation({
         source: "speed_to_lead",
-        severity: "warning",
-        category: "fub_api",
-        message: "Speed-to-lead FUB API call failed",
-        detail: msg.slice(0, 300),
+        severity: "error",
+        category: "engine_crash",
+        message: "Speed-to-lead engine crashed",
+        detail: msg.slice(0, 500),
         autoFixable: 1,
       }).catch(() => {});
-      res.json({ ok: true, error: msg });
+      res.status(500).json({ error: msg });
     }
   });
 
@@ -643,6 +605,130 @@ async function startServer() {
     }
   });
 
+  // ── Annual Nurture (monthly check-in for leads who moved away) ────────────
+  app.post("/api/scheduled/annual-nurture", async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      if (!user.isCron) {
+        res.status(403).json({ error: "cron-only" });
+        return;
+      }
+    } catch {
+      res.status(403).json({ error: "auth-failed" });
+      return;
+    }
+    try {
+      console.log("[annual-nurture] Starting annual nurture check...");
+      const { runAnnualNurture } = await import("../annualNurture");
+      const result = await runAnnualNurture();
+      console.log(`[annual-nurture] Complete: ${result.emailsSent} sent, ${result.skipped} skipped`);
+      res.json({ ok: true, ...result });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[annual-nurture] Fatal error:", msg);
+      writeObservation({
+        source: "annual_nurture",
+        severity: "error",
+        category: "annual_email",
+        message: "Annual nurture handler crashed",
+        detail: msg.slice(0, 500),
+        autoFixable: 0,
+        runId: `crash-${Date.now()}`,
+      }).catch(() => {});
+      res.status(500).json({
+        error: msg,
+        context: { url: req.url },
+        timestamp: new Date().toISOString(),
+      });
+    }
+  });
+
+  // ===== External Observation Write (GitHub Actions → Dashboard) =====
+  // Authenticated via the shared FUB_API_KEY (same key the Python system uses)
+  app.post("/api/external/write-observation", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization ?? "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      const expectedKey = process.env.FUB_API_KEY ?? "";
+      if (!token || !expectedKey || token !== expectedKey) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+
+      const { source, severity, category, message, detail, autoFixable, runId } = req.body;
+      if (!source || !severity || !category || !message) {
+        res.status(400).json({ error: "Missing required fields: source, severity, category, message" });
+        return;
+      }
+
+      // Validate severity enum
+      const validSeverities = ["info", "warning", "error", "fixed"];
+      if (!validSeverities.includes(severity)) {
+        res.status(400).json({ error: `Invalid severity. Must be one of: ${validSeverities.join(", ")}` });
+        return;
+      }
+
+      await writeObservation({
+        source: String(source).slice(0, 50),
+        severity,
+        category: String(category).slice(0, 80),
+        message: String(message).slice(0, 255),
+        detail: detail ? String(detail).slice(0, 10000) : null,
+        autoFixable: autoFixable ? 1 : 0,
+        runId: runId ? String(runId).slice(0, 64) : undefined,
+      });
+
+      res.json({ ok: true, timestamp: new Date().toISOString() });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[external/write-observation] Error:", msg);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  // ===== Company Brain LLM Voice Assistant =====
+  app.post("/api/brain/ask", async (req, res) => {
+    try {
+      const { question } = req.body;
+      if (!question || typeof question !== "string") {
+        res.status(400).json({ error: "question is required" });
+        return;
+      }
+      const { invokeLLM } = await import("./llm");
+      const result = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content: `You are the Company Brain voice assistant for Lifestyle Design Realty. You answer questions about the business in a confident, conversational, spoken-friendly tone. Keep answers to 1-4 sentences. No markdown, no bullet lists, no URLs read aloud.
+
+COMPANY: Lifestyle Design Realty. Peter Allen is broker/owner. Agents: Steven, Tiffany, Stefanie, Abby, Irma, Laila. Target markets: San Antonio, New Braunfels, Austin, Dallas, Fort Worth, Houston.
+
+CONTENT SIDE (repo: lifestyle-design-studio): IG Daily Reels app. Asset Library indexes and fingerprints Google Drive originals and always posts true 4K source files to avoid IG duplicate detection. Strategy Team scores candidates with source cooldowns and performance-analyst feedback. Copywriting refreshes captions with dedup checks and a hook optimizer for the first 3 seconds. Market Research geo-classifies clips to Austin/San Antonio/Dallas posting calendars. Marketing Team publishes on schedule via Metricool, syncs IG history, and drafts LinkedIn variants.
+
+SALES SIDE (repo: FUB-Automations): Lead lifecycle — day 0 a new lead is assigned to an agent with a 30-min personal reach-out expected and 60-min reassign to Peter. Days 1 to 20 is the agent window worked via the Power Queue with Click-to-Text. Days 14 to 20 are priority tier. Day 21 plus with no activity triggers Database Hygiene which reassigns the lead to the Lead Pond (Pond ID 2) and to Peter, capped 100 per run. Nurture Team emails pond leads every 14 days with AI-written emails that reference the lead's most recent FUB note, dynamic subject line that never says "Checking in", sent from peter@lifestyledesignrealty.com, capped 100 per run. Five checks before sending: LLM skip gate at 80 percent confidence for no longer a buyer or working with another agent or asked not to be contacted or relocated permanently and writes an FUB note when it skips, 3-day contact gap, stage and tag suppression for Trash and Do Not Contact and Do Not Email and No AI Email and Manual Review and bounced and unsubscribe and email opt out, valid email required, 14-day cadence. Outreach Team equals 7 bots one per agent, each sends up to 15 personalized lifestyle emails per day, logs run_start and run_complete to bot_observations. IT and Maintenance runs nightly_health.py at 4am CT which reads SQLite errors plus bot observations, auto-fixes known issues, emails Peter plus Steven a report, and posts a heartbeat to clear the dashboard monitor.
+
+LIVE SYSTEMS: FUB Nurture Dashboard at fub-nurture-phfprjui.manus.space. Lifestyle Bot Dashboard at lifestyledash-wpnl8v84.manus.space.
+
+If a question is outside company scope, answer briefly with general knowledge and steer back to business.`
+          },
+          { role: "user", content: question }
+        ],
+        max_tokens: 300,
+      });
+      const answer = result?.choices?.[0]?.message?.content || "I'm not sure about that. Try asking about our lead nurture system, content pipeline, or agent workflow.";
+      res.json({ answer: typeof answer === "string" ? answer : String(answer) });
+    } catch (error) {
+      console.error("[Brain Ask] LLM error:", error);
+      res.status(500).json({ error: "Brain temporarily offline" });
+    }
+  });
+
+  // Serve Company Brain static HTML at /brain
+  const brainPath = process.env.NODE_ENV === "development"
+    ? path.resolve(import.meta.dirname, "../../client/public/brain")
+    : path.resolve(import.meta.dirname, "public/brain");
+  app.use("/brain", express.static(brainPath));
+
   // tRPC API
   app.use(
     "/api/trpc",
@@ -667,6 +753,20 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+
+    // Bootstrap heartbeat jobs after server is listening (non-blocking)
+    // This ensures all required cron jobs survive redeploys
+    if (process.env.NODE_ENV !== "development") {
+      setTimeout(async () => {
+        try {
+          console.log("[startup] Bootstrapping heartbeat jobs...");
+          const result = await bootstrapHeartbeatJobs();
+          console.log(`[startup] Heartbeat bootstrap complete: ${result.checked} checked, ${result.created} created, ${result.reEnabled} re-enabled, ${result.errors.length} errors`);
+        } catch (e) {
+          console.error("[startup] Heartbeat bootstrap failed:", e);
+        }
+      }, 5000); // Wait 5s after listen for stability
+    }
   });
 }
 

@@ -9,8 +9,10 @@ import {
   Check, Send, Phone, User, MapPin, Clock,
   Search, Filter, CheckCircle2, Flame, Loader2, ChevronRight,
   SkipForward, Sparkles, RefreshCw, MessageSquare, Unlock, ArrowLeft,
-  Target, Share, X, Lock, UserX, AlertTriangle, Mail
+  Target, Share, X, Lock, UserX, AlertTriangle, Mail, AlarmClock, CalendarDays, PhoneCall
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 
@@ -30,6 +32,12 @@ interface PendingLead {
   last_contacted?: string;
   last_contacted_days?: number;
   is_priority?: boolean; // true when days_stale >= 14
+  // Power Queue 2.0
+  is_hot_reply?: boolean;
+  reply_date?: string;
+  engagement_tier?: 'engaged' | 'standard' | 'cold';
+  tags?: string[];
+  last_contact_type?: string;
 }
 
 const ROSTER_AGENT_NAMES = ["Peter", "Steven", "Tiffany", "Stefanie", "Abby", "Irma", "Laila"];
@@ -173,15 +181,18 @@ export default function SmsQueue() {
   const [lastRefreshedLabel, setLastRefreshedLabel] = useState<string>("");
   const [draftMessages, setDraftMessages] = useState<Record<number, string>>({});
   const [generatingFor, setGeneratingFor] = useState<number | null>(null);
-  // Snooze: leads hidden for today only — stored in sessionStorage so they reappear tomorrow
-  const [snoozedLeads, setSnoozedLeads] = useState<Set<number>>(() => {
-    try {
-      const saved = sessionStorage.getItem("fub_snoozed_leads");
-      return saved ? new Set<number>(JSON.parse(saved)) : new Set<number>();
-    } catch {
-      return new Set<number>();
-    }
-  });
+  // Power Queue 2.0: DB-backed snooze — query active snoozes for this agent
+  const agentNameForSnooze = getAgentDisplayName() || 'all';
+  const { data: snoozeInfoData, refetch: refetchSnoozes } = trpc.leads.getSnoozeInfo.useQuery(
+    { agentName: agentNameForSnooze },
+    { staleTime: 60 * 1000 }
+  );
+  const snoozedLeads = useMemo(() => {
+    if (!snoozeInfoData?.entries) return new Set<number>();
+    return new Set(snoozeInfoData.entries.map(e => e.personId));
+  }, [snoozeInfoData]);
+  const [snoozePopoverOpen, setSnoozePopoverOpen] = useState<number | null>(null);
+  const [customSnoozeDate, setCustomSnoozeDate] = useState<Date | undefined>(undefined);
 
   const { data: queueData, isLoading: queueLoading, error: queueError, refetch, dataUpdatedAt } =
     trpc.fub.getPendingQueue.useQuery(
@@ -390,6 +401,14 @@ export default function SmsQueue() {
       messageBody,
     });
     setTextedLeads(prev => ({ ...prev, [lead.id]: true }));
+    // Power Queue 2.0: Record action for weekly stats
+    recordActionMutation.mutate({
+      personId: lead.id,
+      agentName: lead.assigned_agent || agentNameForSnooze,
+      actionType: 'texted',
+      daysStale: lead.days_stale,
+      isHotLead: lead.is_hot_reply || false,
+    });
     const phone = lead.phone.replace(/\D/g, "");
     const isApple = /iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent);
     const cleanPhone = phone.startsWith("+") || phone.length > 10 ? phone : (phone.length === 10 ? "+1" + phone : phone);
@@ -416,21 +435,30 @@ export default function SmsQueue() {
     setCurrentIndex(next < filteredLeads.length ? next : filteredLeads.length);
   };
 
-  const handleSnooze = (lead: PendingLead) => {
-    setSnoozedLeads(prev => {
-      const next = new Set(prev);
-      next.add(lead.id);
-      try { sessionStorage.setItem("fub_snoozed_leads", JSON.stringify(Array.from(next))); } catch { /* ignore */ }
-      return next;
+  const snoozeMutation = trpc.leads.snoozeLead.useMutation({
+    onSuccess: (_, vars) => {
+      refetchSnoozes();
+      // Advance to next untexted lead
+      setCurrentIndex(prev => {
+        const nextIdx = filteredLeads.findIndex((l, i) => i > prev && l.id !== vars.personId && !textedLeads[l.id]);
+        if (nextIdx !== -1) return nextIdx;
+        const fromStart = filteredLeads.findIndex((l, i) => i !== prev && l.id !== vars.personId && !textedLeads[l.id]);
+        return fromStart !== -1 ? fromStart : filteredLeads.length;
+      });
+    },
+    onError: (err) => toast.error(`Snooze failed: ${err.message}`),
+  });
+
+  const handleSnooze = (lead: PendingLead, snoozeUntil: string, label: string) => {
+    snoozeMutation.mutate({
+      personId: lead.id,
+      agentName: lead.assigned_agent || agentNameForSnooze,
+      snoozeUntil,
+      leadName: lead.name,
+      daysStale: lead.days_stale,
     });
-    // Advance to next untexted, unsnoozed lead
-    setCurrentIndex(prev => {
-      const nextIdx = filteredLeads.findIndex((l, i) => i > prev && l.id !== lead.id && !textedLeads[l.id]);
-      if (nextIdx !== -1) return nextIdx;
-      const fromStart = filteredLeads.findIndex((l, i) => i !== prev && l.id !== lead.id && !textedLeads[l.id]);
-      return fromStart !== -1 ? fromStart : filteredLeads.length;
-    });
-    toast.info(`${lead.name.split(" ")[0]} snoozed — back tomorrow.`, { duration: 2500 });
+    setSnoozePopoverOpen(null);
+    toast.info(`${lead.name.split(" ")[0]} snoozed until ${label}`, { duration: 3000 });
   };
 
   const handleCall = (lead: PendingLead) => {
@@ -440,15 +468,34 @@ export default function SmsQueue() {
       agentName: lead.assigned_agent,
       channel: "call" as const,
     });
+    // Power Queue 2.0: Record call action for weekly stats
+    recordActionMutation.mutate({
+      personId: lead.id,
+      agentName: lead.assigned_agent || agentNameForSnooze,
+      actionType: 'called',
+      daysStale: lead.days_stale,
+      isHotLead: lead.is_hot_reply || false,
+    });
     const phone = lead.phone.replace(/\D/g, "");
     const cleanPhone = phone.startsWith("+") || phone.length > 10 ? phone : (phone.length === 10 ? "+1" + phone : phone);
     window.location.href = `tel:${cleanPhone}`;
     toast.success(`Calling ${lead.name.split(" ")[0]}\u2026 FUB note logged.`, { duration: 2500 });
   };
 
+  const unsnoozeMutation = trpc.leads.unsnoozeLead.useMutation({
+    onSuccess: () => refetchSnoozes(),
+  });
+
+  // Power Queue 2.0: Record queue actions for weekly stats
+  const recordActionMutation = trpc.leads.recordAction.useMutation();
+
   const handleUnsnoozeAll = () => {
-    setSnoozedLeads(new Set<number>());
-    try { sessionStorage.removeItem("fub_snoozed_leads"); } catch { /* ignore */ }
+    // Unsnooze all active snoozes for this agent
+    if (snoozeInfoData?.entries) {
+      for (const entry of snoozeInfoData.entries) {
+        unsnoozeMutation.mutate({ personId: entry.personId, agentName: agentNameForSnooze });
+      }
+    }
     toast.success("All snoozed leads restored.", { duration: 2000 });
   };
 
@@ -982,6 +1029,8 @@ export default function SmsQueue() {
           </Card>
         ) : (
           (() => {
+            // Power Queue 2.0: Separate hot reply leads from normal queue
+            const hotLeads = filteredLeads.filter(l => l.is_hot_reply && !textedLeads[l.id]);
             const lead = filteredLeads[currentIndex];
             if (!lead) return null;
             const isTexted = textedLeads[lead.id];
@@ -990,6 +1039,63 @@ export default function SmsQueue() {
 
             return (
               <div className="space-y-3">
+                {/* ══ Power Queue 2.0: HOT LEADS — REPLIED — CALL NOW ══ */}
+                {hotLeads.length > 0 && (
+                  <div className="rounded-xl border-2 border-red-500/40 bg-gradient-to-b from-red-950/30 to-red-950/10 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+                      <h3 className="text-sm font-bold text-red-400 uppercase tracking-wide">Replied — Call Now</h3>
+                      <Badge className="bg-red-500/20 text-red-300 border-red-500/30 text-[10px] ml-auto">
+                        {hotLeads.length} lead{hotLeads.length !== 1 ? 's' : ''}
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      {hotLeads.slice(0, 5).map((hotLead) => (
+                        <div
+                          key={hotLead.id}
+                          className="flex items-center justify-between bg-red-950/20 border border-red-500/20 rounded-lg px-4 py-3 hover:bg-red-950/30 transition-colors"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-bold text-red-200">{hotLead.name}</span>
+                              <Badge className="bg-red-500/25 text-red-300 border-none text-[9px]">
+                                🔥 Replied
+                              </Badge>
+                            </div>
+                            <div className="text-[10px] text-red-400/70 flex items-center gap-1.5">
+                              <span>Day {hotLead.days_stale}</span>
+                              <span>·</span>
+                              <span>{hotLead.city || 'Texas'}</span>
+                              {hotLead.reply_date && (
+                                <>
+                                  <span>·</span>
+                                  <span>replied {new Date(hotLead.reply_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href={`tel:${hotLead.phone.replace(/\D/g, '')}`}
+                              onClick={() => {
+                                logSentNote.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, channel: 'call' as const });
+                                recordActionMutation.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, actionType: 'hot_lead_responded', daysStale: hotLead.days_stale, isHotLead: true });
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500 hover:bg-red-400 text-white text-xs font-bold transition-colors active:scale-[0.97]"
+                            >
+                              <PhoneCall className="h-3.5 w-3.5" />
+                              Call
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {hotLeads.length > 5 && (
+                      <p className="text-[10px] text-red-400/60 text-center">+{hotLeads.length - 5} more hot leads</p>
+                    )}
+                  </div>
+                )}
+
                 {/* Priority section label */}
                 {freePick && (
                   <div className="flex items-center gap-2 text-[11px]">
@@ -1110,6 +1216,30 @@ export default function SmsQueue() {
                       )}
                     </div>
 
+                    {/* Power Queue 2.0: Context Line */}
+                    <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-1">
+                      <span className="font-medium text-slate-500">Day {lead.days_stale}</span>
+                      <span className="text-slate-600">·</span>
+                      <span>{lead.city || 'Texas'}</span>
+                      {lead.last_contact_type && (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span>last contact: {lead.last_contact_type}{lead.last_contacted ? ` ${new Date(lead.last_contacted).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</span>
+                        </>
+                      )}
+                      {lead.engagement_tier && (
+                        <>
+                          <span className="text-slate-600">·</span>
+                          <span className={`font-medium ${
+                            lead.engagement_tier === 'engaged' ? 'text-emerald-400' :
+                            lead.engagement_tier === 'cold' ? 'text-blue-400' : 'text-slate-400'
+                          }`}>
+                            {lead.engagement_tier}
+                          </span>
+                        </>
+                      )}
+                    </div>
+
                     {/* Notes preview */}
                     {lead.notes && (
                       <div className="bg-white/4 border border-white/10 rounded-lg p-3 text-xs text-white/50 space-y-1">
@@ -1161,15 +1291,58 @@ export default function SmsQueue() {
                           <SkipForward className="h-4 w-4" />
                           <span className="text-xs">Skip</span>
                         </Button>
-                        <Button
-                          onClick={() => handleSnooze(lead)}
-                          variant="outline"
-                          title="Hide this lead for today — reappears tomorrow"
-                          className="flex-1 h-10 rounded-xl border-white/12 text-muted-foreground hover:bg-[oklch(0.76_0.14_78/10%)] hover:text-[oklch(0.76_0.14_78)] hover:border-[oklch(0.76_0.14_78/30%)] flex items-center justify-center gap-1.5 transition-colors"
-                        >
-                          <Clock className="h-4 w-4" />
-                          <span className="text-xs">Snooze</span>
-                        </Button>
+                        <Popover open={snoozePopoverOpen === lead.id} onOpenChange={(open) => { setSnoozePopoverOpen(open ? lead.id : null); setCustomSnoozeDate(undefined); }}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              title="Snooze this lead — choose duration"
+                              className="flex-1 h-10 rounded-xl border-white/12 text-muted-foreground hover:bg-[oklch(0.76_0.14_78/10%)] hover:text-[oklch(0.76_0.14_78)] hover:border-[oklch(0.76_0.14_78/30%)] flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                              <AlarmClock className="h-4 w-4" />
+                              <span className="text-xs">Snooze</span>
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-64 p-3 space-y-2" align="center">
+                            <p className="text-xs font-semibold text-slate-600">Snooze {lead.name.split(' ')[0]}</p>
+                            <div className="space-y-1">
+                              <button
+                                onClick={() => {
+                                  const d = new Date(); d.setDate(d.getDate() + 7);
+                                  handleSnooze(lead, d.toISOString().slice(0, 10), '1 week');
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent transition-colors"
+                              >
+                                1 week
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const d = new Date(); d.setMonth(d.getMonth() + 1);
+                                  handleSnooze(lead, d.toISOString().slice(0, 10), '1 month');
+                                }}
+                                className="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-accent transition-colors"
+                              >
+                                1 month
+                              </button>
+                              <div className="border-t border-white/10 pt-2 mt-1">
+                                <p className="text-[10px] text-slate-400 mb-1 px-1">Custom date</p>
+                                <Calendar
+                                  mode="single"
+                                  selected={customSnoozeDate}
+                                  onSelect={(date) => {
+                                    if (date) {
+                                      setCustomSnoozeDate(date);
+                                      const iso = date.toISOString().slice(0, 10);
+                                      const label = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                      handleSnooze(lead, iso, label);
+                                    }
+                                  }}
+                                  disabled={(date) => date < new Date()}
+                                  className="rounded-md"
+                                />
+                              </div>
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                         <Button
                           onClick={() => handleCall(lead)}
                           variant="outline"
@@ -1240,31 +1413,103 @@ export default function SmsQueue() {
 // ─── Pond Leads — SMS Only Section ─────────────────────────────────────────────
 // Separate section for pond leads whose email bounced but have a phone.
 // Only visible to Peter (admin view, no ?agent= lock).
+// Features: DB-backed persistence (survives refresh), AI Copilot draft support.
 function PondSmsSection() {
   const { data: pondLeads, isLoading } = trpc.fub.getPondSmsLeads.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
 
+  // DB-backed persistence: fetch today's texted IDs for Peter
+  const { data: dbTextedPond } = trpc.leads.getTodayTextedLeadIds.useQuery(
+    { agentName: "Peter" },
+    { staleTime: 60 * 1000 }
+  );
+
   const [expandedLead, setExpandedLead] = useState<number | null>(null);
   const [sentPondLeads, setSentPondLeads] = useState<Record<number, boolean>>({});
+  const [pondDrafts, setPondDrafts] = useState<Record<number, string>>({});
+  const [generatingPondDraft, setGeneratingPondDraft] = useState<number | null>(null);
 
-  if (isLoading) return null; // Don't show skeleton — section is supplementary
-  if (!pondLeads || pondLeads.length === 0) return null; // Nothing to show
+  const logSentNote = trpc.leads.logSentNote.useMutation({
+    onError: (err) => console.error("Pond SMS FUB note failed:", err.message),
+  });
+  const draftSmsMutation = trpc.ai.draftSms.useMutation();
+
+  // Seed sent state from DB on load (persists across refreshes)
+  useEffect(() => {
+    if (!dbTextedPond?.ids?.length) return;
+    setSentPondLeads(prev => {
+      const merged = { ...prev };
+      let changed = false;
+      for (const id of dbTextedPond.ids) {
+        if (!merged[id]) { merged[id] = true; changed = true; }
+      }
+      return changed ? merged : prev;
+    });
+  }, [dbTextedPond]);
+
+  if (isLoading) return null;
+  if (!pondLeads || pondLeads.length === 0) return null;
 
   const unsent = pondLeads.filter(l => !sentPondLeads[l.id]);
   if (unsent.length === 0) return null;
 
+  // AI Copilot: generate personalized draft for a pond lead
+  const generatePondDraft = async (lead: typeof pondLeads[0]) => {
+    if (pondDrafts[lead.id]) return; // Already generated
+    setGeneratingPondDraft(lead.id);
+    try {
+      const result = await draftSmsMutation.mutateAsync({
+        leadName: lead.name.split(" ")[0],
+        leadCity: "Texas",
+        daysStale: lead.days_in_pond,
+        assignedAgent: "Peter",
+        notes: lead.notes || undefined,
+        personId: lead.id,
+      });
+      setPondDrafts(prev => ({ ...prev, [lead.id]: result.draft }));
+    } catch {
+      // Fallback to pre-built SMS body
+      setPondDrafts(prev => ({ ...prev, [lead.id]: lead.sms_body }));
+    } finally {
+      setGeneratingPondDraft(null);
+    }
+  };
+
+  // Auto-generate draft when a lead is expanded
+  const handleExpand = (leadId: number) => {
+    const isExpanding = expandedLead !== leadId;
+    setExpandedLead(isExpanding ? leadId : null);
+    if (isExpanding) {
+      const lead = pondLeads.find(l => l.id === leadId);
+      if (lead) generatePondDraft(lead);
+    }
+  };
+
   const handleSendPondSms = (lead: typeof pondLeads[0]) => {
+    const messageBody = pondDrafts[lead.id] || lead.sms_body;
+    // Persist to DB via logSentNote (same as main queue)
+    logSentNote.mutate({
+      personId: lead.id,
+      agentName: "Peter",
+      messageBody,
+    });
     setSentPondLeads(prev => ({ ...prev, [lead.id]: true }));
     const phone = lead.phone.replace(/\D/g, "");
     const isApple = /iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent);
     const cleanPhone = phone.startsWith("+") || phone.length > 10 ? phone : (phone.length === 10 ? "+1" + phone : phone);
     const smsLink = isApple
-      ? `sms:${cleanPhone}&body=${encodeURIComponent(lead.sms_body)}`
-      : `sms:${cleanPhone}?body=${encodeURIComponent(lead.sms_body)}`;
+      ? `sms:${cleanPhone}&body=${encodeURIComponent(messageBody)}`
+      : `sms:${cleanPhone}?body=${encodeURIComponent(messageBody)}`;
     window.location.href = smsLink;
     toast.success(`SMS opened for ${lead.name.split(" ")[0]}`, { duration: 2000 });
+  };
+
+  // Regenerate a fresh AI draft
+  const handleRegenerate = (lead: typeof pondLeads[0]) => {
+    setPondDrafts(prev => { const copy = { ...prev }; delete copy[lead.id]; return copy; });
+    generatePondDraft(lead);
   };
 
   return (
@@ -1288,7 +1533,7 @@ function PondSmsSection() {
               className="bg-card/[0.03] border border-white/10 rounded-lg overflow-hidden transition-all duration-200"
             >
               <button
-                onClick={() => setExpandedLead(expandedLead === lead.id ? null : lead.id)}
+                onClick={() => handleExpand(lead.id)}
                 className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-white/[0.03] transition-colors"
               >
                 <div className="flex items-center gap-3">
@@ -1316,8 +1561,28 @@ function PondSmsSection() {
                     </p>
                   )}
                   <div className="bg-card/[0.05] border border-white/8 rounded-md p-2">
-                    <p className="text-[10px] text-slate-500 mb-1 font-semibold">Suggested text:</p>
-                    <p className="text-xs text-foreground">{lead.sms_body}</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] text-slate-500 font-semibold flex items-center gap-1">
+                        <Sparkles className="h-3 w-3 text-amber-500" />
+                        AI Draft
+                      </p>
+                      <button
+                        onClick={() => handleRegenerate(lead)}
+                        disabled={generatingPondDraft === lead.id}
+                        className="text-[9px] text-slate-400 hover:text-amber-500 transition-colors flex items-center gap-0.5 disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-2.5 w-2.5 ${generatingPondDraft === lead.id ? "animate-spin" : ""}`} />
+                        Regen
+                      </button>
+                    </div>
+                    {generatingPondDraft === lead.id ? (
+                      <div className="flex items-center gap-2 py-1">
+                        <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+                        <span className="text-[10px] text-slate-400">Generating personalized text...</span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-foreground">{pondDrafts[lead.id] || lead.sms_body}</p>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     <Button

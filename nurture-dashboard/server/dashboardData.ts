@@ -37,7 +37,7 @@ export function clearDashboardCache() { dashboardCache = null; }
 // Re-exports the DB helpers so callers don't need to change their import paths.
 // The in-memory Set is kept as a fast local cache to avoid a DB round-trip on
 // every queue render; it is seeded from the DB on first use each session.
-import { dbRecordSmsSentToday, getSmsSentTodayIds, getSmsSentTodayCount as dbGetSmsSentTodayCount } from './db';
+import { dbRecordSmsSentToday, getSmsSentTodayIds, getSmsSentTodayCount as dbGetSmsSentTodayCount, getAllActiveSnoozes } from './db';
 
 let _localSentSet: Set<number> | null = null; // null = not yet seeded this session
 
@@ -288,6 +288,12 @@ export interface PendingQueueItem {
   last_contacted: string; // ISO date string of most recent outbound note/text, or empty
   last_contacted_days: number; // days since last outbound contact (0 = today)
   is_priority: boolean; // true when days_stale >= 14 (due for follow-up — shown first in queue)
+  // Power Queue 2.0 fields
+  is_hot_reply: boolean; // true when lead has "Replied - Paused" tag — pinned at top
+  reply_date: string; // ISO date when the reply tag was detected (from notes/activity)
+  engagement_tier: 'engaged' | 'standard' | 'cold'; // engagement classification
+  tags: string[]; // raw FUB tags for display/filtering
+  last_contact_type: string; // 'your text' | 'your email' | 'your call' | 'bot email' | 'their text' | ''
 }
 
 // ── Main functions ─────────────────────────────────────────────────────────────
@@ -680,6 +686,39 @@ export async function getPendingQueue(fubApiKey: string, agentFilter?: string): 
         } catch { /* ignore */ }
       }
 
+      // Detect "Replied - Paused" tag for hot reply pinning
+      const personTags: string[] = (person.tags || []).map((t: string) => t);
+      const personTagsLower = personTags.map(t => t.toLowerCase());
+      const isHotReply = personTagsLower.includes("replied - paused");
+
+      // Engagement tier based on activity
+      let engagementTier: 'engaged' | 'standard' | 'cold' = 'standard';
+      if (lastInboundText || lastContactedDays <= 3) {
+        engagementTier = 'engaged';
+      } else if (lastContactedDays > 7 || (!lastContactedDate && daysStale > 7)) {
+        engagementTier = 'cold';
+      }
+
+      // Determine last contact type from notes/texts
+      let lastContactType = '';
+      if (lastInboundText) {
+        lastContactType = 'their text';
+      } else if (textsResult.status === 'fulfilled') {
+        const msgs: any[] = textsResult.value.textMessages || [];
+        const outbound = msgs.find((m: any) => m.isIncoming === false || m.direction === 'outbound');
+        if (outbound) lastContactType = 'your text';
+      }
+      if (!lastContactType && notesResult.status === 'fulfilled') {
+        const notesArr: any[] = notesResult.value.notes || [];
+        const latestNote = notesArr[0];
+        if (latestNote) {
+          const subj = (latestNote.subject || '').toLowerCase();
+          if (subj.includes('email') || subj.includes('nurture')) lastContactType = 'bot email';
+          else if (subj.includes('call')) lastContactType = 'your call';
+          else lastContactType = 'your text';
+        }
+      }
+
       return {
         id: leadId,
         name: fullName,
@@ -695,7 +734,12 @@ export async function getPendingQueue(fubApiKey: string, agentFilter?: string): 
         last_inbound_text: lastInboundText,
         last_contacted: lastContactedDate,
         last_contacted_days: lastContactedDays,
-        is_priority: daysStale >= 14, // 14–20 days = priority, shown first in queue
+        is_priority: daysStale >= 14,
+        is_hot_reply: isHotReply,
+        reply_date: isHotReply ? (lastContactedDate || '') : '',
+        engagement_tier: engagementTier,
+        tags: personTags,
+        last_contact_type: lastContactType,
       } as PendingQueueItem;
     })
   );
@@ -709,12 +753,20 @@ export async function getPendingQueue(fubApiKey: string, agentFilter?: string): 
   const sentTodaySet = await getSmsSentTodayIds();
   // Also update local cache so wasSmsSentToday() stays in sync
   _localSentSet = sentTodaySet;
-  const queue = fulfilledItems.filter(item => !sentTodaySet.has(item.id));
 
-  // Sort: priority leads (14–20 days stale) first, then recent leads (1–13 days);
-  // within each group sort by days_stale descending (most overdue first)
+  // Power Queue 2.0: Remove snoozed leads from the queue
+  const activeSnoozes = await getAllActiveSnoozes();
+
+  const queue = fulfilledItems.filter(item => !sentTodaySet.has(item.id) && !activeSnoozes.has(item.id));
+
+  // Sort: hot reply leads FIRST ("Replied - Paused" tag), then priority (14-20 days),
+  // then recent (1-13 days). Within each group sort by days_stale descending.
   queue.sort((a, b) => {
+    // Hot reply leads always pin to the very top
+    if (a.is_hot_reply !== b.is_hot_reply) return a.is_hot_reply ? -1 : 1;
+    // Then priority leads (14-20 days)
     if (a.is_priority !== b.is_priority) return a.is_priority ? -1 : 1;
+    // Within each group, most overdue first
     return b.days_stale - a.days_stale;
   });
 
@@ -889,6 +941,24 @@ export async function getAgentLeads(fubApiKey: string, agentFirstName: string): 
         tier = "your_leads";
       }
 
+      // Detect "Replied - Paused" tag for hot reply pinning
+      const personTags: string[] = (person.tags || []).map((t: string) => t);
+      const personTagsLower = personTags.map(t => t.toLowerCase());
+      const isHotReply = personTagsLower.includes("replied - paused");
+
+      // Engagement tier based on activity
+      let engagementTier: 'engaged' | 'standard' | 'cold' = 'standard';
+      if (lastInboundText || lastContactedDays <= 3) {
+        engagementTier = 'engaged';
+      } else if (lastContactedDays > 7 || (!lastContactedDate && daysStale > 7)) {
+        engagementTier = 'cold';
+      }
+
+      // Determine last contact type
+      let lastContactType = '';
+      if (lastInboundText) lastContactType = 'their text';
+      else if (lastContactedDate) lastContactType = 'your text';
+
       return {
         id: leadId,
         name: fullName,
@@ -902,9 +972,14 @@ export async function getAgentLeads(fubApiKey: string, agentFirstName: string): 
         assigned_agent_id: targetUserId!,
         notes: leadNotes,
         last_inbound_text: lastInboundText,
-                last_contacted: lastContactedDate,
+        last_contacted: lastContactedDate,
         last_contacted_days: lastContactedDays,
         is_priority: daysStale >= 14,
+        is_hot_reply: isHotReply,
+        reply_date: isHotReply ? (lastContactedDate || '') : '',
+        engagement_tier: engagementTier,
+        tags: personTags,
+        last_contact_type: lastContactType,
         tier,
       };
     })

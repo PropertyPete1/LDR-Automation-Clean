@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { BotMonitorLog, BotObservation, BotRunLog, InsertBotMonitorLog, InsertBotObservation, InsertBotRunLog, InsertCopilotFeedback, InsertCopilotMemory, InsertUiErrorLog, InsertUser, botMonitorLog, botObservations, botRunLog, copilotFeedback, copilotMemories, pondNurtureLog, pondPromotionLog, replyIntentProcessed, smsSentToday, uiErrorLog, users } from "../drizzle/schema";
+import { BotMonitorLog, BotObservation, BotRunLog, InsertBotMonitorLog, InsertBotObservation, InsertBotRunLog, InsertCopilotFeedback, InsertCopilotMemory, InsertUiErrorLog, InsertUser, botMonitorLog, botObservations, botRunLog, copilotFeedback, copilotMemories, pondNurtureLog, pondPromotionLog, replyIntentProcessed, smsSentToday, speedToLeadTimers, uiErrorLog, users, smsDraftCache, leadSnoozes, queueActions } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -564,7 +564,7 @@ export async function pruneOldObservations(daysBack = 30): Promise<number> {
 /**
  * Build a summary of what the nightly healer fixed overnight.
  * Returns counts and a list of human-readable fix descriptions for the clock-in email.
- * Looks at the last 10 hours (healer runs at 4am CT, clock-in at 10am CT).
+ * Looks at the last 10 hours (healer runs at 7pm CT, clock-in at 10am CT).
  */
 export interface OvernightHealerSummary {
   totalFixed: number;
@@ -748,5 +748,299 @@ export async function pruneOldCopilotFeedback(daysBack = 180): Promise<number> {
   } catch (err) {
     console.warn('[pruneOldCopilotFeedback] Failed:', err);
     return 0;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Power Queue 2.0 — DB Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── SMS Draft Cache ──────────────────────────────────────────────────────────
+
+/**
+ * Get a cached AI draft for a lead (same day, same agent).
+ * Returns null if no cache exists for today.
+ */
+export async function getCachedDraft(personId: number, agentName: string): Promise<string | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const rows = await db
+      .select({ draftText: smsDraftCache.draftText })
+      .from(smsDraftCache)
+      .where(
+        and(
+          eq(smsDraftCache.personId, personId),
+          eq(smsDraftCache.agentName, agentName),
+          eq(smsDraftCache.cacheDate, today)
+        )
+      )
+      .limit(1);
+    return rows[0]?.draftText ?? null;
+  } catch (err) {
+    console.warn('[getCachedDraft] Failed:', err);
+    return null;
+  }
+}
+
+/**
+ * Store an AI draft in the cache for today.
+ */
+export async function setCachedDraft(personId: number, agentName: string, draftText: string, notesHash?: string): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    // Delete any existing cache for this lead+agent+date, then insert fresh
+    await db.delete(smsDraftCache).where(
+      and(
+        eq(smsDraftCache.personId, personId),
+        eq(smsDraftCache.agentName, agentName),
+        eq(smsDraftCache.cacheDate, today)
+      )
+    );
+    await db.insert(smsDraftCache).values({
+      personId,
+      agentName,
+      draftText,
+      cacheDate: today,
+      notesHash: notesHash || null,
+    });
+  } catch (err) {
+    console.warn('[setCachedDraft] Failed:', err);
+  }
+}
+
+// ── Lead Snoozes ─────────────────────────────────────────────────────────────
+
+/**
+ * Get all active snoozes (snooze_until >= today) for an agent.
+ * Returns set of snoozed personIds for fast filtering.
+ */
+export async function getActiveSnoozesForAgent(agentName: string): Promise<Map<number, string>> {
+  try {
+    const db = await getDb();
+    if (!db) return new Map();
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const rows = await db
+      .select({ personId: leadSnoozes.personId, snoozeUntil: leadSnoozes.snoozeUntil })
+      .from(leadSnoozes)
+      .where(
+        and(
+          eq(leadSnoozes.agentName, agentName),
+          gte(leadSnoozes.snoozeUntil, today)
+        )
+      );
+    const map = new Map<number, string>();
+    for (const r of rows) {
+      map.set(r.personId, r.snoozeUntil);
+    }
+    return map;
+  } catch (err) {
+    console.warn('[getActiveSnoozesForAgent] Failed:', err);
+    return new Map();
+  }
+}
+
+/**
+ * Get all active snoozes (any agent) — used for global queue filtering.
+ */
+export async function getAllActiveSnoozes(): Promise<Map<number, string>> {
+  try {
+    const db = await getDb();
+    if (!db) return new Map();
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const rows = await db
+      .select({ personId: leadSnoozes.personId, snoozeUntil: leadSnoozes.snoozeUntil })
+      .from(leadSnoozes)
+      .where(gte(leadSnoozes.snoozeUntil, today));
+    const map = new Map<number, string>();
+    for (const r of rows) {
+      map.set(r.personId, r.snoozeUntil);
+    }
+    return map;
+  } catch (err) {
+    console.warn('[getAllActiveSnoozes] Failed:', err);
+    return new Map();
+  }
+}
+
+/**
+ * Snooze a lead — insert a snooze record.
+ */
+export async function snoozeLead(personId: number, agentName: string, snoozeUntil: string, reason?: string, leadName?: string): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    // Remove any existing snooze for this lead+agent first
+    await db.delete(leadSnoozes).where(
+      and(
+        eq(leadSnoozes.personId, personId),
+        eq(leadSnoozes.agentName, agentName)
+      )
+    );
+    await db.insert(leadSnoozes).values({
+      personId,
+      agentName,
+      snoozeUntil,
+      reason: reason || null,
+      leadName: leadName || null,
+      fubNoteWritten: false,
+    });
+  } catch (err) {
+    console.warn('[snoozeLead] Failed:', err);
+  }
+}
+
+/**
+ * Mark a snooze as having its FUB note written.
+ */
+export async function markSnoozeNoteWritten(personId: number, agentName: string): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.update(leadSnoozes)
+      .set({ fubNoteWritten: true })
+      .where(
+        and(
+          eq(leadSnoozes.personId, personId),
+          eq(leadSnoozes.agentName, agentName)
+        )
+      );
+  } catch (err) {
+    console.warn('[markSnoozeNoteWritten] Failed:', err);
+  }
+}
+
+/**
+ * Remove a snooze (unsnooze).
+ */
+export async function unsnoozeLead(personId: number, agentName: string): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db.delete(leadSnoozes).where(
+      and(
+        eq(leadSnoozes.personId, personId),
+        eq(leadSnoozes.agentName, agentName)
+      )
+    );
+  } catch (err) {
+    console.warn('[unsnoozeLead] Failed:', err);
+  }
+}
+
+/**
+ * Get snooze count for an agent (active snoozes).
+ */
+export async function getSnoozeCount(agentName: string): Promise<number> {
+  try {
+    const db = await getDb();
+    if (!db) return 0;
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+    const rows = await db
+      .select({ cnt: sql<number>`count(*)` })
+      .from(leadSnoozes)
+      .where(
+        and(
+          eq(leadSnoozes.agentName, agentName),
+          gte(leadSnoozes.snoozeUntil, today)
+        )
+      );
+    return rows[0]?.cnt ?? 0;
+  } catch (err) {
+    console.warn('[getSnoozeCount] Failed:', err);
+    return 0;
+  }
+}
+
+// ── Queue Actions (Stats Tracking) ──────────────────────────────────────────
+
+/**
+ * Record a queue action for stats tracking.
+ */
+export async function recordQueueAction(
+  personId: number,
+  agentName: string,
+  actionType: string,
+  daysStale: number,
+  isHotLead: boolean
+): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    // Calculate ISO week key (e.g. '2026-W28')
+    const now = new Date();
+    const jan1 = new Date(now.getFullYear(), 0, 1);
+    const dayOfYear = Math.ceil((now.getTime() - jan1.getTime()) / (1000 * 60 * 60 * 24));
+    const weekNum = Math.ceil((dayOfYear + jan1.getDay()) / 7);
+    const weekKey = `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+
+    await db.insert(queueActions).values({
+      personId,
+      agentName,
+      actionType,
+      weekKey,
+      daysStale,
+      isHotLead,
+    });
+  } catch (err) {
+    console.warn('[recordQueueAction] Failed:', err);
+  }
+}
+
+/**
+ * Get weekly stats for all agents (for the digest endpoint).
+ * Returns per-agent stats for the given week key.
+ */
+export async function getWeeklyQueueStats(weekKey?: string): Promise<Array<{
+  agentName: string;
+  totalActions: number;
+  hotLeadsResponded: number;
+  avgDaysStale: number;
+  texted: number;
+  called: number;
+  snoozed: number;
+}>> {
+  try {
+    const db = await getDb();
+    if (!db) return [];
+
+    // Default to current week
+    if (!weekKey) {
+      const now = new Date();
+      const jan1 = new Date(now.getFullYear(), 0, 1);
+      const dayOfYear = Math.ceil((now.getTime() - jan1.getTime()) / (1000 * 60 * 60 * 24));
+      const weekNum = Math.ceil((dayOfYear + jan1.getDay()) / 7);
+      weekKey = `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+    }
+
+    const rows = await db
+      .select({
+        agentName: queueActions.agentName,
+        totalActions: sql<number>`count(*)`,
+        hotLeadsResponded: sql<number>`sum(case when ${queueActions.isHotLead} = true then 1 else 0 end)`,
+        avgDaysStale: sql<number>`avg(${queueActions.daysStale})`,
+        texted: sql<number>`sum(case when ${queueActions.actionType} = 'texted' then 1 else 0 end)`,
+        called: sql<number>`sum(case when ${queueActions.actionType} = 'called' then 1 else 0 end)`,
+        snoozed: sql<number>`sum(case when ${queueActions.actionType} = 'snoozed' then 1 else 0 end)`,
+      })
+      .from(queueActions)
+      .where(eq(queueActions.weekKey, weekKey))
+      .groupBy(queueActions.agentName);
+
+    return rows.map(r => ({
+      agentName: r.agentName,
+      totalActions: Number(r.totalActions) || 0,
+      hotLeadsResponded: Number(r.hotLeadsResponded) || 0,
+      avgDaysStale: Math.round(Number(r.avgDaysStale) || 0),
+      texted: Number(r.texted) || 0,
+      called: Number(r.called) || 0,
+      snoozed: Number(r.snoozed) || 0,
+    }));
+  } catch (err) {
+    console.warn('[getWeeklyQueueStats] Failed:', err);
+    return [];
   }
 }

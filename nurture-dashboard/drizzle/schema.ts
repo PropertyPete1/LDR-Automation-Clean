@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { boolean, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -321,3 +321,178 @@ export const pondPromotionLog = mysqlTable("pond_promotion_log", {
 });
 export type PondPromotionLog = typeof pondPromotionLog.$inferSelect;
 export type InsertPondPromotionLog = typeof pondPromotionLog.$inferInsert;
+
+/**
+ * Speed-to-lead timer tracking.
+ * Each row represents a new lead that was assigned to an agent and is being
+ * monitored for first-touch response time. Business rules:
+ * - Timer starts when a new lead is detected (created in last 24h, assigned to non-Peter agent)
+ * - Warning at 30 business minutes (FUB note + task created)
+ * - Reassignment to Peter at 60 business minutes (lead reassigned + note)
+ * - Timer canceled if agent touches the lead (call, text, email, note)
+ *
+ * Source: speed_to_lead heartbeat (fires every 5 min)
+ */
+export const speedToLeadTimers = mysqlTable("speed_to_lead_timers", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull().unique(),
+  /** FUB user ID of the assigned agent */
+  assignedUserId: int("assigned_user_id").notNull(),
+  /** Agent name for display/logging */
+  agentName: varchar("agent_name", { length: 100 }).default("").notNull(),
+  /** When the lead was created in FUB (ISO string) */
+  leadCreatedAt: varchar("lead_created_at", { length: 30 }).notNull(),
+  /** When the timer was started (our system) */
+  timerStartedAt: timestamp("timer_started_at").defaultNow().notNull(),
+  /** Status: active | warned | reassigned | canceled */
+  status: varchar("status", { length: 20 }).default("active").notNull(),
+  /** When the warning was sent (null if not yet warned) */
+  warnedAt: timestamp("warned_at"),
+  /** When the lead was reassigned (null if not yet) */
+  reassignedAt: timestamp("reassigned_at"),
+  /** When the timer was canceled (agent touched the lead) */
+  canceledAt: timestamp("canceled_at"),
+  /** Reason for cancellation */
+  cancelReason: varchar("cancel_reason", { length: 100 }),
+});
+export type SpeedToLeadTimer = typeof speedToLeadTimers.$inferSelect;
+export type InsertSpeedToLeadTimer = typeof speedToLeadTimers.$inferInsert;
+
+/**
+ * Annual Nurture Leads — leads who indicated they are no longer looking
+ * to move to Texas (moved away, stopped searching, etc.) but are NOT
+ * hostile opt-outs. They receive ONE friendly check-in email per year
+ * asking for referrals and keeping the door open.
+ *
+ * Source: reply_intent_handler | pond_response_scan
+ */
+export const annualNurtureLeads = mysqlTable("annual_nurture_leads", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Lead's email address */
+  email: varchar("email", { length: 320 }),
+  /** Lead's name at time of enrollment */
+  leadName: varchar("lead_name", { length: 200 }),
+  /** The trigger text that caused enrollment (AI snippet) */
+  triggerSnippet: varchar("trigger_snippet", { length: 500 }),
+  /** AI confidence 0.0-1.0 */
+  confidence: varchar("confidence", { length: 10 }),
+  /** AI reason for classification */
+  reason: varchar("reason", { length: 500 }),
+  /** Which system enrolled them */
+  source: varchar("source", { length: 80 }).notNull(),
+  /** When they were enrolled in annual nurture */
+  enrolledAt: timestamp("enrolled_at").defaultNow().notNull(),
+  /** When the last annual email was sent (null = never sent yet) */
+  lastEmailSentAt: timestamp("last_email_sent_at"),
+  /** Total annual emails sent to this lead */
+  emailsSent: int("emails_sent").notNull().default(0),
+  /** Whether this enrollment is still active */
+  active: boolean("active").notNull().default(true),
+});
+export type AnnualNurtureLead = typeof annualNurtureLeads.$inferSelect;
+export type InsertAnnualNurtureLead = typeof annualNurtureLeads.$inferInsert;
+
+/**
+ * Per-lead audit log for agent bot emails.
+ * Tracks every email sent by agent bots to prevent over-contacting
+ * and to surface in the dashboard lead list view.
+ */
+export const contactedLeads = mysqlTable("contacted_leads", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Which bot sent the email (slug) */
+  botSlug: varchar("bot_slug", { length: 50 }).notNull(),
+  /** Human-readable bot name */
+  botName: varchar("bot_name", { length: 100 }).notNull(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Lead first name */
+  leadFirstName: varchar("lead_first_name", { length: 100 }),
+  /** Lead last name */
+  leadLastName: varchar("lead_last_name", { length: 100 }),
+  /** Lead email address */
+  leadEmail: varchar("lead_email", { length: 320 }),
+  /** FUB stage at time of contact */
+  stage: varchar("stage", { length: 100 }),
+  /** How many days stale the lead was */
+  daysStale: int("days_stale").notNull().default(0),
+  /** The email body that was sent */
+  messageBody: text("message_body"),
+  /** When the email was sent */
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+});
+export type ContactedLead = typeof contactedLeads.$inferSelect;
+export type InsertContactedLead = typeof contactedLeads.$inferInsert;
+
+/**
+ * Power Queue 2.0 — AI SMS draft cache.
+ * Stores Claude-generated SMS drafts per lead per day to avoid regenerating
+ * on every page load (cost control). Cache key = personId + cacheDate.
+ */
+export const smsDraftCache = mysqlTable("sms_draft_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Agent the draft was generated for */
+  agentName: varchar("agent_name", { length: 100 }).notNull(),
+  /** The AI-generated draft text */
+  draftText: text("draft_text").notNull(),
+  /** Cache date in CT (YYYY-MM-DD) — one draft per lead per day */
+  cacheDate: varchar("cache_date", { length: 10 }).notNull(),
+  /** Notes hash used to generate this draft (invalidate if notes change) */
+  notesHash: varchar("notes_hash", { length: 64 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type SmsDraftCache = typeof smsDraftCache.$inferSelect;
+export type InsertSmsDraftCache = typeof smsDraftCache.$inferInsert;
+
+/**
+ * Power Queue 2.0 — Lead snooze records.
+ * When an agent snoozes a lead, it disappears from the queue until the
+ * snooze date. A FUB note is written for audit trail.
+ * Display-level only — does NOT pause pond timers or nurture.
+ */
+export const leadSnoozes = mysqlTable("lead_snoozes", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Agent who snoozed */
+  agentName: varchar("agent_name", { length: 100 }).notNull(),
+  /** When the lead should reappear in the queue (YYYY-MM-DD) */
+  snoozeUntil: varchar("snooze_until", { length: 10 }).notNull(),
+  /** Why the agent snoozed (optional) */
+  reason: varchar("reason", { length: 200 }),
+  /** Whether the FUB note was successfully written */
+  fubNoteWritten: boolean("fub_note_written").default(false).notNull(),
+  /** Lead name at time of snooze (for display) */
+  leadName: varchar("lead_name", { length: 200 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type LeadSnooze = typeof leadSnoozes.$inferSelect;
+export type InsertLeadSnooze = typeof leadSnoozes.$inferInsert;
+
+/**
+ * Power Queue 2.0 — Queue action tracking.
+ * Records every action taken from the Power Queue for weekly digest stats.
+ * Tracks: texted, called, snoozed, hot_lead_responded, completed.
+ */
+export const queueActions = mysqlTable("queue_actions", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Agent who took the action */
+  agentName: varchar("agent_name", { length: 100 }).notNull(),
+  /** Type of action: 'texted' | 'called' | 'snoozed' | 'hot_lead_responded' | 'completed' */
+  actionType: varchar("action_type", { length: 30 }).notNull(),
+  /** ISO week key for fast aggregation (e.g. '2026-W28') */
+  weekKey: varchar("week_key", { length: 10 }).notNull(),
+  /** Days stale at time of action (for avg calculation) */
+  daysStale: int("days_stale").default(0).notNull(),
+  /** Whether this was a hot/replied lead */
+  isHotLead: boolean("is_hot_lead").default(false).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type QueueAction = typeof queueActions.$inferSelect;
+export type InsertQueueAction = typeof queueActions.$inferInsert;

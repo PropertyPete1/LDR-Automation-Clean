@@ -9,10 +9,11 @@ import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { ENV } from "./_core/env";
 import { getDashboardStats, getAgentLeads, getPendingQueue, getAgentRoster, clearRosterCache, clearQueueCache, clearDashboardCache, recordSmsSentToday, getPondSmsOnlyLeads } from "./dashboardData";
-import { getMemories, getWinningPatterns, logFeedback, saveMemory, logUiError, getSmsSentTodayByAgent, getSmsSentLastWeekByAgent, getRecentBotRuns, getRecentMonitorRuns, insertMonitorLog, getRecentObservations, markObservationFixed, getDb } from "./db";
+import { getMemories, getWinningPatterns, logFeedback, saveMemory, logUiError, getSmsSentTodayByAgent, getSmsSentLastWeekByAgent, getRecentBotRuns, getRecentMonitorRuns, insertMonitorLog, getRecentObservations, markObservationFixed, getDb, getCachedDraft, setCachedDraft, snoozeLead as snoozeLeadDb, unsnoozeLead as unsnoozeLeadDb, markSnoozeNoteWritten as markSnoozeNoteWrittenDb, getActiveSnoozesForAgent as getActiveSnoozesForAgentDb, getSnoozeCount, recordQueueAction as recordQueueActionDb, getWeeklyQueueStats as getWeeklyQueueStatsDb } from "./db";
 import { smsSentToday } from "../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { runBotMonitor } from "./botMonitor";
+import { runBounceHandler } from "./bounceHandler";
 import { runLifestyleBot } from "./lifestyleBot";
 import { runAutoPondPromotion, getRecentPondPromotionRuns } from "./autoPondPromotion";
 import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance";
@@ -74,7 +75,7 @@ Speed-to-Lead: New leads assigned to an agent trigger a timer. If the agent has 
 
 Keyword Reassignment: If a pond lead replies with purchase intent keywords (yes, interested, ready, looking, buy, home, price, schedule, tour, call me, when, how much), they are immediately reassigned to Peter Allen.
 
-Power Queue (Tap-to-Text): The Power Queue at https://lifestyledash-wpnl8v84.manus.space/sms-queue shows agents their stale leads with pre-filled SMS messages. Agents tap Send Text Now to open iMessage pre-loaded with the message. A note is automatically logged in FUB when they send.
+Power Queue (Tap-to-Text): The Power Queue at https://fub-nurture-phfprjui.manus.space/sms-queue shows agents their stale leads with pre-filled SMS messages. Agents tap Send Text Now to open iMessage pre-loaded with the message. A note is automatically logged in FUB when they send.
 
 Suppression Rules: Leads tagged Do Not Nurture, No AI Email, Do Not Email, Manual Review, do not contact, realtor, bounced, unsubscribe, email opt out, or dnc are never contacted. Leads in stages Trash, Active Client, Pending, Closed, Past Client, Sphere, or Under Contract are excluded from reassignment.
 
@@ -387,6 +388,88 @@ export const appRouter = router({
 
         return { notes };
       }),
+
+    // ── Power Queue 2.0: Snooze ──────────────────────────────────────────────
+    snoozeLead: publicProcedure
+      .input(z.object({
+        personId: z.number().int().positive(),
+        agentName: z.string().min(1).max(100),
+        snoozeUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
+        reason: z.string().max(200).optional(),
+        leadName: z.string().max(200).optional(),
+        daysStale: z.number().optional().default(0),
+      }))
+      .mutation(async ({ input }) => {
+        const { personId, agentName, snoozeUntil, reason, leadName, daysStale } = input;
+
+        // Write FUB note for audit trail
+        const snoozeDate = new Date(snoozeUntil + 'T12:00:00').toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric'
+        });
+        try {
+          await fubRequest("POST", "/notes", {
+            personId,
+            subject: `⏸️ Agent snoozed follow-up until ${snoozeDate}`,
+            body: `${agentName} snoozed Power Queue follow-up until ${snoozeDate}.${reason ? ` Reason: ${reason}` : ''} (Display-level only — nurture timers unaffected.)`,
+            isHtml: false,
+          });
+          await markSnoozeNoteWrittenDb(personId, agentName);
+        } catch (e) {
+          console.warn('[snoozeLead] FUB note write failed:', e);
+        }
+
+        // Store snooze in DB
+        await snoozeLeadDb(personId, agentName, snoozeUntil, reason, leadName);
+
+        // Record as queue action for stats
+        await recordQueueActionDb(personId, agentName, 'snoozed', daysStale, false);
+
+        // Bust queue cache so the lead disappears immediately
+        clearQueueCache();
+
+        return { success: true, snoozeUntil };
+      }),
+
+    unsnoozeLead: publicProcedure
+      .input(z.object({
+        personId: z.number().int().positive(),
+        agentName: z.string().min(1).max(100),
+      }))
+      .mutation(async ({ input }) => {
+        await unsnoozeLeadDb(input.personId, input.agentName);
+        clearQueueCache();
+        return { success: true };
+      }),
+
+    getSnoozeInfo: publicProcedure
+      .input(z.object({ agentName: z.string().min(1).max(100) }))
+      .query(async ({ input }) => {
+        const snoozes = await getActiveSnoozesForAgentDb(input.agentName);
+        const count = snoozes.size;
+        const entries = Array.from(snoozes.entries()).map(([personId, until]) => ({ personId, snoozeUntil: until }));
+        return { count, entries };
+      }),
+
+    // ── Power Queue 2.0: Record Action (for stats) ───────────────────────────
+    recordAction: publicProcedure
+      .input(z.object({
+        personId: z.number().int().positive(),
+        agentName: z.string().min(1).max(100),
+        actionType: z.enum(['texted', 'called', 'snoozed', 'hot_lead_responded', 'completed']),
+        daysStale: z.number().optional().default(0),
+        isHotLead: z.boolean().optional().default(false),
+      }))
+      .mutation(async ({ input }) => {
+        await recordQueueActionDb(input.personId, input.agentName, input.actionType, input.daysStale, input.isHotLead);
+        return { success: true };
+      }),
+
+    // ── Power Queue 2.0: Weekly Stats (for Python digest) ────────────────────
+    getWeeklyStats: publicProcedure
+      .input(z.object({ weekKey: z.string().optional() }))
+      .query(async ({ input }) => {
+        return getWeeklyQueueStatsDb(input.weekKey);
+      }),
   }),
 
   ai: router({
@@ -468,11 +551,20 @@ export const appRouter = router({
           assignedAgent: z.string().optional(),
           notes: z.string().optional(),
           prefillMessage: z.string().optional(),
-          personId: z.number().optional(), // for memory layer
+          personId: z.number().optional(), // for memory layer + cache key
+          forceRefresh: z.boolean().optional().default(false), // bypass cache
         })
       )
       .mutation(async ({ input }) => {
-        const { leadName, leadCity, daysStale, assignedAgent, notes, prefillMessage, personId } = input;
+        const { leadName, leadCity, daysStale, assignedAgent, notes, prefillMessage, personId, forceRefresh } = input;
+
+        // ── Power Queue 2.0: Check cache first (per lead per day) ──────────────
+        if (personId && assignedAgent && !forceRefresh) {
+          const cached = await getCachedDraft(personId, assignedAgent);
+          if (cached) {
+            return { draft: cached, cached: true };
+          }
+        }
 
         // Inject memory context if we have a personId
         let memoryContext = "";
@@ -487,7 +579,6 @@ export const appRouter = router({
           try {
             const smsRes = await fubRequest("GET", `/textMessages?personId=${personId}&limit=20`);
             const allTexts: any[] = smsRes.textMessages || [];
-            // Get last 5 outbound texts (sent by agent, not incoming from lead)
             const outbound = allTexts
               .filter((m: any) => m.isIncoming === false || m.direction === "outbound" || (!m.isIncoming && m.direction !== "inbound"))
               .slice(0, 5)
@@ -502,33 +593,34 @@ export const appRouter = router({
         }
 
         const hasNotes = notes && notes.trim().length > 0;
-        const systemPrompt = `You are a Texas real estate agent assistant. Your ONLY job is to write a single short, friendly SMS message for an agent to send to a lead. 
-Rules:
+        // ── Power Queue 2.0: Upgraded prompt for Claude claude-sonnet-4-6 ───────────────────
+        const systemPrompt = `You are writing a single SMS text message for a Texas real estate agent to send to a lead. Rules:
 - Write ONLY the SMS text itself — no quotes, no labels, no explanation, no markdown
-- Keep it under 160 characters
-- Sound like a real person, not a bot
-- Use the lead's first name
-- Be warm and casual
-- Never mention automation or AI
-- If notes are provided, reference something specific from them to make it personal
-- If persistent memory is provided, use it to make the message even more specific and relevant
+- Maximum 2 sentences. Under 160 characters total.
+- Sound like a real human agent — casual, warm, specific. Not a bot.
+- Use the lead's first name naturally
+- If notes are provided, you MUST reference something specific from them (a city they mentioned, a price range, a question they asked, a property type). Generic messages are unacceptable.
+- Never use more than 1 emoji. Prefer zero.
+- Never mention automation, AI, or systems
 - NEVER repeat or closely paraphrase a message that was already sent (see history below)${memoryContext}${smsHistoryContext}`;
 
         let userPrompt: string;
         if (hasNotes) {
-          userPrompt = `Write a personalized SMS for ${leadName} who is interested in homes in ${leadCity || "Texas"}. They haven't been contacted in ${daysStale ?? "a few"} days. Their agent is ${assignedAgent || "the agent"}.
+          userPrompt = `Write a personalized follow-up text for ${leadName}.
+City/area: ${leadCity || "Texas"}
+Days since created: ${daysStale ?? "unknown"}
+Agent: ${assignedAgent || "the agent"}
 
-Lead notes: ${notes}
+FUB Notes (most recent first):
+${notes}
 
-Use something from the notes to make the message feel personal and genuine. Keep it under 160 chars.`;
+Reference something SPECIFIC from the notes. Make it feel like the agent remembers this person. 2 sentences max, under 160 chars.`;
         } else {
-          // No notes — refine/personalize the pre-filled message
-          userPrompt = `Refine this pre-written SMS for ${leadName} (interested in ${leadCity || "Texas"}, ${daysStale ?? "several"} days since last contact). Keep the same friendly tone but make it feel a bit more personal and natural. Keep under 160 chars.
-
-Original: ${prefillMessage || `Hey ${leadName}, hope you had a great week! Still thinking about homes in ${leadCity || "Texas"}? 😊`}`;
+          userPrompt = `Write a brief, natural follow-up text for ${leadName} (interested in ${leadCity || "Texas"}, ${daysStale ?? "several"} days since they entered the system). No notes available — keep it simple and friendly. Ask one specific question about their home search. 2 sentences max, under 160 chars.`;
         }
 
         const result = await invokeLLM({
+          model: "claude-sonnet-4-6",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
@@ -543,7 +635,13 @@ Original: ${prefillMessage || `Hey ${leadName}, hope you had a great week! Still
 
         // Strip any surrounding quotes the model might add
         const cleaned = content.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
-        return { draft: cleaned };
+
+        // ── Power Queue 2.0: Cache the draft for today ────────────────────────
+        if (personId && assignedAgent) {
+          await setCachedDraft(personId, assignedAgent, cleaned);
+        }
+
+        return { draft: cleaned, cached: false };
       }),
 
     // Draft a reply to a lead's inbound message
@@ -952,6 +1050,16 @@ Write a natural reply that addresses their message and keeps the conversation go
     getPondPromotionHistory: publicProcedure
       .query(async () => {
         return getRecentPondPromotionRuns(10);
+      }),
+
+    /**
+     * Manually triggers the Bounce Handler.
+     * Scans Gmail for permanent delivery failures and processes each bounced lead.
+     */
+    runBounceNow: publicProcedure
+      .mutation(async () => {
+        const result = await runBounceHandler();
+        return result;
       }),
 
     /**
