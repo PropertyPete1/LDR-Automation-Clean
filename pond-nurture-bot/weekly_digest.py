@@ -25,6 +25,8 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import requests
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("weekly_digest")
 
@@ -38,6 +40,9 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", OWNER_EMAIL)
 SMTP_PASS = os.environ.get("SMTP_PASS", os.environ.get("SMTP_PASSWORD", ""))
+
+# Power Queue dashboard URL for weekly stats endpoint
+FUB_NURTURE_DASHBOARD_URL = os.environ.get("FUB_NURTURE_DASHBOARD_URL", "")
 
 
 def get_db():
@@ -137,6 +142,83 @@ def query_period(conn, start: dt.datetime, end: dt.datetime):
     return stats
 
 
+def fetch_power_queue_stats() -> list | None:
+    """Fetch weekly Power Queue activity stats from the dashboard endpoint.
+
+    Returns a list of per-agent stats dicts, or None if unavailable.
+    """
+    if not FUB_NURTURE_DASHBOARD_URL:
+        LOGGER.info("FUB_NURTURE_DASHBOARD_URL not set — skipping Power Queue stats")
+        return None
+    url = f"{FUB_NURTURE_DASHBOARD_URL.rstrip('/')}/api/power-queue/weekly-stats"
+    try:
+        resp = requests.get(url, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("success") and data.get("stats"):
+            return data["stats"]
+        LOGGER.warning("Power Queue stats response missing data: %s", data)
+        return None
+    except Exception as exc:
+        LOGGER.warning("Failed to fetch Power Queue stats: %s", exc)
+        return None
+
+
+def format_power_queue_section(stats: list | None) -> str:
+    """Format the Power Queue Activity section as HTML for the digest email."""
+    if not stats:
+        return ""
+
+    rows = ""
+    for agent in sorted(stats, key=lambda a: a.get("totalActions", 0), reverse=True):
+        name = agent.get("agentName", "Unknown")
+        total = agent.get("totalActions", 0)
+        hot = agent.get("hotLeadsResponded", 0)
+        avg_days = agent.get("avgDaysStale", 0)
+        texted = agent.get("texted", 0)
+        called = agent.get("called", 0)
+        snoozed = agent.get("snoozed", 0)
+        rows += (
+            f"<tr>"
+            f"<td style='padding:6px;'>{name}</td>"
+            f"<td style='padding:6px; text-align:center;'>{total}</td>"
+            f"<td style='padding:6px; text-align:center;'>{texted}</td>"
+            f"<td style='padding:6px; text-align:center;'>{called}</td>"
+            f"<td style='padding:6px; text-align:center;'>{hot}</td>"
+            f"<td style='padding:6px; text-align:center;'>{avg_days}</td>"
+            f"<td style='padding:6px; text-align:center;'>{snoozed}</td>"
+            f"</tr>\n"
+        )
+
+    total_actions = sum(a.get("totalActions", 0) for a in stats)
+    total_hot = sum(a.get("hotLeadsResponded", 0) for a in stats)
+
+    return f"""
+    <h2>\U0001f4f1 Power Queue Activity</h2>
+    <p style="color: #6b7280; font-size: 0.85em;">Agent texting queue — leads actioned this week via the mobile Power Queue.</p>
+    <table style="border-collapse: collapse; width: 100%;">
+    <tr style="background: #f3f4f6;">
+      <th style="text-align:left; padding:8px;">Agent</th>
+      <th style="padding:8px;">Total</th>
+      <th style="padding:8px;">Texted</th>
+      <th style="padding:8px;">Called</th>
+      <th style="padding:8px;">Hot \U0001f525</th>
+      <th style="padding:8px;">Avg Days</th>
+      <th style="padding:8px;">Snoozed</th>
+    </tr>
+    {rows}
+    <tr style="font-weight:bold; border-top: 2px solid #d1d5db;">
+      <td style="padding:8px;">TOTAL</td>
+      <td style="padding:8px; text-align:center;">{total_actions}</td>
+      <td colspan="3"></td>
+      <td style="padding:8px; text-align:center;">—</td>
+      <td></td>
+    </tr>
+    </table>
+    <p style="color: #6b7280; font-size: 0.85em;">Hot = leads tagged "Replied - Paused" that were called/texted. Avg Days = how stale leads were when actioned.</p>
+    """
+
+
 def format_digest(this_week: dict, last_week: dict, pond_size: int) -> str:
     """Format the weekly digest as HTML email."""
 
@@ -213,6 +295,8 @@ def format_digest(this_week: dict, last_week: dict, pond_size: int) -> str:
     </table>
     <p style="color: #6b7280; font-size: 0.85em;">Engaged = 10-day cadence | Standard = 14-day | Cold = 21-day</p>
 
+    {format_power_queue_section(this_week.get('power_queue_stats'))}
+
     <h2>📊 Best-Send-Time Data</h2>
     <p>Reply-time data points collected: <strong>{this_week['reply_time_data_points']}</strong></p>
     <p style="color: #6b7280; font-size: 0.85em;">After 8+ weeks we'll use this data to optimize send windows.</p>
@@ -278,6 +362,10 @@ def main():
     conn.close()
 
     pond_size = get_pond_size()
+
+    # Fetch Power Queue activity stats from the dashboard
+    pq_stats = fetch_power_queue_stats()
+    this_week_stats["power_queue_stats"] = pq_stats
 
     html = format_digest(this_week_stats, last_week_stats, pond_size)
     subject = f"📊 Weekly Performance Digest — {now.strftime('%b %d, %Y')}"
