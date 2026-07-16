@@ -1893,6 +1893,11 @@ class RuleEngine:
         person_id = int(person["id"])
         stage = str(person.get("stage", ""))
 
+        # Rule C: Lease listing silenced leads get TOTAL SILENCE — no Phase 3 drip
+        if self._is_lease_listing_silenced(person_id):
+            self.db.log("closed_drip", "suppressed", person_id, {"reason": "lease listing silenced (closed Residential Lease Listing, no purchase deal)"})
+            return "suppressed"
+
         # Suppression checks — Phase 3 intentionally targets Closed/Past Client/Sphere stages,
         # so we do NOT call is_excluded() (which blocks those stages for pond reassignment).
         # Instead we check only the tags that should suppress email outreach.
@@ -1913,9 +1918,12 @@ class RuleEngine:
             self.db.log("closed_drip", "suppressed", person_id, {"reason": "FUB unsubscribed flag", "stage": stage})
             return "suppressed"
 
-        # Must be in an eligible stage
-        if stage.lower() not in {s.lower() for s in self.rules.phase3_eligible_stages}:
-            self.db.log("closed_drip", "suppressed", person_id, {"reason": f"stage '{stage}' not in phase3_eligible_stages"})
+        # Rule B: Deal-based Phase 3 eligibility (OR with stage-based)
+        # Person qualifies if they're in an eligible stage OR have a closed purchase deal
+        has_eligible_stage = stage.lower() in {s.lower() for s in self.rules.phase3_eligible_stages}
+        has_purchase_deal = self._has_closed_purchase_deal(person_id)
+        if not has_eligible_stage and not has_purchase_deal:
+            self.db.log("closed_drip", "suppressed", person_id, {"reason": f"stage '{stage}' not eligible and no closed purchase deal"})
             return "suppressed"
 
         # Cadence check: only send every 90 days
@@ -3342,6 +3350,16 @@ class RuleEngine:
 
     def process_reengagement_candidate(self, person: dict) -> str:
         person_id = int(person["id"])
+        # Rule A: ANY deal in FUB deal room → total protection from pond nurture
+        if self._has_any_deal(person_id):
+            deals = self._get_person_deals(person_id)
+            deal_info = ", ".join(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals[:3])
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": f"has deal in FUB deal room ({deal_info}) — protected from all automation"})
+            return "suppressed"
+        # Rule C: Lease listing silenced leads get TOTAL SILENCE — no pond nurture
+        if self._is_lease_listing_silenced(person_id):
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "lease listing silenced (closed Residential Lease Listing, no purchase deal)"})
+            return "suppressed"
         if self.is_excluded(person) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags):
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "excluded stage/tag or manual suppression tag"})
             return "suppressed"
@@ -3733,9 +3751,11 @@ class RuleEngine:
                 "createdById": created_by_id,
             })
             return "soi_protected"
-        # CRITICAL: Never reassign leads that have an active deal in any pipeline (Deal Room)
-        if self._has_active_deal(person_id):
-            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "lead has active deal in Deal Room"})
+        # CRITICAL: Never reassign leads that have ANY deal in any pipeline (Deal Room)
+        if self._has_any_deal(person_id):
+            deals = self._get_person_deals(person_id)
+            deal_info = ", ".join(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals[:3])
+            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": f"suppressed: has deal ({deal_info})"})
             return "suppressed"
             
         # Omnichannel Touch Detection: Skip if lead had any call, text, email, or activity within 20 days
@@ -3770,23 +3790,71 @@ class RuleEngine:
         })
         return "completed"
 
-    def _has_active_deal(self, person_id: int) -> bool:
-        """Check if a lead has any active deal in FUB (Deal Room).
-        
-        Returns True if the person is attached to any deal with status 'Active',
-        meaning they should NEVER be reassigned to the pond.
-        """
+    # ─── Deal-Based Protection System ────────────────────────────────────────────
+    # Pipeline constants (from live FUB API discovery)
+    PURCHASE_PIPELINE_IDS = {1, 2}  # Buyers, Sellers
+    LEASE_LISTING_PIPELINE_ID = 5   # Residential Lease Listings
+
+    def _get_person_deals(self, person_id: int) -> List[dict]:
+        """Fetch and cache all deals for a person. Cache lasts for the entire run."""
+        if not hasattr(self, "_deal_cache"):
+            self._deal_cache: dict = {}
+        if person_id in self._deal_cache:
+            return self._deal_cache[person_id]
         try:
-            resp = self.fub._request("GET", "deals", params={"personId": person_id, "limit": 5})
-            deals = resp.get("deals", [])
-            for deal in deals:
-                if str(deal.get("status", "")).lower() == "active":
-                    LOGGER.info("Person %s has active deal — protected from reassignment", person_id)
-                    return True
-            return False
+            resp = self.fub._request("GET", "deals", params={"personId": person_id, "limit": 25})
+            deals = resp.get("deals", resp.get("data", []))
+            self._deal_cache[person_id] = deals
+            return deals
         except Exception as exc:  # noqa: BLE001
-            LOGGER.warning("Could not check deals for person %s (assuming no deal): %s", person_id, exc)
-            return False
+            LOGGER.warning("Could not fetch deals for person %s: %s", person_id, exc)
+            self._deal_cache[person_id] = []
+            return []
+
+    def _has_any_deal(self, person_id: int) -> bool:
+        """Rule A: Person has ANY deal (any pipeline, any stage, open or closed).
+        If True, suppress pond reassignment entirely."""
+        deals = self._get_person_deals(person_id)
+        if deals:
+            pipelines = ", ".join(set(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals))
+            LOGGER.info("Person %s has %d deal(s) [%s] — protected from pond reassignment", person_id, len(deals), pipelines)
+        return len(deals) > 0
+
+    def _has_closed_purchase_deal(self, person_id: int) -> bool:
+        """Rule B: Person has a CLOSED deal in Buyers (1) or Sellers (2) pipeline.
+        These leads get Phase 3 quarterly drip."""
+        deals = self._get_person_deals(person_id)
+        for deal in deals:
+            pipeline_id = int(deal.get("pipelineId") or 0)
+            is_closed = bool(deal.get("closedStage")) or str(deal.get("stageName", "")).lower() == "closed"
+            if pipeline_id in self.PURCHASE_PIPELINE_IDS and is_closed:
+                return True
+        return False
+
+    def _is_lease_listing_silenced(self, person_id: int) -> bool:
+        """Rule C: Person has a closed deal in Residential Lease Listings (pipeline 5)
+        AND does NOT have a closed purchase deal. Total silence — no pond, no reassignment,
+        no Phase 3, no agent-bot emails, no pond nurture.
+        If they have BOTH a closed lease listing AND a closed purchase deal, purchase wins."""
+        deals = self._get_person_deals(person_id)
+        has_closed_lease = False
+        has_closed_purchase = False
+        for deal in deals:
+            pipeline_id = int(deal.get("pipelineId") or 0)
+            is_closed = bool(deal.get("closedStage")) or str(deal.get("stageName", "")).lower() in ("closed", "lease listing - closed")
+            if pipeline_id == self.LEASE_LISTING_PIPELINE_ID and is_closed:
+                has_closed_lease = True
+            if pipeline_id in self.PURCHASE_PIPELINE_IDS and is_closed:
+                has_closed_purchase = True
+        # Purchase deal wins over lease listing
+        if has_closed_lease and not has_closed_purchase:
+            LOGGER.info("Person %s is LEASE LISTING SILENCED (closed lease, no purchase deal)", person_id)
+            return True
+        return False
+
+    def _has_active_deal(self, person_id: int) -> bool:
+        """Legacy compat: now returns True if person has ANY deal (upgraded from active-only)."""
+        return self._has_any_deal(person_id)
 
     def customer_nurture_context(self, person: dict, notes: Optional[List[dict]] = None) -> Tuple[str, str, str]:
         loaded_notes: List[dict] = list(notes or [])
