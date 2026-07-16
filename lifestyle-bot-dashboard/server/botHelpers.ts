@@ -483,21 +483,92 @@ export function isBotAuthoredNote(body: string | undefined | null): boolean {
   );
 }
 
+// ─── Deal-Based Pond Protection ─────────────────────────────────────────────
+// Prevents ALL automation from touching leads that have deals in FUB.
+// Rule A: Any deal → skip (agent owns the relationship)
+// Rule C: Closed Residential Lease Listing (no purchase deal) → total silence
+
+/** In-memory cache for deal lookups — cleared between bot runs */
+const dealCache = new Map<number, { deals: any[]; ts: number }>();
+const DEAL_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+/** Clear the deal cache (call between bot runs or in tests) */
+export function clearDealCache(): void {
+  dealCache.clear();
+}
+
+/** Fetch all deals for a person from FUB /deals?personId=X */
+export async function getPersonDeals(personId: number): Promise<any[]> {
+  const cached = dealCache.get(personId);
+  if (cached && Date.now() - cached.ts < DEAL_CACHE_TTL) return cached.deals;
+  try {
+    const data = await fubRequest<{ deals?: any[] }>(`/deals?personId=${personId}`);
+    const deals = data.deals ?? [];
+    dealCache.set(personId, { deals, ts: Date.now() });
+    return deals;
+  } catch (err) {
+    console.warn(`[dealProtection] Failed to fetch deals for person ${personId}:`, err);
+    return [];
+  }
+}
+
+/** Rule A: Returns true if the person has ANY deal in FUB (open or closed) */
+export async function hasAnyDeal(personId: number): Promise<boolean> {
+  const deals = await getPersonDeals(personId);
+  return deals.length > 0;
+}
+
+/**
+ * Rule C: Returns true if the person has a closed Residential Lease Listing
+ * deal but NO closed purchase deal (Buyers/Sellers pipeline).
+ * Purchase deal wins — if they also bought, they get Phase 3 quarterly drip.
+ */
+export async function isLeaseListingSilenced(personId: number): Promise<boolean> {
+  const deals = await getPersonDeals(personId);
+  if (deals.length === 0) return false;
+  const LEASE_PIPELINE_IDS = [5, 6]; // Residential Lease Listings, Lease Applications
+  const PURCHASE_PIPELINE_IDS = [1, 2]; // Buyers, Sellers
+  const hasClosedLease = deals.some(
+    (d: any) => LEASE_PIPELINE_IDS.includes(d.pipelineId) &&
+      (d.stageName?.toLowerCase() === "closed" || d.stageId === 99)
+  );
+  if (!hasClosedLease) return false;
+  const hasClosedPurchase = deals.some(
+    (d: any) => PURCHASE_PIPELINE_IDS.includes(d.pipelineId) &&
+      (d.stageName?.toLowerCase() === "closed" || d.stageId === 99)
+  );
+  // Purchase deal wins over lease listing
+  return hasClosedLease && !hasClosedPurchase;
+}
+
 /**
  * Uses Anthropic Claude to intelligently decide whether a lead should be skipped.
  * Understands natural language context — "decided to move to Florida",
  * "bought a house", "working with John at KW", "not in the market anymore" —
  * without needing a hardcoded keyword list.
  *
- * Also checks: if a HUMAN wrote a note within the last 24h, the lead is
- * skipped (human is actively talking to the lead). Bot-authored notes are
- * excluded from this check — bots note every send, and that must never be
- * mistaken for an active human conversation.
+ * Also checks:
+ * - Deal protection: ANY lead with a FUB deal is excluded from bot sends
+ * - Lease listing silence: Closed lease listing (no purchase) = total silence
+ * - 24h note check: if a HUMAN wrote a note within the last 24h, skip
+ * Bot-authored notes are excluded from this check.
  *
  * Returns { skip: true, reason: string } if the lead should be skipped.
  * Returns { skip: false } if it's safe to send a follow-up.
  */
 export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
+  // Deal-Based Protection: ANY lead with a deal in FUB is protected
+  // Rule A: Any deal → skip (human agent owns active deals)
+  if (await hasAnyDeal(person.id)) {
+    return { skip: true, reason: "Lead has active deal in FUB deal room — protected from all automation" };
+  }
+
+  // Rule C: Lease listing silenced leads get TOTAL SILENCE — no agent-bot emails
+  // (Technically redundant since hasAnyDeal catches it, but kept for explicit logging)
+  if (await isLeaseListingSilenced(person.id)) {
+    return { skip: true, reason: "Lease listing silenced (closed Residential Lease Listing, no purchase deal)" };
+  }
+
   const notes = person.notes ?? [];
   if (notes.length === 0) return { skip: false };
 
