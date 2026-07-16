@@ -324,6 +324,13 @@ class AuditDB:
                     reply_day_of_week INTEGER NOT NULL,
                     detected_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS purchase_window (
+                    person_id INTEGER PRIMARY KEY,
+                    window_start TEXT NOT NULL,
+                    raw_text TEXT,
+                    detected_from_note_date TEXT,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -517,6 +524,47 @@ class AuditDB:
                 """,
                 (person_id, angle, now_iso()),
             )
+
+    # ── Purchase Window (Timeline-Aware Cadence) ──
+    def get_purchase_window(self, person_id: int) -> Optional[dict]:
+        with self.connect() as con:
+            row = con.execute("SELECT window_start, raw_text, detected_from_note_date FROM purchase_window WHERE person_id=?", (person_id,)).fetchone()
+        if not row:
+            return None
+        return {"window_start": row[0], "raw_text": row[1], "detected_from_note_date": row[2]}
+
+    def upsert_purchase_window(self, person_id: int, window_start: str, raw_text: Optional[str] = None, detected_from_note_date: Optional[str] = None) -> None:
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO purchase_window(person_id, window_start, raw_text, detected_from_note_date, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(person_id) DO UPDATE SET
+                    window_start=excluded.window_start,
+                    raw_text=excluded.raw_text,
+                    detected_from_note_date=excluded.detected_from_note_date,
+                    updated_at=excluded.updated_at
+                """,
+                (person_id, window_start, raw_text, detected_from_note_date, now_iso()),
+            )
+
+    def count_timeline_adjusted_leads(self) -> dict:
+        """Return count and avg days-out for leads with active purchase windows."""
+        with self.connect() as con:
+            rows = con.execute("SELECT window_start FROM purchase_window").fetchall()
+        if not rows:
+            return {"count": 0, "avg_days_out": 0}
+        today = dt.date.today()
+        days_out = []
+        for row in rows:
+            try:
+                ws = dt.date.fromisoformat(row[0][:10])
+                delta = (ws - today).days
+                if delta > 0:
+                    days_out.append(delta)
+            except (ValueError, TypeError):
+                pass
+        return {"count": len(days_out), "avg_days_out": int(sum(days_out) / len(days_out)) if days_out else 0}
 
     # ── Reply Time Log (Tier 3 Feature 4) ──
     def log_reply_time(self, person_id: int, reply_hour: int, reply_day_of_week: int) -> None:
@@ -824,7 +872,64 @@ class ContentGenerator:
             LOGGER.warning("LLM skip check failed for person %s: %s", person.get("id"), exc)
             return False, ""
 
-    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "") -> dict:
+    def extract_purchase_window(self, person: dict, notes: List[dict]) -> Optional[dict]:
+        """Extract a future purchase timeline window from notes using Anthropic.
+        Returns {window_start: 'YYYY-MM-DD', raw_text: str, source_note_date: str} or None.
+        Re-extracts every cycle — newer notes override older windows."""
+        if not notes:
+            return None
+        # Build compact note summary (most recent 10)
+        sorted_notes = sorted(notes, key=lambda n: n.get("created") or n.get("createdAt") or "", reverse=True)[:10]
+        notes_summary = "\n".join(
+            f"Note {i+1} ({n.get('created') or n.get('createdAt') or 'unknown'}): {(n.get('body') or '')[:300]}"
+            for i, n in enumerate(sorted_notes)
+        )
+        today_str = dt.date.today().isoformat()
+        prompt = f"""You are a real estate CRM assistant. Today's date is {today_str}.
+
+Analyze these lead notes and extract any FUTURE purchase timeline or window:
+{notes_summary}
+
+Look for:
+- Explicit dates: "buying in January", "moving in August", "closing in March"
+- Relative timeframes: "in 6 months", "next spring", "not until fall"
+- Life events with dates: "lease ends in August", "job starts in September", "baby due in October"
+- Builder timelines: "orders expected Jan-March", "completion in Q2"
+- Seasonal: "after the holidays", "next summer", "when school starts"
+
+If you find a purchase window, respond EXACTLY:
+WINDOW: YYYY-MM-DD | SOURCE_NOTE_DATE: YYYY-MM-DD | RAW: <the exact phrase>
+
+The WINDOW date should be your best estimate of when they plan to buy/move (use the 1st of the month if only a month is given).
+SOURCE_NOTE_DATE is the date of the note containing the timeline info.
+
+If NO timeline is found, respond exactly:
+NO_WINDOW"""
+        try:
+            content = self._llm_call(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+                json_mode=False,
+            )
+            if not content or content.strip().startswith("NO_WINDOW"):
+                return None
+            import re
+            match = re.match(
+                r"WINDOW:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*SOURCE_NOTE_DATE:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*RAW:\s*(.+)",
+                content.strip(), re.IGNORECASE,
+            )
+            if not match:
+                return None
+            return {
+                "window_start": match.group(1),
+                "raw_text": match.group(3).strip(),
+                "source_note_date": match.group(2),
+            }
+        except Exception as exc:
+            LOGGER.warning("extract_purchase_window failed for person %s: %s", person.get("id"), exc)
+            return None
+
+    def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "", is_value_led: bool = False) -> dict:
         first_name = person.get("firstName") or "there"
         person_id = int(person.get("id") or 0)
         cycle_seed = f"{person_id}-{dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
@@ -924,6 +1029,12 @@ class ContentGenerator:
         {thread_section}
         {thread_instruction}
         {holiday_instruction}
+        {f'''VALUE-LED EMAIL (Timeline-stretched cadence): This lead has a purchase window far in the future, so emails are less frequent. This email MUST be VALUE-LED — provide genuinely useful content:
+        - Market updates, rate changes, or incentive programs for their stated price range/city
+        - New builder deals, inventory updates, or community developments in their target area
+        - Practical prep steps (VA pre-qualification, credit optimization, down payment programs)
+        - Neighborhood insights, school ratings, or lifestyle info for their target area
+        NEVER write a generic "just checking in" — every stretched-cadence email must deliver tangible value.''' if is_value_led else ''}
         Requirements:
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, campaign, or transactional automation.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor talking to a friend, not marketing copywriter.
@@ -3241,8 +3352,38 @@ class RuleEngine:
         # ── Engagement-Based Cadence (Tier 3) ──
         tier = self.classify_engagement_tier(person)
         cadence_days = {"engaged": 10, "standard": 14, "cold": 21}.get(tier, self.rules.reengagement_cadence_days)
+
+        # ── Timeline-Aware Cadence Override (stretches cadence, never shortens) ──
+        is_value_led = False
+        notes_for_timeline = self.safe_get_notes(person_id)
+        window_result = self.content.extract_purchase_window(person, notes_for_timeline)
+        if window_result:
+            self.db.upsert_purchase_window(
+                person_id,
+                window_result["window_start"],
+                window_result.get("raw_text"),
+                window_result.get("source_note_date"),
+            )
+        # Check stored window (may be from this cycle or previous)
+        stored_window = self.db.get_purchase_window(person_id) if not window_result else window_result
+        if stored_window:
+            try:
+                ws_date = dt.date.fromisoformat(stored_window["window_start"][:10])
+                days_until_window = (ws_date - dt.date.today()).days
+                if days_until_window > 120:
+                    cadence_days = max(cadence_days, 30)  # 30-day cadence for >120 days out
+                    is_value_led = True
+                    LOGGER.info("Timeline cadence: person %s window %sd out, 30-day cadence", person_id, days_until_window)
+                elif days_until_window > 60:
+                    cadence_days = max(cadence_days, 21)  # 21-day cadence for 60-120 days out
+                    is_value_led = True
+                    LOGGER.info("Timeline cadence: person %s window %sd out, 21-day cadence", person_id, days_until_window)
+                # <60 days: normal engagement-tier cadence (no override)
+            except (ValueError, TypeError) as e:
+                LOGGER.warning("Timeline cadence parse error for person %s: %s", person_id, e)
+
         if last and dt.datetime.now(UTC) - last < dt.timedelta(days=cadence_days):
-            self.db.log("pond_nurture", "skipped", person_id, {"reason": f"{tier}-tier cadence cap ({cadence_days}d)"})
+            self.db.log("pond_nurture", "skipped", person_id, {"reason": f"{tier}-tier cadence cap ({cadence_days}d){' [timeline-adjusted]' if is_value_led else ''}"})
             return "skipped"
         emails = person.get("emails") or []
         if not self.rules.email_outreach_enabled or not emails:
@@ -3310,6 +3451,7 @@ class RuleEngine:
             engagement_tier=tier,
             full_note_history=full_note_history,
             last_angle_used=last_angle_used,
+            is_value_led=is_value_led,
         )
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
@@ -4004,6 +4146,14 @@ class RuleEngine:
                 html_lines.append("</ul>")
         except Exception as pond_exc:
             LOGGER.warning("Failed to fetch pond re-engagement opportunities for Peter's text list: %s", pond_exc)
+
+        # ── Timeline-Aware Cadence Reporting ──
+        timeline_stats = self.db.count_timeline_adjusted_leads()
+        if timeline_stats["count"] > 0:
+            lines.append(f"📅 TIMELINE-ADJUSTED LEADS: {timeline_stats['count']} (avg window {timeline_stats['avg_days_out']}d out)")
+            lines.append("----------------------------------------")
+            lines.append("")
+            html_lines.append(f"<h3>📅 Timeline-Adjusted Leads: {timeline_stats['count']} (avg window {timeline_stats['avg_days_out']}d out)</h3>")
 
         # Add recent notable actions
         lines.append("🔍 RECENT NOTABLE ACTIONS")

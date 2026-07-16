@@ -17,7 +17,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getDb } from "./db";
-import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog } from "../drizzle/schema";
+import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog, purchaseWindow } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import { ENV } from "./_core/env";
 
@@ -390,12 +390,11 @@ export async function fetchPowerQueueCount(
 export async function getSmsSentTodayIds(): Promise<Set<number>> {
   const db = await getDb();
   if (!db) return new Set();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const rows = await db
     .select({ personId: smsSentToday.personId })
     .from(smsSentToday)
-    .where(gte(smsSentToday.sentAt, todayStart));
+    .where(eq(smsSentToday.sentDate, todayCT));
   return new Set(rows.map(r => r.personId));
 }
 
@@ -406,10 +405,11 @@ export async function recordSmsSentToday(
 ): Promise<void> {
   const db = await getDb();
   if (!db) return;
+  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   await db
     .insert(smsSentToday)
-    .values({ personId, agentName, sentAt: new Date() })
-    .onDuplicateKeyUpdate({ set: { agentName, sentAt: new Date() } });
+    .values({ personId, agentName, sentDate: todayCT })
+    .onDuplicateKeyUpdate({ set: { agentName } });
 }
 
 // ─── Contacted Leads audit log ───────────────────────────────────────────────
@@ -699,6 +699,230 @@ function pickAngle(personId: number, lastAngle: string | null): string {
   return angle;
 }
 
+// ─── Timeline-Aware Cadence ──────────────────────────────────────────────────
+
+/**
+ * Extract a purchase timeline window from a lead's notes using Anthropic.
+ * Returns the detected window_start date (when the lead plans to buy) or null.
+ * Re-extracts every cycle — newer notes override older windows.
+ */
+export async function extractPurchaseWindow(person: FubPerson): Promise<{
+  windowStart: Date | null;
+  rawText: string | null;
+  detectedFromNoteDate: Date | null;
+}> {
+  const notes = person.notes ?? [];
+  if (notes.length === 0) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+  // Build compact note summary (most recent 10 notes)
+  const sorted = [...notes].sort((a, b) => {
+    const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return bDate - aDate;
+  }).slice(0, 10);
+
+  const notesSummary = sorted.map((n, i) =>
+    `Note ${i + 1} (${n.createdAt ?? "unknown"}): ${(n.body ?? "").substring(0, 300)}`
+  ).join("\n");
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const prompt = `You are a real estate CRM assistant. Today's date is ${todayStr}.
+
+Analyze these lead notes and extract any FUTURE purchase timeline or window:
+${notesSummary}
+
+Look for:
+- Explicit dates: "buying in January", "moving in August", "closing in March"
+- Relative timeframes: "in 6 months", "next spring", "not until fall"
+- Life events with dates: "lease ends in August", "job starts in September", "baby due in October"
+- Builder timelines: "orders expected Jan-March", "completion in Q2"
+- Seasonal: "after the holidays", "next summer", "when school starts"
+
+If you find a purchase window, respond EXACTLY:
+WINDOW: YYYY-MM-DD | SOURCE_NOTE_DATE: YYYY-MM-DD | RAW: <the exact phrase>
+
+The WINDOW date should be your best estimate of when they plan to buy/move (use the 1st of the month if only a month is given, use reasonable estimates for seasons).
+SOURCE_NOTE_DATE is the date of the note containing the timeline info.
+
+If NO timeline is found, respond exactly:
+NO_WINDOW`;
+
+  try {
+    const anthropicKey = ENV.anthropicApiKey;
+    if (!anthropicKey) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 100,
+        system: "You are a precise date extraction assistant. Respond only in the exact format requested.",
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+    const data = await res.json() as { content?: Array<{ text?: string }> };
+    const raw = (data.content?.[0]?.text ?? "").trim();
+
+    if (raw.startsWith("NO_WINDOW")) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+    const match = raw.match(/WINDOW:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*SOURCE_NOTE_DATE:\s*(\d{4}-\d{2}-\d{2})\s*\|\s*RAW:\s*(.+)/i);
+    if (!match) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+    const windowStart = new Date(match[1]!);
+    const detectedFromNoteDate = new Date(match[2]!);
+    const rawText = match[3]!.trim();
+
+    if (isNaN(windowStart.getTime())) return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+
+    return { windowStart, rawText, detectedFromNoteDate: isNaN(detectedFromNoteDate.getTime()) ? null : detectedFromNoteDate };
+  } catch (err) {
+    console.error("[extractPurchaseWindow] Anthropic call failed:", err);
+    return { windowStart: null, rawText: null, detectedFromNoteDate: null };
+  }
+}
+
+/** Persist the detected purchase window (upsert by personId) */
+export async function savePurchaseWindow(personId: number, windowStart: Date, rawText: string | null, detectedFromNoteDate: Date | null): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return;
+    await db
+      .insert(purchaseWindow)
+      .values({
+        personId,
+        windowStart,
+        rawText: rawText?.substring(0, 500) ?? null,
+        detectedFromNoteDate,
+      })
+      .onDuplicateKeyUpdate({
+        set: {
+          windowStart,
+          rawText: rawText?.substring(0, 500) ?? null,
+          detectedFromNoteDate,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (e) {
+    console.warn(`[savePurchaseWindow] DB error for person ${personId}:`, e);
+  }
+}
+
+/** Get the stored purchase window for a lead */
+export async function getPurchaseWindow(personId: number): Promise<{ windowStart: Date; rawText: string | null } | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const rows = await db
+      .select({ windowStart: purchaseWindow.windowStart, rawText: purchaseWindow.rawText })
+      .from(purchaseWindow)
+      .where(eq(purchaseWindow.personId, personId))
+      .limit(1);
+    if (rows.length === 0) return null;
+    return { windowStart: rows[0]!.windowStart, rawText: rows[0]!.rawText };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Timeline-Aware Cadence check for AGENT BOTS.
+ *
+ * Rules:
+ * - First 10 days after assignment: ALWAYS send (relationship-building phase)
+ * - After day 10, if purchase window >120 days out: weekly (skip unless 7+ days since last contact)
+ * - After day 10, if purchase window >60 days out: every 3-4 days
+ * - No window detected: normal daily cadence
+ *
+ * PRECEDENCE: This never overrides Replied-Paused, suppression, 3-day contact gap, or SOI.
+ * Timeline stretching only ever REDUCES frequency, never increases it.
+ *
+ * Returns: { shouldSend: boolean, reason: string, daysUntilWindow: number | null }
+ */
+export async function checkTimelineCadence(person: FubPerson): Promise<{
+  shouldSend: boolean;
+  reason: string;
+  daysUntilWindow: number | null;
+  isValueLed: boolean;
+}> {
+  const personId = person.id;
+
+  // Calculate days since assignment
+  const createdStr = person.created ?? person.createdAt;
+  let daysSinceAssignment = 0;
+  if (createdStr) {
+    try {
+      daysSinceAssignment = Math.floor((Date.now() - new Date(createdStr).getTime()) / (1000 * 60 * 60 * 24));
+    } catch { /* ignore */ }
+  }
+
+  // First 10 days: always send (relationship-building phase)
+  if (daysSinceAssignment <= 10) {
+    return { shouldSend: true, reason: "Within 10-day relationship-building phase", daysUntilWindow: null, isValueLed: false };
+  }
+
+  // Extract and persist purchase window
+  const extraction = await extractPurchaseWindow(person);
+  if (extraction.windowStart) {
+    await savePurchaseWindow(personId, extraction.windowStart, extraction.rawText, extraction.detectedFromNoteDate);
+  }
+
+  // Get the current stored window (may be from this cycle or a previous one)
+  const stored = extraction.windowStart
+    ? { windowStart: extraction.windowStart, rawText: extraction.rawText }
+    : await getPurchaseWindow(personId);
+
+  if (!stored) {
+    // No timeline detected — normal cadence
+    return { shouldSend: true, reason: "No purchase window detected, normal cadence", daysUntilWindow: null, isValueLed: false };
+  }
+
+  const daysUntilWindow = Math.floor((stored.windowStart.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+
+  // If window is in the past or very soon (<60 days), normal cadence
+  if (daysUntilWindow < 60) {
+    return { shouldSend: true, reason: `Purchase window <60 days out (${daysUntilWindow}d), normal cadence`, daysUntilWindow, isValueLed: false };
+  }
+
+  // Check days since last contact to determine if it's time to send
+  const db = await getDb();
+  let daysSinceLastContact = 999;
+  if (db) {
+    try {
+      const rows = await db
+        .select({ sentAt: contactedLeads.sentAt })
+        .from(contactedLeads)
+        .where(eq(contactedLeads.personId, personId))
+        .orderBy(desc(contactedLeads.sentAt))
+        .limit(1);
+      if (rows.length > 0 && rows[0]!.sentAt) {
+        daysSinceLastContact = Math.floor((Date.now() - new Date(rows[0]!.sentAt).getTime()) / (1000 * 60 * 60 * 24));
+      }
+    } catch { /* default to 999 = send */ }
+  }
+
+  if (daysUntilWindow > 120) {
+    // >120 days out: weekly cadence
+    if (daysSinceLastContact >= 7) {
+      return { shouldSend: true, reason: `Purchase window >120 days out (${daysUntilWindow}d), weekly cadence — ${daysSinceLastContact}d since last contact`, daysUntilWindow, isValueLed: true };
+    }
+    return { shouldSend: false, reason: `Purchase window >120 days out (${daysUntilWindow}d), weekly cadence — only ${daysSinceLastContact}d since last contact (need 7+)`, daysUntilWindow, isValueLed: true };
+  }
+
+  // 60-120 days out: every 3-4 days
+  if (daysSinceLastContact >= 3) {
+    return { shouldSend: true, reason: `Purchase window 60-120 days out (${daysUntilWindow}d), 3-4 day cadence — ${daysSinceLastContact}d since last contact`, daysUntilWindow, isValueLed: true };
+  }
+  return { shouldSend: false, reason: `Purchase window 60-120 days out (${daysUntilWindow}d), 3-4 day cadence — only ${daysSinceLastContact}d since last contact (need 3+)`, daysUntilWindow, isValueLed: true };
+}
+
 /**
  * Generate a highly personalized, intelligent AI follow-up email for a lead.
  * Brain Upgrade: Anthropic Direct + Full Context + Angle Rotation + Temporal Reasoning.
@@ -711,8 +935,9 @@ export async function generateFollowUpMessage(opts: {
   daysStale: number;
   stage: string;
   person?: FubPerson;
+  isValueLed?: boolean;
 }): Promise<{ body: string; subject: string }> {
-  const { agentFirstName, agentLastName, leadFirstName, daysStale: staleDays, stage, person } = opts;
+  const { agentFirstName, agentLastName, leadFirstName, daysStale: staleDays, stage, person, isValueLed } = opts;
   const hasName = !!leadFirstName && leadFirstName.toLowerCase() !== "there";
   const nameContext = hasName
     ? `The lead's first name is ${leadFirstName}. Use only their first name — never their last name. The greeting must be exactly "Hey ${leadFirstName}," — ONE greeting, ONE name, nothing else on that line.`
@@ -798,7 +1023,14 @@ LEAD CONTEXT:
 
 FRESHNESS ANGLE FOR THIS EMAIL: ${angle}
 IMPORTANT: Do NOT use the same angle as last time. Last angle was: ${lastAngle ?? "none/first email"}
-
+${isValueLed ? `
+VALUE-LED EMAIL (Timeline-stretched cadence): This lead has a purchase window far in the future, so emails are less frequent. This email MUST be VALUE-LED — provide genuinely useful content:
+- Market updates, rate changes, or incentive programs for their stated price range/city
+- New builder deals, inventory updates, or community developments in their target area
+- Practical prep steps (VA pre-qualification, credit optimization, down payment programs)
+- Neighborhood insights, school ratings, or lifestyle info for their target area
+NEVER write a generic "just checking in" — every stretched-cadence email must deliver tangible value.
+` : ""}
 PRIOR NOTES:
 ${leadContext}
 
@@ -1228,10 +1460,14 @@ export async function sendClockoffEmail(opts: {
   sent: number;
   errored: number;
   skipped: number;
+  timelineAdjusted?: number;
+  avgWindowDaysOut?: number;
   accentColor?: string;
   headerGradient?: string;
 }): Promise<void> {
   const { botName, agentFirstName, agentLastName, agentEmail, sent, errored, skipped } = opts;
+  const timelineAdjusted = opts.timelineAdjusted ?? 0;
+  const avgWindowDaysOut = opts.avgWindowDaysOut ?? 0;
   const accent = opts.accentColor ?? "#2c5f2e";
   const gradient = opts.headerGradient ?? "linear-gradient(135deg,#1a3d1c 0%,#2c5f2e 60%,#3a7d3c 100%)";
   const isCombined = agentFirstName === "Steven & Peter";
@@ -1298,13 +1534,21 @@ export async function sendClockoffEmail(opts: {
                 </td>
               </tr>
               <tr style="background:${errored > 0 ? '#fef2f2' : '#f0fdf4'};">
-                <td style="padding:20px 24px;">
+                <td style="padding:20px 24px;${timelineAdjusted > 0 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
                   <table cellpadding="0" cellspacing="0" width="100%"><tr>
                     <td style="font-size:14px;color:#374151;">${errored > 0 ? '⚠️ &nbsp;<strong>Errors encountered</strong>' : '✅ &nbsp;No errors'}</td>
                     <td style="text-align:right;font-size:28px;font-weight:800;color:${errored > 0 ? '#ef4444' : '#10b981'};">${errored}</td>
                   </tr></table>
                 </td>
               </tr>
+              ${timelineAdjusted > 0 ? `<tr style="background:#eff6ff;">
+                <td style="padding:20px 24px;">
+                  <table cellpadding="0" cellspacing="0" width="100%"><tr>
+                    <td style="font-size:14px;color:#374151;">📅 &nbsp;<strong>Timeline-adjusted leads</strong> (avg ${avgWindowDaysOut}d out)</td>
+                    <td style="text-align:right;font-size:28px;font-weight:800;color:#2563eb;">${timelineAdjusted}</td>
+                  </tr></table>
+                </td>
+              </tr>` : ''}
             </table>
           </td>
         </tr>
@@ -1423,13 +1667,11 @@ export async function logBotRun(opts: {
   const db = await getDb();
   if (!db) return;
   await db.insert(botRunLogs).values({
-    botName: opts.botName,
-    botSlug: opts.botSlug,
-    sent: opts.sent,
-    errored: opts.errored,
-    skipped: opts.skipped,
-    status: opts.status,
-    ranAt: new Date(),
+    leadsTexted: opts.sent,
+    leadsFailed: opts.errored,
+    leadsEvaluated: opts.sent + opts.errored + opts.skipped,
+    summary: `${opts.botName} (${opts.botSlug}): ${opts.status} — sent=${opts.sent}, errored=${opts.errored}, skipped=${opts.skipped}`,
+    triggeredBy: "cron",
   });
 }
 
