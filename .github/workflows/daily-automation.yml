@@ -28,7 +28,7 @@ env:
 jobs:
   daily-automation:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout main
