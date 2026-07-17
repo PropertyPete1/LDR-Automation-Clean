@@ -89,6 +89,10 @@ def main() -> int:
                 f'GUARD: Daily pond nurture already completed today ({_sent_today} emails sent). '
                 f'Exiting to prevent duplicate sends.'
             )
+            # CRITICAL: Still ping healthcheck and post observation on legitimate dedup exit.
+            # Without this, a successful "already ran" exit looks like a crash to monitoring.
+            _post_dashboard_observation(db, settings)
+            _ping_healthcheck_daily()
             return 0
 
     fub = FollowUpBossClient(settings)

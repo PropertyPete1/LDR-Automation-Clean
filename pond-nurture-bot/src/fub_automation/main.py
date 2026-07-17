@@ -3350,6 +3350,18 @@ class RuleEngine:
 
     def process_reengagement_candidate(self, person: dict) -> str:
         person_id = int(person["id"])
+        # ── CHEAP LOCAL CHECKS FIRST (no API calls) ──────────────────────────────
+        # These eliminate the majority of candidates without touching the FUB API,
+        # keeping the run fast and well under the workflow timeout.
+        if self.is_excluded(person) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags):
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "excluded stage/tag or manual suppression tag"})
+            return "suppressed"
+        if not self.qualifies_for_reengagement(person):
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "not in configured pond"})
+            return "suppressed"
+
+        # ── DEAL PROTECTION (API call, but cached per-run) ────────────────────────
+        # Only checked for leads that pass all cheap conditions above.
         # Rule A: ANY deal in FUB deal room → total protection from pond nurture
         if self._has_any_deal(person_id):
             deals = self._get_person_deals(person_id)
@@ -3359,12 +3371,6 @@ class RuleEngine:
         # Rule C: Lease listing silenced leads get TOTAL SILENCE — no pond nurture
         if self._is_lease_listing_silenced(person_id):
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "lease listing silenced (closed Residential Lease Listing, no purchase deal)"})
-            return "suppressed"
-        if self.is_excluded(person) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags):
-            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "excluded stage/tag or manual suppression tag"})
-            return "suppressed"
-        if not self.qualifies_for_reengagement(person):
-            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "not in configured pond"})
             return "suppressed"
         last = self.db.get_last_reengagement(person_id)
         # ── Engagement-Based Cadence (Tier 3) ──
@@ -3802,7 +3808,7 @@ class RuleEngine:
         if person_id in self._deal_cache:
             return self._deal_cache[person_id]
         try:
-            resp = self.fub._request("GET", "deals", params={"personId": person_id, "limit": 25})
+            resp = self.fub._request("GET", "/deals", params={"personId": person_id, "limit": 25})
             deals = resp.get("deals", resp.get("data", []))
             self._deal_cache[person_id] = deals
             return deals
