@@ -1203,6 +1203,7 @@ CRITICAL INSTRUCTIONS — READ CAREFULLY:
 9. ONLY reference listings, options, or properties being sent if the FUB notes EXPLICITLY state that listings/options were sent. NEVER claim you sent listings when you did not.
 10. CRITICAL: Do NOT state where the lead is relocating FROM as a fact. Only reference the DESTINATION city/area.
 11. CRITICAL: Do NOT invent or assume personal details about the lead unless explicitly stated in the notes.
+12. CRITICAL: NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every bot email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
 
 FORMAT:
 - Line 1: SUBJECT: <a natural, context-aware subject line — NOT "Checking in". Make it specific to this lead's situation and the angle.>
