@@ -103,31 +103,29 @@ export type InsertUiErrorLog = typeof uiErrorLog.$inferInsert;
 export const smsSentToday = mysqlTable("sms_sent_today", {
   id: int("id").autoincrement().primaryKey(),
   /** FUB person ID of the lead that was texted */
-  personId: int("person_id").notNull(),
+  personId: int("personId").notNull(),
   /** Agent name who sent the text */
-  agentName: varchar("agent_name", { length: 100 }).notNull().default("unknown"),
-  /** Calendar date in CT (YYYY-MM-DD) — used to filter today's sends */
-  sentDate: varchar("sent_date", { length: 10 }).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  agentName: varchar("agentName", { length: 100 }).notNull().default("unknown"),
+  /** When the text was sent */
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
 });
 
 export type SmsSentToday = typeof smsSentToday.$inferSelect;
 export type InsertSmsSentToday = typeof smsSentToday.$inferInsert;
-export const botRunLog = mysqlTable("bot_run_log", {
+export const botRunLogs = mysqlTable("bot_run_logs", {
   id: int("id").autoincrement().primaryKey(),
-  runAt: timestamp("run_at").defaultNow().notNull(),
-  leadsTexted: int("leads_texted").notNull().default(0),
-  leadsFailed: int("leads_failed").notNull().default(0),
-  leadsEvaluated: int("leads_evaluated").notNull().default(0),
-  emailSent: mysqlEnum("email_sent", ["yes", "no", "skipped"]).notNull().default("no"),
-  summary: text("summary"),
-  triggeredBy: mysqlEnum("triggered_by", ["cron", "manual"]).notNull().default("cron"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  botName: varchar("botName", { length: 200 }).notNull().default(""),
+  botSlug: varchar("botSlug", { length: 100 }).notNull().default(""),
+  sent: int("sent").notNull().default(0),
+  errored: int("errored").notNull().default(0),
+  skipped: int("skipped").notNull().default(0),
+  status: varchar("status", { length: 50 }).notNull().default("ok"),
+  ranAt: timestamp("ranAt").defaultNow().notNull(),
 });
-export type BotRunLog = typeof botRunLog.$inferSelect;
-export type InsertBotRunLog = typeof botRunLog.$inferInsert;
-/** Alias for backward compatibility with botHelpers.ts (plural form) */
-export const botRunLogs = botRunLog;
+export type BotRunLog = typeof botRunLogs.$inferSelect;
+export type InsertBotRunLog = typeof botRunLogs.$inferInsert;
+/** Alias for backward compatibility */
+export const botRunLog = botRunLogs;
 
 /**
  * Autonomous monitoring engine run log.
@@ -169,24 +167,16 @@ export type InsertBotMonitorLog = typeof botMonitorLog.$inferInsert;
 export const botObservations = mysqlTable("bot_observations", {
   id: int("id").autoincrement().primaryKey(),
   /** Which system wrote this observation */
-  source: varchar("source", { length: 50 }).notNull(), // 'bot_monitor' | 'lifestyle_bot' | 'speed_to_lead' | 'pond_nurture' | 'nightly_healer' | 'ui_error'
+  source: varchar("source", { length: 50 }).notNull(),
+  /** Broad category for healer routing */
+  category: varchar("category", { length: 80 }).notNull(),
   /** Severity level */
   severity: mysqlEnum("severity", ["info", "warning", "error", "fixed"]).notNull(),
-  /** Broad category for healer routing */
-  category: varchar("category", { length: 80 }).notNull(), // e.g. 'fub_api', 'bot_health', 'lead_accuracy', 'smtp', 'speed_to_lead', 'pond_nurture'
   /** Short human-readable message (shown in UI feed) */
   message: varchar("message", { length: 255 }).notNull(),
-  /** Full detail / context (JSON string or plain text) */
-  detail: text("detail"),
-  /** Whether the nightly healer can auto-fix this */
-  autoFixable: int("auto_fixable").default(0).notNull(), // 0 = no, 1 = yes
-  /** When the healer fixed this (null = not yet fixed) */
-  fixedAt: timestamp("fixed_at"),
-  /** What fix was applied */
-  fixNote: text("fix_note"),
-  /** Run ID so related observations from one bot run can be grouped */
-  runId: varchar("run_id", { length: 64 }),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  /** Whether resolved */
+  resolved: int("resolved").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type BotObservation = typeof botObservations.$inferSelect;
@@ -405,25 +395,25 @@ export type InsertAnnualNurtureLead = typeof annualNurtureLeads.$inferInsert;
 export const contactedLeads = mysqlTable("contacted_leads", {
   id: int("id").autoincrement().primaryKey(),
   /** Which bot sent the email (slug) */
-  botSlug: varchar("bot_slug", { length: 50 }).notNull(),
+  botSlug: varchar("botSlug", { length: 50 }).notNull(),
   /** Human-readable bot name */
-  botName: varchar("bot_name", { length: 100 }).notNull(),
+  botName: varchar("botName", { length: 100 }).notNull(),
   /** FUB person ID */
-  personId: int("person_id").notNull(),
+  personId: int("personId").notNull(),
   /** Lead first name */
-  leadFirstName: varchar("lead_first_name", { length: 100 }),
+  leadFirstName: varchar("leadFirstName", { length: 100 }),
   /** Lead last name */
-  leadLastName: varchar("lead_last_name", { length: 100 }),
+  leadLastName: varchar("leadLastName", { length: 100 }),
   /** Lead email address */
-  leadEmail: varchar("lead_email", { length: 320 }),
+  leadEmail: varchar("leadEmail", { length: 320 }),
   /** FUB stage at time of contact */
   stage: varchar("stage", { length: 100 }),
   /** How many days stale the lead was */
-  daysStale: int("days_stale").notNull().default(0),
+  daysStale: int("daysStale").notNull().default(0),
   /** The email body that was sent */
-  messageBody: text("message_body"),
+  messageBody: text("messageBody"),
   /** When the email was sent */
-  sentAt: timestamp("sent_at").defaultNow().notNull(),
+  sentAt: timestamp("sentAt").defaultNow().notNull(),
 });
 export type ContactedLead = typeof contactedLeads.$inferSelect;
 export type InsertContactedLead = typeof contactedLeads.$inferInsert;

@@ -460,11 +460,14 @@ export async function fetchPowerQueueCount(
 export async function getSmsSentTodayIds(): Promise<Set<number>> {
   const db = await getDb();
   if (!db) return new Set();
-  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  // Get start of today in CT
+  const now = new Date();
+  const todayStr = now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const todayStart = new Date(todayStr + "T00:00:00-05:00");
   const rows = await db
     .select({ personId: smsSentToday.personId })
     .from(smsSentToday)
-    .where(eq(smsSentToday.sentDate, todayCT));
+    .where(gte(smsSentToday.sentAt, todayStart));
   return new Set(rows.map(r => r.personId));
 }
 
@@ -475,10 +478,9 @@ export async function recordSmsSentToday(
 ): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   await db
     .insert(smsSentToday)
-    .values({ personId, agentName, sentDate: todayCT })
+    .values({ personId, agentName })
     .onDuplicateKeyUpdate({ set: { agentName } });
 }
 
@@ -1821,11 +1823,12 @@ export async function logBotRun(opts: {
   const db = await getDb();
   if (!db) return;
   await db.insert(botRunLogs).values({
-    leadsTexted: opts.sent,
-    leadsFailed: opts.errored,
-    leadsEvaluated: opts.sent + opts.errored + opts.skipped,
-    summary: `${opts.botName} (${opts.botSlug}): ${opts.status} — sent=${opts.sent}, errored=${opts.errored}, skipped=${opts.skipped}`,
-    triggeredBy: "cron",
+    botName: opts.botName,
+    botSlug: opts.botSlug,
+    sent: opts.sent,
+    errored: opts.errored,
+    skipped: opts.skipped,
+    status: opts.status,
   });
 }
 
