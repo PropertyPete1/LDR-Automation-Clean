@@ -1,9 +1,9 @@
 {
-  "_description": "SHARED SUPPRESSION LIST \u2014 Single source of truth for all LDR automation systems. Both the Python pond-nurture-bot and the TypeScript lifestyle-bot-dashboard read this file. Adding a tag here protects leads across ALL systems instantly.",
-  "_updated": "2026-07-12",
+  "_description": "SHARED SUPPRESSION CONFIG — Single source of truth for all LDR automation systems. Both the Python pond-nurture-bot and the TypeScript lifestyle-bot-dashboard read this file. Adding a tag or source here protects leads across ALL systems instantly.",
+  "_updated": "2026-07-18",
   "_usage": {
-    "python": "Loaded by main.py via Rules.load() \u2014 merged into excluded_tags and is_excluded()",
-    "typescript": "Fetched by botHelpers.ts via loadSharedSuppressionTags() from /api/suppression-tags endpoint or fallback to bundled copy"
+    "python": "Loaded by main.py via Rules.load() — merged into excluded_tags, excluded_sources, and is_excluded()",
+    "typescript": "Fetched by botHelpers.ts via loadSharedSuppressionConfig() from /api/suppression-tags endpoint or fallback to bundled copy"
   },
   "tags": [
     "do not contact",
@@ -26,5 +26,9 @@
     "replied - paused",
     "bot_suppress",
     "SOI"
+  ],
+  "excluded_sources": [
+    "New Agent Inquiry",
+    "BOTM Newsletter"
   ]
 }

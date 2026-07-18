@@ -96,6 +96,7 @@ class Rules:
     unresponsive_tags: List[str]
     excluded_stages: List[str]
     excluded_tags: List[str]
+    excluded_sources: List[str]
     sms_consent_tags: List[str]
     email_opt_out_tags: List[str]
     sms_opt_out_tags: List[str]
@@ -178,12 +179,25 @@ class Rules:
         # Merge shared tags into excluded_tags (deduplicating, case-insensitive)
         yaml_excluded = data.get("excluded_tags", ["do not contact", "past client", "closed"])
         merged_excluded = list({t.lower() for t in yaml_excluded + shared_suppression_tags})
+        # Load excluded_sources from the shared suppression JSON
+        shared_excluded_sources: List[str] = []
+        if os.path.exists(suppression_json_path):
+            try:
+                with open(suppression_json_path, "r", encoding="utf-8") as sf2:
+                    shared_data2 = json.loads(sf2.read())
+                    shared_excluded_sources = [s.lower() for s in shared_data2.get("excluded_sources", [])]
+                LOGGER.info("Loaded %d excluded sources from %s", len(shared_excluded_sources), suppression_json_path)
+            except Exception as e:
+                LOGGER.warning("Failed to load excluded_sources from suppression_tags.json: %s", e)
+        if not shared_excluded_sources:
+            shared_excluded_sources = ["new agent inquiry", "botm newsletter"]
         return cls(
             stale_stages=data.get("stale_stages", ["Stale", "Cold", "Long Term Nurture"]),
             stale_tags=data.get("stale_tags", ["stale", "cold", "long-term"]),
             unresponsive_tags=data.get("unresponsive_tags", ["unresponsive", "no response"]),
             excluded_stages=data.get("excluded_stages", ["Trash", "Closed", "Under Contract"]),
             excluded_tags=merged_excluded,
+            excluded_sources=shared_excluded_sources,
             sms_consent_tags=data.get("sms_consent_tags", ["sms opt in", "text consent"]),
             email_opt_out_tags=data.get("email_opt_out_tags", ["email opt out", "unsubscribe"]),
             sms_opt_out_tags=data.get("sms_opt_out_tags", ["sms opt out", "stop texting"]),
@@ -1897,6 +1911,16 @@ class RuleEngine:
         if self._is_lease_listing_silenced(person_id):
             self.db.log("closed_drip", "suppressed", person_id, {"reason": "lease listing silenced (closed Residential Lease Listing, no purchase deal)"})
             return "suppressed"
+        # Source-based exclusion (cheap local check)
+        excluded_src = self._is_excluded_source(person)
+        if excluded_src:
+            self.db.log("closed_drip", "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
+            return "suppressed"
+        # SOI Total Silence (cheap local check)
+        soi_rule = self._is_soi_silenced(person)
+        if soi_rule:
+            self.db.log("closed_drip", "soi_silenced", person_id, {"reason": f"soi_silenced (rule matched: {soi_rule})"})
+            return "suppressed"
 
         # Suppression checks — Phase 3 intentionally targets Closed/Past Client/Sphere stages,
         # so we do NOT call is_excluded() (which blocks those stages for pond reassignment).
@@ -3359,6 +3383,16 @@ class RuleEngine:
         if not self.qualifies_for_reengagement(person):
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "not in configured pond"})
             return "suppressed"
+        # Source-based exclusion (cheap local check)
+        excluded_src = self._is_excluded_source(person)
+        if excluded_src:
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
+            return "suppressed"
+        # SOI Total Silence (cheap local check)
+        soi_rule = self._is_soi_silenced(person)
+        if soi_rule:
+            self.db.log("pond_nurture", "soi_silenced", person_id, {"reason": f"soi_silenced (rule matched: {soi_rule})"})
+            return "suppressed"
 
         # ── DEAL PROTECTION (API call, but cached per-run) ────────────────────────
         # Only checked for leads that pass all cheap conditions above.
@@ -3710,44 +3744,20 @@ class RuleEngine:
         if not person.get("assignedUserId"):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "no assigned agent"})
             return "suppressed"
-        # CRITICAL: Never reassign agent SOI leads (Sphere of Influence — personal contacts agents brought in)
-        # Three conditions — ANY match = protected from pond reassignment:
-        #   1. createdVia == "Manually" AND createdById != Peter (user_id 2)
-        #      (Peter manually creates company leads and assigns to agents — those stay pond-eligible)
-        #   2. source == "SOI"
-        #   3. Any tag starting with "SOI"
+        # Source-based exclusion (cheap local check)
+        excluded_src = self._is_excluded_source(person)
+        if excluded_src:
+            self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
+            return "suppressed"
+        # SOI Total Silence (centralized check — replaces inline SOI logic)
+        soi_rule = self._is_soi_silenced(person)
+        if soi_rule:
+            self.db.log("stale_agent_pond_reassignment", "soi_silenced", person_id, {"reason": f"soi_silenced (rule matched: {soi_rule})"})
+            return "soi_protected"
+        # Legacy fallback: also protect import-sourced leads
         source = str(person.get("source") or "").lower()
         created_via = str(person.get("createdVia") or "").lower()
         created_by_id = int(person.get("createdById") or 0)
-        peter_id = int(self.rules.peter_user_id or 2)
-
-        soi_rule_matched = None
-        # Rule 1: Manually created by an agent (not Peter) — requires ?fields=allFields on the fetch
-        if created_via == "manually" and created_by_id != 0 and created_by_id != peter_id:
-            soi_rule_matched = f"createdVia=Manually, createdById={created_by_id} (not Peter)"
-        # Rule 2: Source is explicitly "SOI"
-        if not soi_rule_matched and source == "soi":
-            soi_rule_matched = "source=SOI"
-        # Rule 3: Any tag starting with "SOI" (e.g., "SOI - Laila", "SOI - Steven")
-        if not soi_rule_matched:
-            raw_tags = person.get("tags") or []
-            for t in raw_tags:
-                tag_name = str(t.get("name") if isinstance(t, dict) else t or "").strip()
-                if tag_name.lower().startswith("soi"):
-                    soi_rule_matched = f"tag={tag_name}"
-                    break
-
-        if soi_rule_matched:
-            self.db.log("stale_agent_pond_reassignment", "soi_protected", person_id, {
-                "reason": "protected: agent SOI",
-                "rule_matched": soi_rule_matched,
-                "source": source,
-                "createdVia": created_via,
-                "createdById": created_by_id,
-            })
-            return "soi_protected"
-
-        # Legacy fallback: also protect import-sourced leads
         if source == "import" or created_via == "import":
             self.db.log("stale_agent_pond_reassignment", "soi_protected", person_id, {
                 "reason": "protected: agent SOI",
@@ -4416,6 +4426,16 @@ class RuleEngine:
                 continue
             if self.is_excluded(person):
                 continue
+            # Source-based exclusion (cheap local check)
+            excluded_src = self._is_excluded_source(person)
+            if excluded_src:
+                LOGGER.debug("Speed-to-lead: skipping person %s — excluded source: %s", person_id, excluded_src)
+                continue
+            # SOI Total Silence
+            soi_rule = self._is_soi_silenced(person)
+            if soi_rule:
+                LOGGER.debug("Speed-to-lead: skipping person %s — soi_silenced (rule matched: %s)", person_id, soi_rule)
+                continue
                 
             assigned_user_id = person.get("assignedUserId")
             # If the lead is assigned to an agent (and NOT Peter Allen himself), start the speed-to-lead timer!
@@ -4559,6 +4579,46 @@ class RuleEngine:
         # Merge with rules.excluded_tags to be absolutely thorough
         all_excluded_tags = unsubscribe_tags.union({t.lower() for t in self.rules.excluded_tags})
         return self.has_any_tag(person, all_excluded_tags)
+
+    def _is_excluded_source(self, person: dict) -> Optional[str]:
+        """Check if a lead's source is in the excluded_sources list (case-insensitive).
+        Returns the matched source string or None."""
+        source = str(person.get("source") or person.get("leadSource") or "").lower().strip()
+        if not source:
+            return None
+        for excluded in self.rules.excluded_sources:
+            if source == excluded:
+                return person.get("source") or person.get("leadSource") or source
+        return None
+
+    def _is_soi_silenced(self, person: dict) -> Optional[str]:
+        """Check if a lead is SOI-silenced (total silence from ALL automation).
+        A lead is SOI if ANY of:
+          1. createdById != Peter (user_id 2) AND createdVia == "Manually"
+          2. Any tag starting with "SOI" (case-insensitive)
+          3. Source CONTAINS "SOI" (case-insensitive)
+        Returns the matched rule description or None."""
+        peter_id = int(self.rules.peter_user_id or 2)
+
+        # Rule 3: source CONTAINS "SOI" (case-insensitive) — catches "Theo's SOI", "Tiffany SOI", etc.
+        source = str(person.get("source") or person.get("leadSource") or "").lower()
+        if "soi" in source:
+            return f'source contains SOI: "{person.get("source") or person.get("leadSource")}"'
+
+        # Rule 2: any tag starting with "SOI" (case-insensitive)
+        raw_tags = person.get("tags") or []
+        for t in raw_tags:
+            tag_name = str(t.get("name") if isinstance(t, dict) else t or "").strip()
+            if tag_name.lower().startswith("soi"):
+                return f'tag starts with SOI: "{tag_name}"'
+
+        # Rule 1: createdById != Peter AND createdVia == "Manually"
+        created_via = str(person.get("createdVia") or "").lower()
+        created_by_id = int(person.get("createdById") or 0)
+        if created_via == "manually" and created_by_id != 0 and created_by_id != peter_id:
+            return f"manually created by non-Peter user (createdById={created_by_id}, createdVia=Manually)"
+
+        return None
 
     def classify_engagement_tier(self, person: dict) -> str:
         """Classify a pond lead into engagement tiers based on inbound activity.

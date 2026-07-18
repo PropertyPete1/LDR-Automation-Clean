@@ -32,6 +32,7 @@ const SUPPRESSION_TAGS_PATH = path.resolve(__botHelpers_dirname, "../../fub_auto
 const FALLBACK_SUPPRESSION_TAGS_PATH = path.resolve(__botHelpers_dirname, "../config/suppression_tags.json");
 
 let _sharedSuppressionTags: string[] | null = null;
+let _sharedExcludedSources: string[] | null = null;
 
 /** Load the shared suppression tag list from the canonical JSON file */
 export function getSharedSuppressionTags(): string[] {
@@ -42,6 +43,11 @@ export function getSharedSuppressionTags(): string[] {
       if (fs.existsSync(p)) {
         const data = JSON.parse(fs.readFileSync(p, "utf-8"));
         _sharedSuppressionTags = (data.tags ?? []).map((t: string) => t.toLowerCase());
+        // Also load excluded_sources while we have the file open
+        if (!_sharedExcludedSources) {
+          _sharedExcludedSources = (data.excluded_sources ?? []).map((s: string) => s.toLowerCase());
+          console.log(`[botHelpers] Loaded ${_sharedExcludedSources!.length} excluded sources`);
+        }
         console.log(`[botHelpers] Loaded ${_sharedSuppressionTags!.length} shared suppression tags from ${p}`);
         return _sharedSuppressionTags!;
       }
@@ -61,10 +67,72 @@ export function getSharedSuppressionTags(): string[] {
   return _sharedSuppressionTags;
 }
 
+/** Get the shared excluded sources list (case-insensitive, loaded from suppression_tags.json) */
+export function getSharedExcludedSources(): string[] {
+  if (_sharedExcludedSources !== null) return _sharedExcludedSources;
+  // Trigger tag load which also loads sources
+  getSharedSuppressionTags();
+  if (_sharedExcludedSources) return _sharedExcludedSources;
+  // Fallback
+  _sharedExcludedSources = ["new agent inquiry", "botm newsletter"];
+  return _sharedExcludedSources;
+}
+
 /** Force reload of suppression tags (used after adding a new tag) */
 export function reloadSharedSuppressionTags(): string[] {
   _sharedSuppressionTags = null;
+  _sharedExcludedSources = null;
   return getSharedSuppressionTags();
+}
+
+const PETER_USER_ID = 2;
+
+/**
+ * Check if a lead's source is in the excluded_sources list (case-insensitive exact match).
+ * Returns the matched source string or null.
+ */
+export function isExcludedSource(person: FubPerson): string | null {
+  const source = (person.source ?? person.leadSource ?? "").toLowerCase().trim();
+  if (!source) return null;
+  const excludedSources = getSharedExcludedSources();
+  for (const excluded of excludedSources) {
+    if (source === excluded) return person.source ?? person.leadSource ?? source;
+  }
+  return null;
+}
+
+/**
+ * Check if a lead is SOI-silenced (total silence from ALL automation).
+ * A lead is SOI if ANY of:
+ *   1. createdById ≠ Peter (user_id 2) AND createdVia == "Manually"
+ *   2. Any tag starting with "SOI" (case-insensitive)
+ *   3. Source CONTAINS "SOI" (case-insensitive) — catches "Theo's SOI", "Tiffany SOI", etc.
+ * Returns the matched rule description or null.
+ */
+export function isSOISilenced(person: FubPerson): string | null {
+  // Rule 3: source CONTAINS "SOI" (case-insensitive)
+  const source = (person.source ?? person.leadSource ?? "").toLowerCase();
+  if (source.includes("soi")) {
+    return `source contains SOI: "${person.source ?? person.leadSource}"`;
+  }
+
+  // Rule 2: any tag starting with "SOI" (case-insensitive)
+  const tags = person.tags ?? [];
+  for (const t of tags) {
+    const tagName = (typeof t === "string" ? t : t?.name ?? "").trim();
+    if (tagName.toLowerCase().startsWith("soi")) {
+      return `tag starts with SOI: "${tagName}"`;
+    }
+  }
+
+  // Rule 1: createdById ≠ Peter AND createdVia == "Manually"
+  const createdVia = (person.createdVia ?? "").toLowerCase();
+  const createdById = person.createdById ?? 0;
+  if (createdVia === "manually" && createdById !== 0 && createdById !== PETER_USER_ID) {
+    return `manually created by non-Peter user (createdById=${createdById}, createdVia=Manually)`;
+  }
+
+  return null;
 }
 
 // ─── Environment ────────────────────────────────────────────────────────────
@@ -225,6 +293,8 @@ export interface FubPerson {
   price?: string | null;
   created?: string | null;
   createdAt?: string | null;
+  createdById?: number | null;
+  createdVia?: string | null;
   addresses?: Array<{ city?: string; state?: string }> | null;
 }
 
@@ -557,6 +627,18 @@ export async function isLeaseListingSilenced(personId: number): Promise<boolean>
  * Returns { skip: false } if it's safe to send a follow-up.
  */
 export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
+  // Source-based exclusion (cheap local check — no API call)
+  const excludedSrc = isExcludedSource(person);
+  if (excludedSrc) {
+    return { skip: true, reason: `excluded source: ${excludedSrc}` };
+  }
+
+  // SOI Total Silence (cheap local check — no API call)
+  const soiRule = isSOISilenced(person);
+  if (soiRule) {
+    return { skip: true, reason: `soi_silenced (rule matched: ${soiRule})` };
+  }
+
   // Deal-Based Protection: ANY lead with a deal in FUB is protected
   // Rule A: Any deal → skip (human agent owns active deals)
   if (await hasAnyDeal(person.id)) {
