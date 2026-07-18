@@ -1,0 +1,66 @@
+[
+  {
+    "id": 2,
+    "botSlug": "tiffany",
+    "agentFirstName": "Tiffany",
+    "agentLastName": "Proske",
+    "fubUserId": 20,
+    "engineActive": false
+  },
+  {
+    "id": 3,
+    "botSlug": "stefanie",
+    "agentFirstName": "Stefanie",
+    "agentLastName": "Graham",
+    "fubUserId": 31,
+    "engineActive": false
+  },
+  {
+    "id": 4,
+    "botSlug": "abby",
+    "agentFirstName": "Abby",
+    "agentLastName": "Martinez",
+    "fubUserId": 28,
+    "engineActive": false
+  },
+  {
+    "id": 5,
+    "botSlug": "irma",
+    "agentFirstName": "Irma",
+    "agentLastName": "Vidic Crisp",
+    "fubUserId": 33,
+    "engineActive": false
+  },
+  {
+    "id": 6,
+    "botSlug": "laila",
+    "agentFirstName": "Laila",
+    "agentLastName": "Maria",
+    "fubUserId": 35,
+    "engineActive": false
+  },
+  {
+    "id": 7,
+    "botSlug": "jason",
+    "agentFirstName": "Jason",
+    "agentLastName": "Casanova",
+    "fubUserId": 37,
+    "engineActive": true
+  },
+  {
+    "id": 8,
+    "botSlug": "sp500_peter",
+    "agentFirstName": "Peter",
+    "agentLastName": "Allen",
+    "fubUserId": 2,
+    "engineActive": false
+  },
+  {
+    "id": 9,
+    "botSlug": "sp500_steven",
+    "agentFirstName": "Steven",
+    "agentLastName": "Van Orden",
+    "fubUserId": 1,
+    "engineActive": false
+  }
+]
