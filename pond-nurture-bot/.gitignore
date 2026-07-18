@@ -6,3 +6,8 @@ __pycache__/
 *.sqlite3
 *.sqlite
 .DS_Store
+
+.venv-audit/
+tests/.tmp_unused.sqlite3
+__pycache__/
+.pytest_cache/

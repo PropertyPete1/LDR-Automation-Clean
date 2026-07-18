@@ -1050,6 +1050,7 @@ NO_WINDOW"""
         - Neighborhood insights, school ratings, or lifestyle info for their target area
         NEVER write a generic "just checking in" — every stretched-cadence email must deliver tangible value.''' if is_value_led else ''}
         Requirements:
+        - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, campaign, or transactional automation.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor talking to a friend, not marketing copywriter.
         - Avoid run-on sentences. Break the text into very short, punchy, engaging paragraphs, maximum 2 to 3 sentences per paragraph.
@@ -1140,6 +1141,7 @@ NO_WINDOW"""
         {spots_context}
 
         Requirements:
+        - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip or newsletter.
         - Write in a highly personal, warm, casual, and human tone. Think "real estate advisor checking in on a friend," not "marketing copywriter."
         - Avoid run-on sentences. Break up the text into very short, punchy paragraphs (maximum 2-3 sentences per paragraph).
@@ -1213,6 +1215,7 @@ NO_WINDOW"""
         City/area guidance: {city_instruction}
 
         Requirements:
+        - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, or transactional welcome.
         - Write in a highly personal, warm, casual, and human tone. Think "real estate advisor welcoming a friend," not "marketing copywriter."
         - Avoid run-on sentences. Break up the text into very short, punchy, and engaging paragraphs (maximum 2-3 sentences per paragraph).
@@ -1315,6 +1318,7 @@ NO_WINDOW"""
         Content focus for this email: {content_instruction}
 
         Requirements:
+        - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
         - Make this feel like a one-off email Peter just wrote on his phone, not a drip or newsletter.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor staying in touch with a friend.
         - Avoid run-on sentences. Break the text into very short, punchy paragraphs (maximum 2-3 sentences per paragraph).
