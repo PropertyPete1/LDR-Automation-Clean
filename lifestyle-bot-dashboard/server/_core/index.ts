@@ -18,6 +18,11 @@ import {
   handleLailaClockin, handleLailaRun, handleLailaClockoff,
   handleBotMonitor,
   handleLeadReplyCheck,
+  handleEngineClockin,
+  handleEngineRun,
+  handleEngineRunSingle,
+  handleEngineClockoff,
+  handleEngineIntro,
 } from "../scheduledHandlers";
 import { getDb } from "../db";
 import { botObservations, botRunLogs } from "../../drizzle/schema";
@@ -73,6 +78,11 @@ async function startServer() {
   app.post("/api/scheduled/laila-clockoff", handleLailaClockoff);
   app.post("/api/scheduled/bot-monitor", handleBotMonitor);
   app.post("/api/scheduled/lead-reply-check", handleLeadReplyCheck);
+  app.post("/api/scheduled/engine-clockin", handleEngineClockin);
+  app.post("/api/scheduled/engine-run", handleEngineRun);
+  app.post("/api/scheduled/engine-run-single", handleEngineRunSingle);
+  app.post("/api/scheduled/engine-clockoff", handleEngineClockoff);
+  app.post("/api/scheduled/engine-intro", handleEngineIntro);
 
   // ─── Healer API — read-only endpoint for the 4am nightly health report ────────
   // Read-only endpoint for the nightly health report system.

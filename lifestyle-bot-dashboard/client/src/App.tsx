@@ -9,6 +9,7 @@ import Home from "./pages/Home";
 import AgentBots from "./pages/AgentBots";
 import PondNurture from "./pages/PondNurture";
 import AgentView from "./pages/AgentView";
+import AgentRegistry from "./pages/AgentRegistry";
 
 function Router() {
   return (
@@ -25,6 +26,7 @@ function Router() {
             <Route path={"/"} component={Home} />
             <Route path={"/agent-bots"} component={AgentBots} />
             <Route path={"/pond-nurture"} component={PondNurture} />
+            <Route path={"/agent-registry"} component={AgentRegistry} />
             <Route path={"/404"} component={NotFound} />
             <Route component={NotFound} />
           </Switch>

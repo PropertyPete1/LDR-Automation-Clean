@@ -31,6 +31,14 @@ import { runIrmaBot, sendIrmaBotClockinEmail, sendIrmaBotClockoffEmail } from ".
 import { runLailaBot, sendLailaBotClockinEmail, sendLailaBotClockoffEmail } from "./lailaBot";
 import { runBotMonitor } from "./botMonitor";
 import { runLeadReplyChecker } from "./leadReplyChecker";
+import {
+  runAllEngineAgents,
+  sendAllEngineClockins,
+  sendAllEngineClockoffs,
+  runEngineForAgent,
+  getActiveEngineAgents,
+} from "./botEngine";
+import { sendAllPendingIntroEmails } from "./botEngineIntro";
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
 
@@ -273,6 +281,64 @@ export async function handleLeadReplyCheck(req: Request, res: Response): Promise
   }, res);
 }
 
+// ─── Engine Bot handlers (data-driven) ───────────────────────────────────────
+
+/**
+ * Clock-in for ALL engine-active agents.
+ * Heartbeat cron: same time as other clock-ins (10:00am CT).
+ */
+export async function handleEngineClockin(req: Request, res: Response): Promise<void> {
+  if (!(await requireCron(req, res))) return;
+  await withCrashObservation("engine", "clockin", async () => {
+    // Send intro emails to any new engine agents that haven't received one yet
+    const introResult = await sendAllPendingIntroEmails();
+    // Then send normal clock-in emails
+    await sendAllEngineClockins();
+    const agents = await getActiveEngineAgents();
+    res.json({ ok: true, action: "engine_clockin", introsSent: introResult.sent, agents: agents.map(a => a.botSlug) });
+  }, res);
+}
+
+/**
+ * Run follow-up pipeline for ALL engine-active agents.
+ * Heartbeat cron: 10:10am CT (after hardcoded bots finish at 10:05-10:07).
+ */
+export async function handleEngineRun(req: Request, res: Response): Promise<void> {
+  if (!(await requireCron(req, res))) return;
+  await withCrashObservation("engine", "run", async () => {
+    const { results } = await runAllEngineAgents();
+    res.json({ ok: true, action: "engine_run", results });
+  }, res);
+}
+
+/**
+ * Run follow-up pipeline for a SINGLE engine agent (by slug in query param).
+ * Useful for testing or staggered scheduling.
+ * Example: POST /api/scheduled/engine-run-single?slug=jason
+ */
+export async function handleEngineRunSingle(req: Request, res: Response): Promise<void> {
+  if (!(await requireCron(req, res))) return;
+  const slug = (req.query.slug as string) ?? "";
+  if (!slug) { res.status(400).json({ error: "slug query param required" }); return; }
+  await withCrashObservation(slug, "run", async () => {
+    const result = await runEngineForAgent(slug);
+    res.json({ ok: true, bot: slug, ...result });
+  }, res);
+}
+
+/**
+ * Clock-off for ALL engine-active agents.
+ * Heartbeat cron: same time as other clock-offs (6:00pm CT).
+ */
+export async function handleEngineClockoff(req: Request, res: Response): Promise<void> {
+  if (!(await requireCron(req, res))) return;
+  await withCrashObservation("engine", "clockoff", async () => {
+    await sendAllEngineClockoffs();
+    const agents = await getActiveEngineAgents();
+    res.json({ ok: true, action: "engine_clockoff", agents: agents.map(a => a.botSlug) });
+  }, res);
+}
+
 // ─── Bot Monitor handler ──────────────────────────────────────────────────────
 
 export async function handleBotMonitor(req: Request, res: Response): Promise<void> {
@@ -280,5 +346,19 @@ export async function handleBotMonitor(req: Request, res: Response): Promise<voi
   await withCrashObservation("bot_monitor", "nightly_check", async () => {
     await runBotMonitor();
     res.json({ ok: true, action: "bot_monitor" });
+  }, res);
+}
+
+// ─── Engine Intro Email (manual trigger) ─────────────────────────────────────
+
+/**
+ * Send intro emails to all engine-active agents that haven't received one yet.
+ * Can be triggered manually or via cron.
+ */
+export async function handleEngineIntro(req: Request, res: Response): Promise<void> {
+  if (!(await requireCron(req, res))) return;
+  await withCrashObservation("engine", "intro", async () => {
+    const result = await sendAllPendingIntroEmails();
+    res.json({ ok: true, action: "engine_intro", ...result });
   }, res);
 }

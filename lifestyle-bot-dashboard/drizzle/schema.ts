@@ -525,3 +525,43 @@ export const purchaseWindow = mysqlTable("purchase_window", {
 });
 export type PurchaseWindow = typeof purchaseWindow.$inferSelect;
 export type InsertPurchaseWindow = typeof purchaseWindow.$inferInsert;
+
+/**
+ * Data-driven agent bot registry.
+ * Each row represents one agent bot instance. The generic engine iterates
+ * over rows where engineActive=true and runs the same follow-up pipeline
+ * that the hardcoded bot files use.
+ *
+ * Existing 6 bots are seeded with engineActive=false (still run by their
+ * hardcoded files). New agents (e.g. Jason) are engineActive=true and
+ * processed exclusively by the engine — zero overlap guaranteed.
+ */
+export const agentBots = mysqlTable("agent_bots", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Unique slug used in URLs, logs, and bot_run_logs (e.g. 'jason', 'tiffany') */
+  botSlug: varchar("botSlug", { length: 50 }).notNull().unique(),
+  /** Display name of the bot (e.g. "Jason's Lifestyle Bot") */
+  botName: varchar("botName", { length: 200 }).notNull(),
+  /** Agent first name — used in emails and greetings */
+  agentFirstName: varchar("agentFirstName", { length: 100 }).notNull(),
+  /** Agent last name */
+  agentLastName: varchar("agentLastName", { length: 100 }).notNull().default(""),
+  /** Agent email address — emails are sent FROM this address */
+  agentEmail: varchar("agentEmail", { length: 320 }).notNull(),
+  /** FUB user ID — used to fetch assigned leads */
+  fubUserId: int("fubUserId").notNull(),
+  /** Power Queue agent name override (e.g. Rue bot uses 'Stefanie' for PQ filter) */
+  powerQueueName: varchar("powerQueueName", { length: 100 }),
+  /** Accent color for emails (hex, e.g. '#ea580c') */
+  accentColor: varchar("accentColor", { length: 20 }).notNull().default("#2c5f2e"),
+  /** Header gradient CSS for emails */
+  headerGradient: varchar("headerGradient", { length: 300 }).notNull().default("linear-gradient(135deg,#1a3d1c 0%,#2c5f2e 60%,#3a7d3c 100%)"),
+  /** Whether this agent is processed by the generic engine (true) or hardcoded bot files (false) */
+  engineActive: boolean("engineActive").notNull().default(false),
+  /** When the one-time intro email was sent (NULL = not yet sent) */
+  introSentAt: timestamp("introSentAt"),
+  /** Row creation timestamp */
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentBot = typeof agentBots.$inferSelect;
+export type InsertAgentBot = typeof agentBots.$inferInsert;

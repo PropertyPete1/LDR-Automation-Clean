@@ -1,7 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { publicProcedure, protectedProcedure, adminProcedure, router } from "./_core/trpc";
 import { getDb } from "./db";
 import { botRunLogs, botObservations, contactedLeads } from "../drizzle/schema";
 import { desc, eq, gte, and, sql } from "drizzle-orm";
@@ -280,6 +280,152 @@ export const appRouter = router({
       }
     }),
     }),
+
+  // ─── Agent Registry (admin) ──────────────────────────────────────────────────────────────────
+  agentRegistry: router({
+    /** Fetch all FUB users for the agent lookup dropdown */
+    fubUsers: publicProcedure.query(async () => {
+      if (!FUB_API_KEY) return [];
+      try {
+        const resp = await fubRequest<{ users: Array<{ id: number; firstName: string; lastName: string; name: string; email: string; role: string; status: string; created: string }> }>("/users?limit=100");
+        return (resp.users ?? []).map(u => ({
+          id: u.id,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          status: u.status,
+        }));
+      } catch {
+        return [];
+      }
+    }),
+
+    /** List all agent_bots rows */
+    list: adminProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return [];
+      const { agentBots } = await import("../drizzle/schema");
+      return db.select().from(agentBots).orderBy(agentBots.id);
+    }),
+
+    /** Toggle engineActive for a specific agent */
+    toggleActive: adminProcedure
+      .input((input: unknown) => {
+        const i = input as { id?: number; active?: boolean };
+        if (!i?.id) throw new Error("id is required");
+        return { id: i.id, active: i.active ?? false };
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        await db.update(agentBots).set({ engineActive: input.active }).where(eq(agentBots.id, input.id));
+        return { ok: true, id: input.id, engineActive: input.active };
+      }),
+
+    /** Create a new engine agent */
+    create: adminProcedure
+      .input((input: unknown) => {
+        const i = input as {
+          botSlug?: string;
+          botName?: string;
+          agentFirstName?: string;
+          agentLastName?: string;
+          agentEmail?: string;
+          fubUserId?: number;
+          powerQueueName?: string;
+          accentColor?: string;
+          headerGradient?: string;
+        };
+        if (!i?.botSlug || !i?.botName || !i?.agentFirstName || !i?.agentEmail || !i?.fubUserId) {
+          throw new Error("botSlug, botName, agentFirstName, agentEmail, and fubUserId are required");
+        }
+        return {
+          botSlug: i.botSlug,
+          botName: i.botName,
+          agentFirstName: i.agentFirstName,
+          agentLastName: i.agentLastName ?? "",
+          agentEmail: i.agentEmail,
+          fubUserId: i.fubUserId,
+          powerQueueName: i.powerQueueName ?? null,
+          accentColor: i.accentColor ?? "#2c5f2e",
+          headerGradient: i.headerGradient ?? "linear-gradient(135deg,#1a3d1c 0%,#2c5f2e 60%,#3a7d3c 100%)",
+        };
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        const [inserted] = await db.insert(agentBots).values({
+          botSlug: input.botSlug,
+          botName: input.botName,
+          agentFirstName: input.agentFirstName,
+          agentLastName: input.agentLastName,
+          agentEmail: input.agentEmail,
+          fubUserId: input.fubUserId,
+          powerQueueName: input.powerQueueName,
+          accentColor: input.accentColor,
+          headerGradient: input.headerGradient,
+          engineActive: false,
+        });
+        return { ok: true, id: inserted.insertId };
+      }),
+
+    /** Update an existing engine agent */
+    update: adminProcedure
+      .input((input: unknown) => {
+        const i = input as {
+          id?: number;
+          botName?: string;
+          agentFirstName?: string;
+          agentLastName?: string;
+          agentEmail?: string;
+          fubUserId?: number;
+          powerQueueName?: string | null;
+          accentColor?: string;
+          headerGradient?: string;
+        };
+        if (!i?.id) throw new Error("id is required");
+        return i as { id: number } & Record<string, unknown>;
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        const { id, ...updates } = input;
+        // Only include defined fields
+        const setObj: Record<string, unknown> = {};
+        if (updates.botName !== undefined) setObj.botName = updates.botName;
+        if (updates.agentFirstName !== undefined) setObj.agentFirstName = updates.agentFirstName;
+        if (updates.agentLastName !== undefined) setObj.agentLastName = updates.agentLastName;
+        if (updates.agentEmail !== undefined) setObj.agentEmail = updates.agentEmail;
+        if (updates.fubUserId !== undefined) setObj.fubUserId = updates.fubUserId;
+        if (updates.powerQueueName !== undefined) setObj.powerQueueName = updates.powerQueueName;
+        if (updates.accentColor !== undefined) setObj.accentColor = updates.accentColor;
+        if (updates.headerGradient !== undefined) setObj.headerGradient = updates.headerGradient;
+        if (Object.keys(setObj).length > 0) {
+          await db.update(agentBots).set(setObj).where(eq(agentBots.id, id));
+        }
+        return { ok: true, id };
+      }),
+
+    /** Delete an engine agent */
+    delete: adminProcedure
+      .input((input: unknown) => {
+        const i = input as { id?: number };
+        if (!i?.id) throw new Error("id is required");
+        return { id: i.id };
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        await db.delete(agentBots).where(eq(agentBots.id, input.id));
+        return { ok: true, id: input.id };
+      }),
+  }),
 
   // ─── Power Queue (direct FUB query for 1-20 day stale leads) ──────────────────────────────────
   powerQueue: router({

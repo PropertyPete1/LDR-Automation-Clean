@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getLoginUrl } from "@/const";
-import { Bot, LayoutDashboard, Droplets, Zap, LogOut } from "lucide-react";
+import { Bot, LayoutDashboard, Droplets, Zap, LogOut, Settings2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
@@ -16,6 +16,7 @@ const navItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Bot, label: "Agent Bots", path: "/agent-bots" },
   { icon: Droplets, label: "Pond Nurture", path: "/pond-nurture" },
+  { icon: Settings2, label: "Agent Registry", path: "/agent-registry" },
 ];
 
 export default function DashboardLayout({
