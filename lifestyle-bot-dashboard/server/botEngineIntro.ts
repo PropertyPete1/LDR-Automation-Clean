@@ -24,25 +24,31 @@ const NEW_DASHBOARD_BASE = "https://lifestyledash-wpnl8v84.manus.space";
  */
 async function generateIntroCopy(agent: AgentBot): Promise<{
   openingLine: string;
-  story: string;
+  originStory: string;
   whatIDo: string;
   powerQueueNote: string;
   hype: string;
 }> {
+  const currentYear = new Date().getFullYear(); // 2026
   const prompt = `You are writing a fun, energetic introduction email for a new AI automation bot at Lifestyle Design Realty.
 
 The bot is called "${agent.botName}" and is assigned to agent ${agent.agentFirstName} ${agent.agentLastName}.
+The current year is ${currentYear}.
 
-Write the following sections (keep each concise, 2-3 sentences max per section):
+Write the following sections:
 
-1. OPENING_LINE: A warm, exciting headline greeting the agent about their new bot (e.g. "Meet Your New AI Partner!")
-2. STORY: A brief 2-paragraph story about what the bot does — it sends personalized AI-written follow-up emails to the agent's leads every day, monitors FUB notes to know when to skip, and keeps a full audit trail. Make it sound impressive but approachable.
-3. WHAT_I_DO: A single paragraph explaining the daily routine — scans leads 3-19 days stale, sends personalized emails, logs notes in FUB, reports results at 6pm.
-4. POWER_QUEUE_NOTE: A brief note about the Power Queue — the agent also has a mobile-first texting queue for leads 1-20 days stale that complements the bot's email work.
-5. HYPE: An exciting statement about how rare and powerful this automation is — most teams don't have anything like this.
+1. OPENING_LINE: A warm, exciting headline greeting the agent about their new bot (1 sentence).
 
-Return ONLY valid JSON with keys: openingLine, story, whatIDo, powerQueueNote, hype
-All values should be strings. The story can have \\n\\n for paragraph breaks.`;
+2. ORIGIN_STORY: A short, cute, made-up tale (2-3 paragraphs) about how this bot was "born." Make it personal and charming — maybe Peter was up late at the office one night, fueled by coffee and ambition, staring at Follow Up Boss data, and thought "${agent.agentFirstName} deserves a tireless AI partner that never forgets a lead." So he built one from scratch, trained it on the team's best follow-up patterns, and named it ${agent.botName}. Give it personality — it's eager, loyal, and a little proud of itself. End with the bot introducing itself directly to ${agent.agentFirstName}.
+
+3. WHAT_I_DO: A single paragraph explaining the daily routine — scans leads 3-19 days stale, sends personalized AI-crafted emails drawing from the most recent FUB notes, logs detailed notes in Follow Up Boss for full accountability, and sends a complete summary report at 6:00 PM CT.
+
+4. POWER_QUEUE_NOTE: A brief note about the Power Queue — the agent also has a mobile-first texting queue for leads 1-20 days stale that shows one lead at a time with full context. It complements the bot's email work perfectly.
+
+5. HYPE: An exciting statement about how rare and powerful this automation is — most real estate teams don't have anything close to this level of AI automation working for them 24/7. This is cutting-edge technology that gives a massive competitive advantage.
+
+Return ONLY valid JSON with keys: openingLine, originStory, whatIDo, powerQueueNote, hype
+All values should be strings. The originStory can have \\n\\n for paragraph breaks.`;
 
   const response = await invokeLLM({
     messages: [
@@ -58,12 +64,12 @@ All values should be strings. The story can have \\n\\n for paragraph breaks.`;
           type: "object",
           properties: {
             openingLine: { type: "string", description: "Exciting headline greeting" },
-            story: { type: "string", description: "2-paragraph story about the bot" },
+            originStory: { type: "string", description: "Cute origin story about how the bot was born" },
             whatIDo: { type: "string", description: "Daily routine explanation" },
             powerQueueNote: { type: "string", description: "Power Queue complement note" },
             hype: { type: "string", description: "Exciting rarity statement" },
           },
-          required: ["openingLine", "story", "whatIDo", "powerQueueNote", "hype"],
+          required: ["openingLine", "originStory", "whatIDo", "powerQueueNote", "hype"],
           additionalProperties: false,
         },
       },
@@ -75,10 +81,14 @@ All values should be strings. The story can have \\n\\n for paragraph breaks.`;
   const parsed = JSON.parse(content);
   return {
     openingLine: parsed.openingLine ?? `Meet ${agent.botName}!`,
-    story: parsed.story ?? `${agent.botName} is your new AI automation assistant. It sends personalized follow-up emails to your leads every day.\n\nIt monitors your FUB notes to know when to skip leads and keeps a full audit trail of everything it does.`,
-    whatIDo: parsed.whatIDo ?? `Every day I scan your leads that are 3-19 days stale, send personalized AI-crafted emails, log notes in Follow Up Boss, and send you a full summary report at 6:00 PM CT.`,
-    powerQueueNote: parsed.powerQueueNote ?? `You also have a Power Queue — a mobile-first texting queue for leads 1-20 days stale. It complements my email work perfectly.`,
-    hype: parsed.hype ?? `You're part of something rare — most real estate teams don't have anything close to this level of AI automation working for them 24/7.`,
+    originStory: parsed.originStory ?? `It was a late Tuesday night at the office. Peter was three cups of coffee deep, staring at Follow Up Boss data, watching leads slip through the cracks. "${agent.agentFirstName} deserves better," he muttered. "A tireless partner that never forgets a lead, never takes a day off, and always knows exactly what to say."
+
+So he built one. Line by line, trained on the team's best follow-up patterns, infused with the warmth and professionalism that defines Lifestyle Design Realty. And when it was done, he smiled and said: "Your name is ${agent.botName}."
+
+Hi ${agent.agentFirstName}! I'm ${agent.botName}, and I'm thrilled to finally introduce myself. I was built specifically for you — to handle your follow-ups with the same care you would, so you can focus on closing deals and building relationships.`,
+    whatIDo: parsed.whatIDo ?? `Every day I scan your leads that are 3-19 days stale, send personalized AI-crafted emails that draw from your most recent FUB notes, log detailed notes in Follow Up Boss for full accountability, and send you a complete summary report at 6:00 PM CT.`,
+    powerQueueNote: parsed.powerQueueNote ?? `You also have a Power Queue — a mobile-first texting queue for leads 1-20 days stale. It shows you one lead at a time with full context so you can send a quick personalized text. It complements my email work perfectly.`,
+    hype: parsed.hype ?? `You're part of something rare — most real estate teams don't have anything close to this level of AI automation working for them 24/7. This is cutting-edge technology that gives you a massive competitive advantage.`,
   };
 }
 
@@ -95,7 +105,7 @@ export async function sendEngineIntroEmail(botSlug: string): Promise<boolean> {
   if (agent.introSentAt) return false; // Already sent
 
   // Generate copy via LLM
-  const { openingLine, story, whatIDo, powerQueueNote, hype } = await generateIntroCopy(agent);
+  const { openingLine, originStory, whatIDo, powerQueueNote, hype } = await generateIntroCopy(agent);
 
   const accentColor = agent.accentColor;
   const headerGradient = agent.headerGradient;
@@ -134,7 +144,7 @@ export async function sendEngineIntroEmail(botSlug: string): Promise<boolean> {
           <td style="padding:40px 44px 0;">
             <h2 style="margin:0 0 20px 0;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">${openingLine}</h2>
             <div style="font-size:15px;color:#374151;line-height:1.85;">
-              ${story.split("\n\n").map((p: string) => `<p style="margin:0 0 16px 0;">${p.trim()}</p>`).join("")}
+              ${originStory.split("\n\n").map((p: string) => `<p style="margin:0 0 16px 0;">${p.trim()}</p>`).join("")}
             </div>
           </td>
         </tr>

@@ -13,10 +13,10 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  { icon: Bot, label: "Agent Bots", path: "/agent-bots" },
-  { icon: Droplets, label: "Pond Nurture", path: "/pond-nurture" },
-  { icon: Settings2, label: "Agent Registry", path: "/agent-registry" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/", adminOnly: false },
+  { icon: Bot, label: "Agent Bots", path: "/agent-bots", adminOnly: false },
+  { icon: Droplets, label: "Pond Nurture", path: "/pond-nurture", adminOnly: false },
+  { icon: Settings2, label: "Agent Registry", path: "/agent-registry", adminOnly: true },
 ];
 
 export default function DashboardLayout({
@@ -93,7 +93,9 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
           {/* Right: Nav links + user */}
           <div className="flex items-center gap-2">
             {/* Nav links */}
-            {navItems.map((item) => {
+            {navItems
+              .filter((item) => !item.adminOnly || user?.role === "admin")
+              .map((item) => {
               const isActive = location === item.path;
               return (
                 <button
@@ -145,7 +147,9 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
 
         {/* Mobile nav row */}
         <div className="sm:hidden flex items-center gap-1 px-4 pb-2 overflow-x-auto">
-          {navItems.map((item) => {
+          {navItems
+            .filter((item) => !item.adminOnly || user?.role === "admin")
+            .map((item) => {
             const isActive = location === item.path;
             return (
               <button

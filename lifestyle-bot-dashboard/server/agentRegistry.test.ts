@@ -129,10 +129,15 @@ describe("agentRegistry", () => {
   });
 
   describe("fubUsers", () => {
-    it("returns an array (public procedure)", async () => {
-      const caller = appRouter.createCaller(createUnauthContext());
+    it("returns an array (admin procedure)", async () => {
+      const caller = appRouter.createCaller(createAdminContext());
       const result = await caller.agentRegistry.fubUsers();
       expect(Array.isArray(result)).toBe(true);
+    });
+
+    it("rejects non-admin callers", async () => {
+      const caller = appRouter.createCaller(createNonAdminContext());
+      await expect(caller.agentRegistry.fubUsers()).rejects.toThrow(/permission/i);
     });
   });
 });

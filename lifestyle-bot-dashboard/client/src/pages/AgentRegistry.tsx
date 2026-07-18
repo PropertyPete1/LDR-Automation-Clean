@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { Redirect } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,15 +43,9 @@ export default function AgentRegistry() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<typeof agents extends (infer T)[] | undefined ? T | null : never>(null);
 
-  // Admin gating
+  // Admin gating — redirect non-admins to 404
   if (user && user.role !== "admin") {
-    return (
-      <div className="p-6 flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <Settings2 className="h-12 w-12 text-slate-300 mb-4" />
-        <h2 className="text-xl font-semibold text-slate-700">Access Restricted</h2>
-        <p className="text-sm text-slate-500 mt-2">The Agent Registry is only available to admin users.</p>
-      </div>
-    );
+    return <Redirect to="/404" />;
   }
 
   if (isLoading) {

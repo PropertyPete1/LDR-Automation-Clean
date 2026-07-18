@@ -102,6 +102,16 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { bot: null, weeklyRuns: [], recentLeads: [] };
 
+        // ISOLATION: Only allow querying known registered bot slugs.
+        // This prevents enumeration of arbitrary slugs.
+        const { agentBots: agentBotsTable } = await import("../drizzle/schema");
+        const [registeredAgent] = await db
+          .select({ id: agentBotsTable.id })
+          .from(agentBotsTable)
+          .where(eq(agentBotsTable.botSlug, input.slug))
+          .limit(1);
+        if (!registeredAgent) return { bot: null, weeklyRuns: [], recentLeads: [] };
+
         // Latest run for this bot
         const latestRuns = await db
           .select()
@@ -284,7 +294,7 @@ export const appRouter = router({
   // ─── Agent Registry (admin) ──────────────────────────────────────────────────────────────────
   agentRegistry: router({
     /** Fetch all FUB users for the agent lookup dropdown */
-    fubUsers: publicProcedure.query(async () => {
+    fubUsers: adminProcedure.query(async () => {
       if (!FUB_API_KEY) return [];
       try {
         const resp = await fubRequest<{ users: Array<{ id: number; firstName: string; lastName: string; name: string; email: string; role: string; status: string; created: string }> }>("/users?limit=100");

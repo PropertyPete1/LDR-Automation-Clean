@@ -18,6 +18,7 @@ const ALL_BOTS = [
   { slug: "abby",        name: "Abby's Lifestyle Bot" },
   { slug: "irma",        name: "Irma's Lifestyle Bot" },
   { slug: "laila",       name: "Laila's Lifestyle Bot" },
+  { slug: "jason",       name: "Jason's Lifestyle Bot" },
 ];
 
 export interface BotHealthResult {

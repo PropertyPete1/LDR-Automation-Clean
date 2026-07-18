@@ -12,5 +12,13 @@
 - [x] Build Admin UI — Agent Registry page
 - [x] TypeScript 0 errors
 - [x] Write/update vitest tests (10/10 pass)
-- [ ] Push to GitHub
-- [ ] Generate Jason intro email for user review
+- [x] Push to GitHub (commit 42f1651)
+- [x] Generate Jason intro email for user review
+
+## Urgent Fixes (User-Required Before Heartbeat Re-enable)
+- [x] Item 1: Confirm engineActive toggles (Jason=true, all others=false) + add legacy safeguard code + test
+- [x] Item 2: Fix FUB user ID mappings (pull full FUB user list, correct Peter/Steven rows)
+- [x] Item 3: Access control — route guard, tRPC rejection tests (11/11 pass), nav hide for non-admins, agent endpoint isolation
+- [x] Item 4: Fix intro email year (dynamic via getFullYear()) + add origin story to LLM prompt + fallback copy
+- [ ] Checkpoint + GitHub push
+- [ ] Re-enable heartbeat ONLY after user approval
