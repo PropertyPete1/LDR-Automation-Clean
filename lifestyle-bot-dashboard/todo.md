@@ -20,5 +20,14 @@
 - [x] Item 2: Fix FUB user ID mappings (pull full FUB user list, correct Peter/Steven rows)
 - [x] Item 3: Access control — route guard, tRPC rejection tests (11/11 pass), nav hide for non-admins, agent endpoint isolation
 - [x] Item 4: Fix intro email year (dynamic via getFullYear()) + add origin story to LLM prompt + fallback copy
-- [ ] Checkpoint + GitHub push
-- [ ] Re-enable heartbeat ONLY after user approval
+- [x] Checkpoint + GitHub push (ed35aac7 / commit 3cc76ee)
+- [x] Re-enable heartbeat ONLY after user approval (resumed 2026-07-18)
+
+## Bug Fixes (2026-07-19)
+- [x] Bug 1: Lead-facing signature uses bot persona name instead of agent's real name — audit all paths, fix
+- [x] Bug 2: Engine clock-in template shows hardcoded Steven/Peter dashboard buttons — make dynamic single-agent
+- [x] Behavioral tests for both bugs (9/9 pass)
+- [x] Deploy + sync to GitHub
+- [x] Add true behavioral test: render sendLeadFollowUpEmail output and assert zero persona names
+- [x] Add true behavioral test: render engine clock-in HTML for Jason and assert one /agent/jason link
+- [ ] Save checkpoint + push to GitHub

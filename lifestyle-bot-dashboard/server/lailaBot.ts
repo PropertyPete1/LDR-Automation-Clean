@@ -162,6 +162,7 @@ export async function sendLailaBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#059669",
     headerGradient: "linear-gradient(135deg,#064e3b 0%,#059669 60%,#34d399 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

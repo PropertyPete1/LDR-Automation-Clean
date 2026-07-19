@@ -161,6 +161,7 @@ export async function sendAbbyBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#7c3aed",
     headerGradient: "linear-gradient(135deg,#3b0764 0%,#7c3aed 60%,#a78bfa 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

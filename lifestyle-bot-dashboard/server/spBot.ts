@@ -306,6 +306,7 @@ export async function sendSpBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#1d4ed8",
     headerGradient: "linear-gradient(135deg,#1e3a5f 0%,#1d4ed8 60%,#3b82f6 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

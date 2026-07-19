@@ -1412,6 +1412,7 @@ export async function sendClockinEmail(opts: {
   powerQueueCount?: number;     // Agent's job: 1-20 day stale leads in the Power Queue
   accentColor?: string;
   headerGradient?: string;
+  botSlug?: string;             // Used to build the dynamic dashboard link
 }): Promise<void> {
   const { botName, agentFirstName, agentLastName, agentEmail, leadsQueued } = opts;
   const powerQueueCount = opts.powerQueueCount ?? 0;
@@ -1427,15 +1428,15 @@ export async function sendClockinEmail(opts: {
   const powerQueueUrl = pqAgentName
     ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
     : `${OLD_DASHBOARD_BASE}/sms-queue`;
-  const agentSlug = isCombined ? null : AGENT_DASHBOARD_SLUG[agentFirstName.toLowerCase()];
+  // Derive the slug: prefer explicit botSlug param, then lookup by name, then null
+  const agentSlug = opts.botSlug ?? (isCombined ? null : AGENT_DASHBOARD_SLUG[agentFirstName.toLowerCase()] ?? null);
   const isLeader = isCombined || (agentFirstName && LEADER_AGENTS.has(agentFirstName.toLowerCase()));
+  // Every agent gets exactly ONE dashboard button — leaders go to /, non-leaders go to /agent/:slug
   const agentDashboardUrl = isLeader
     ? `${NEW_DASHBOARD_BASE}/`
     : agentSlug
       ? `${NEW_DASHBOARD_BASE}/agent/${agentSlug}`
-      : null;
-  const stevenDashUrl = `${NEW_DASHBOARD_BASE}/`;
-  const peterDashUrl = `${NEW_DASHBOARD_BASE}/`;
+      : `${NEW_DASHBOARD_BASE}/`; // Fallback: always produce a link, never null
 
   const subject = `☀️ ${botName} — Good Morning! Clocking In`;
   const html = `<!DOCTYPE html>
@@ -1531,13 +1532,10 @@ export async function sendClockinEmail(opts: {
           </td>
         </tr>
 
-        <!-- DASHBOARD BUTTON -->
+        <!-- DASHBOARD BUTTON (always exactly one, dynamically built) -->
         <tr>
           <td style="padding:20px 44px 0;text-align:center;">
-            ${agentDashboardUrl
-              ? `<a href="${agentDashboardUrl}" style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.3px;">📊 View My Bot Dashboard</a>`
-              : `<table cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr><td style="padding-right:12px;"><a href="${stevenDashUrl}" style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;">📊 Steven's Dashboard</a></td><td><a href="${peterDashUrl}" style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;">📊 Peter's Dashboard</a></td></tr></table>`
-            }
+            <a href="${agentDashboardUrl}" style="display:inline-block;background:${accent};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:8px;font-size:15px;font-weight:700;letter-spacing:0.3px;">📊 ${isCombined ? 'View Dashboard' : `${agentFirstName}'s Dashboard`}</a>
           </td>
         </tr>
 

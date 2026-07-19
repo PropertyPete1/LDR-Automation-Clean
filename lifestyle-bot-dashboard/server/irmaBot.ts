@@ -162,6 +162,7 @@ export async function sendIrmaBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#d97706",
     headerGradient: "linear-gradient(135deg,#78350f 0%,#d97706 60%,#fbbf24 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

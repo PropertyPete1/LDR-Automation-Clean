@@ -166,6 +166,7 @@ export async function sendTiffanyBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#0d9488",
     headerGradient: "linear-gradient(135deg,#134e4a 0%,#0d9488 60%,#14b8a6 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

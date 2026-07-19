@@ -29,8 +29,10 @@ const BOT_SLUG = "stefanie";
 const OBSERVATION_SOURCE = "stefanie_bot";
 
 const AGENT_FUB_ID = 31;
-const AGENT_FIRST = "Rue";
-const AGENT_LAST = "";
+const AGENT_FIRST = "Stefanie";
+const AGENT_LAST = "Graham";
+// NOTE: "Rue" is the BOT PERSONA name — used ONLY in internal emails (clock-in/off, reports).
+// Lead-facing emails (subject, body, signature) MUST use the agent's real human name above.
 const AGENT_EMAIL = "Stefanie@lifestyledesignrealty.com"; // email stays the same
 
 export async function runStefanieBot(): Promise<{
@@ -160,6 +162,7 @@ export async function sendStefanieBotClockinEmail(): Promise<void> {
     powerQueueCount,
     accentColor: "#db2777",
     headerGradient: "linear-gradient(135deg,#831843 0%,#db2777 60%,#f472b6 100%)",
+    botSlug: BOT_SLUG,
   });
 }
 

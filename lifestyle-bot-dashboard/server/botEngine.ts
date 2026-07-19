@@ -245,6 +245,7 @@ export async function sendEngineClockinForAgent(botSlug: string): Promise<void> 
     powerQueueCount,
     accentColor: agent.accentColor,
     headerGradient: agent.headerGradient,
+    botSlug: agent.botSlug,
   });
 }
 
