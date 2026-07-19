@@ -4794,41 +4794,68 @@ class RuleEngine:
         excluded so they cannot satisfy the speed-to-lead first-touch requirement.
         Only real agent actions — calls, outbound texts, outbound emails, or a
         non-automation note — count as a qualifying touch.
+
+        IMPORTANT: FUB does NOT reliably bump lastCommunication/lastActivity for
+        manual notes or unlogged calls. Therefore we ALWAYS check notes directly
+        via the API, regardless of lastX field values.
         """
         person_id = int(person.get("id", 0))
+        # Use a 15-second buffer (not 60s) — a real agent note written seconds
+        # after assignment is a legitimate first touch.
+        buffer = dt.timedelta(seconds=15)
 
-        # 1. Real call or outbound text/email — these are always human-initiated
+        # 1. Fast-path: Real call or outbound text/email — these are always human-initiated
         for key in ("lastSentEmail", "lastSentText", "lastCall"):
             value = person.get(key)
             if value:
                 parsed = parse_dt(value)
-                if parsed and parsed > created + dt.timedelta(minutes=1):
+                if parsed and parsed > created + buffer:
                     return True
 
-        # 2. lastCommunication / lastActivity — could be automation notes; verify via notes API
+        # 2. Fast-path: lastCommunication / lastActivity moved — if it moved AND
+        #    there are human notes, we can return True immediately.
         for key in ("lastCommunication", "lastActivity"):
             value = person.get(key)
             if value:
                 parsed = parse_dt(value)
-                if parsed and parsed > created + dt.timedelta(minutes=1):
-                    # Check if the most recent note is automation-generated
+                if parsed and parsed > created + buffer:
                     try:
                         recent_notes = self.fub.get_notes(person_id, limit=5)
-                        # If ALL recent post-creation notes are automation notes, don't count as touched
                         human_notes = [
                             n for n in recent_notes
                             if not str(n.get("subject") or n.get("title") or "").startswith("Automation:")
                             and parse_dt(n.get("createdAt") or n.get("created") or "") is not None
-                            and (parse_dt(n.get("createdAt") or n.get("created") or "") or created) > created + dt.timedelta(minutes=1)
+                            and (parse_dt(n.get("createdAt") or n.get("created") or "") or created) > created + buffer
                         ]
                         if human_notes:
                             return True
-                        # No human notes found — lastActivity was only automation notes, keep timer running
-                        LOGGER.info("lead_touched_after_creation: person %s lastActivity is automation-only, timer continues", person_id)
+                        # lastActivity moved but only automation notes — fall through to ungated check
+                        LOGGER.info("lead_touched_after_creation: person %s lastActivity moved but automation-only, checking notes directly", person_id)
                     except Exception as exc:
-                        LOGGER.warning("lead_touched_after_creation: could not fetch notes for person %s: %s", person_id, exc)
+                        LOGGER.warning("lead_touched_after_creation: could not fetch notes for person %s (fast-path): %s", person_id, exc)
                         # On API error, fall back to trusting the timestamp (safe default)
                         return True
+                    # Already fetched notes in this branch — skip the ungated check below
+                    # since we just verified there are no human notes
+                    return False
+
+        # 3. UNGATED notes check — FUB does NOT reliably bump lastX fields for
+        #    manual notes or unlogged calls. Always query notes directly.
+        try:
+            recent_notes = self.fub.get_notes(person_id, limit=10)
+            human_notes = [
+                n for n in recent_notes
+                if not str(n.get("subject") or n.get("title") or "").startswith("Automation:")
+                and parse_dt(n.get("createdAt") or n.get("created") or "") is not None
+                and (parse_dt(n.get("createdAt") or n.get("created") or "") or created) > created + buffer
+            ]
+            if human_notes:
+                LOGGER.info("lead_touched_after_creation: person %s has %d human note(s) post-creation (ungated check)", person_id, len(human_notes))
+                return True
+        except Exception as exc:
+            LOGGER.warning("lead_touched_after_creation: could not fetch notes for person %s (ungated): %s", person_id, exc)
+            # On API error, be safe — assume touched to avoid false reassignment
+            return True
 
         # NOTE: Do NOT use person.get("contacted") as a fallback here.
         # FUB sets contacted=true whenever ANY note is added to a lead, including
@@ -4836,7 +4863,7 @@ class RuleEngine:
         # the 60-min reassignment timer the moment the 30-min warning note is posted,
         # preventing reassignment from ever firing. Only explicit human actions
         # (calls, texts, emails, non-automation notes) count as a qualifying touch.
-                return False
+        return False
 
     def scan_reply_detection(self) -> None:
         """Scans leads that received a bot email in the last 7 days for incoming replies.
