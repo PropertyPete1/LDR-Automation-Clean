@@ -110,3 +110,34 @@
 1. **Fail-closed deal protection** on API error in both languages (~30 min) — closes the last silent-fail-open in a send-blocking check.
 2. **DSN mailbox poller for bounces** (~half day) — replaces the broken-by-design emEvents detector; reuses existing `bounced` tag semantics.
 3. **`legacyRetired` atomic cutover flag** (~1 h + migration) — makes legacy→engine agent handoff a single safe DB write and unblocks retiring the seven hardcoded bot files.
+
+---
+
+# Session 3 — Registry Propagation / Access Control / Cleanup (2026-07-21)
+
+## Registry Propagation — **Golden Rule: MET** (9.5/10)
+
+nurture-dashboard was already dynamic (`b564101`); lifestyle-bot-dashboard was NOT — it carried three hardcoded agent maps. All fixed in `038bfcb`.
+
+### 1a — Every hardcoded agent list found (both projects)
+| Location | Was | Verdict |
+|---|---|---|
+| nurture-dashboard `agentRegistry.ts` / `dashboardData.ts` / client pages | dynamic via `getActiveAgents()` (FUB users) | **PASS** (Manus's claim verified) |
+| nurture-dashboard `SmsQueue.tsx` / `dashboardData.ts:1261` `"Peter"` | pond-section agent name | **PASS** — pond leads are all Peter's (FUB 2); legitimate one-off, not a roster |
+| lifestyle-bot-dashboard `botHelpers.ts` `POWER_QUEUE_AGENT_NAME` (8-agent Record) | hardcoded map, Jason absent | **FIXED** → `resolveAgentBotRow` + `derivePowerQueueName` |
+| lifestyle-bot-dashboard `botHelpers.ts` `AGENT_DASHBOARD_SLUG` (8-agent Record) | hardcoded map | **FIXED** → `deriveDashboardSlug` |
+| lifestyle-bot-dashboard `botMonitor.ts` `ALL_BOTS` (8-bot array) | hardcoded list | **FIXED** → `getAllBots` + `buildWatchedBotList` |
+| lifestyle-bot-dashboard legacy `tiffanyBot.ts` … `AGENT_FIRST` | single-agent const per legacy file | **PASS (legacy)** — each hardcoded file owns one agent; slated for retirement (Job 3 flags) |
+| lifestyle-bot-dashboard `routers.ts:454` Rue→Stefanie | one-off alias | **PASS** — business rule, mirrors Maria→Laila |
+
+### 1b — lifestyle-bot-dashboard specifics
+- `POWER_QUEUE_AGENT_NAME`: **was hardcoded without Jason → now dynamic** (reads agent_bots; legacy map is fallback-only).
+- `AGENT_DASHBOARD_SLUG`: **was hardcoded → now dynamic.**
+- Bot Monitor watched list: **was hardcoded (Jason had been manually patched in) → now dynamic** from agent_bots.
+- Jason's clock-in: verified → `derivePowerQueueName({botSlug:jason, powerQueueName:null, agentFirstName:Jason})` = `"Jason"` → `fub-nurture-phfprjui.manus.space/sms-queue?agent=Jason`. ✅
+- Maria→Laila alias: **test added** (`nurture-dashboard/server/agentRegistry.test.ts`), asserts the alias and that it correctly does NOT fire when Laila is absent.
+
+### 1c — Golden Rule test (TestAgent)
+`registryPropagation.test.ts` proves a brand-new `testagent` row propagates to: Power Queue link (`derivePowerQueueName`), dashboard slug (`deriveDashboardSlug`), and Bot Monitor watched list (`buildWatchedBotList`) with zero code change. Unit-level (the mirror has no live MySQL). **Requires human verification:** insert a real `testagent` row in the live DB, confirm it appears in the Power Queue dropdown + monitor email, then delete the row.
+
+**Score 9.5/10** — full dynamic propagation with tests; −0.5 because the live DB round-trip is unverifiable from the repo mirror.
