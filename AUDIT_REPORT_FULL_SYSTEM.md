@@ -172,3 +172,65 @@ Cross-agent lead data on `getPendingQueue` and the pond list — an agent can no
 
 ### Pre-existing test note
 `fub.procedures.test.ts` has 6 failures that **pre-date this work** (identical with my changes stashed): `logSentNote` and `getPendingQueue` pagination tests need a live FUB fetch mock that the repo mirror doesn't provide (`Cannot read properties of undefined (reading 'ok')`). Not introduced by Job 2; flagged for the harness owner.
+
+## Cleanup — conservative deletions + honest flags (8.5/10)
+
+### 3a — Dead code deleted
+| Item | Reason | Commit |
+|---|---|---|
+| `botHelpers.ts` "Launch Day Only" block: `INTRO_LAUNCH_DATE`, `isLaunchDay()`, `BOT_INTRO_COPY`, `sendBotIntroEmail()` (−294 lines) | Superseded by `botEngineIntro.ts` (data-driven, LLM-generated); launch date 2026-06-15 long past; referenced only in one comment; wired to no route/scheduler | `2414991` |
+| `lifestyle-bot-dashboard/todo.md` | Planning file; repo rule forbids them (removed once in `0eaa00f`, slipped back in `42f1651`) | `2414991` |
+
+### 3a — Flagged, NOT deleted (still active — conservative)
+- **Legacy per-agent bot files** (`tiffanyBot.ts`, `stefanieBot.ts`, `abbyBot.ts`, `irmaBot.ts`, `lailaBot.ts`, `spBot.ts`): each is still imported by `scheduledHandlers.ts` and still runs today (only Jason is on the engine). **Not dead.** Retire them only via the `legacyRetired` atomic-cutover mechanism (Part 0 recommendation).
+- **`nurture-dashboard/server/_core/llm.ts` is still the Forge client** (`forge.manus.im`) and is **heavily used** — `memoryLayer`, `routers` (ai.chat / ai.draftReply / dailyBriefing), `replyIntentHandler`, `lifestyleBot`, `pondNurture`, `nightlyHealer`, `_core/index.ts`. Only `ai.draftSms` was rewired to Anthropic (`13efb0d`). **This is a real finding, not a Job-3 deletion:** most nurture-dashboard AI features still route through the retired Forge gateway. Rewiring is a functional change (out of Job 3 scope) — flagged for a follow-up like the lifestyle-bot-dashboard rewire.
+- **`/home/ubuntu/...` paths** in nurture-dashboard (`dashboardData.ts`, `_core/index.ts`, `routers.ts`, `vite.config.ts`): these are the **live Manus host filesystem paths** the deployed dashboard reads (sqlite, clicks.json, PDFs). Active deployment config, not dead code — left intact.
+
+### 3a — Routes/endpoints
+- **`/api/scheduled/pond-nurture`** (nurture-dashboard `_core/index.ts`) calls `runPondNurture()` — a TS pond-nurture path that still exists even though the README says pond nurture runs from GitHub Actions Python. **Flagged as a potential duplicate-send hazard** (same class as the Jul 17 8th-bot incident): if any cron still hits this endpoint, pond leads get emailed by both the Python workflow and this TS route. Whether a cron calls it is a Manus-console question not visible from the repo — **requires human verification.**
+
+### 3b — Legacy data structures
+- **`pond_nurture_log`: the brief's premise ("no longer read by anything") is FACTUALLY INCORRECT.** It is read (cadence dedup), written, and pruned by `pondNurture.ts` + `db.ts`, and `pondNurture.ts` is wired to the live `/api/scheduled/pond-nurture` route. **Dropping it would break dedup and risk duplicate pond emails — NOT dropped.**
+- Other schema tables (`leadSnoozes`, `smsDraftCache`, `queueActions`, `speedToLeadTimers`, `pondPromotionLog`, `replyIntentProcessed`): all reachable through `db.ts` wrapper functions used by active routers. **None are dead; none dropped.**
+- No stale migrations dropped (the tables they create are all live).
+
+### 3c — Snapshot hygiene
+`agent_bots_snapshot.json` = 8 rows (tiffany, stefanie, abby, irma, laila, jason, sp500_peter, sp500_steven), exactly one `engineActive` (jason). Matches the documented 8-row state and the schema (snapshot fields ⊆ `agent_bots` columns). **Live-DB comparison requires human verification** (no MySQL access from the mirror).
+
+### 3d — Dead dependencies (LISTED, not removed — per instructions)
+Heuristic candidates after removing confirmed false positives (`nodemailer` — dynamic `await import`; `dotenv` — `import "dotenv/config"`; `tailwindcss-animate` — Tailwind config plugin):
+
+| Package | Projects | Note |
+|---|---|---|
+| `framer-motion` | both | no import found in server/client/shared |
+| `date-fns` | nurture | no import found |
+| `@hookform/resolvers` | both | no import found (pairs with react-hook-form; verify no form uses it) |
+| `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner` | both | nurture-dashboard has no S3 usage; lifestyle-bot uses them in `storage.ts` — keep there |
+
+**Not removed** — some may be pulled in by shadcn/ui generated components or kept intentionally; removing from a deployment mirror risks breaking the build. Recommend the human confirm with `depcheck` on the live tree before pruning.
+
+### 3e — README
+Fixed the stale "7 AI bots" / "7 agent bots" count (components table, System 3 heading+body, nightly-health description, healer-observations line, architecture diagram) → now describes the data-driven `agent_bots` registry (original agents via per-agent files, new agents like Jason via the engine). **Left the Migration History (CC2 cutover dates) intact** — accurate historical record, not a stale feature claim.
+
+**Score 8.5/10** — every genuinely-dead item removed and every ambiguous one correctly flagged rather than deleted; −1.5 because two brief premises were wrong (pond_nurture_log is live; the Forge gateway is still the nurture-dashboard's main LLM path), which are findings to escalate rather than clean.
+
+---
+
+## Session 3 — Requires human verification
+1. **Deploy** lifestyle-bot-dashboard (registry-dynamic + cleanup) and nurture-dashboard (access control) with this session's commits.
+2. **Browser login test (access control):** non-admin agent → only own leads, no "All Agents" dropdown, own heat tile only, no pond section; Peter/Steven → full dropdown + all agents + pond.
+3. **Golden Rule live:** insert a `testagent` row in the live `agent_bots`, confirm it appears in the Power Queue link + Bot Monitor email with no deploy, then delete the row.
+4. **`/api/scheduled/pond-nurture`:** confirm NO cron hits this TS endpoint (pond nurture must run only from the GitHub Actions Python workflow) — else duplicate pond sends.
+5. **`users.role`/email mapping:** confirm deployed dashboard `users` rows resolve agents to their roster identity (admin bridge is email/FUB-id, since `users` has no FUB-id column).
+6. **agent_bots_snapshot.json vs live DB:** confirm the 8-row snapshot still matches production.
+
+## Session 3 — What needs deploying
+- **lifestyle-bot-dashboard:** `botHelpers.ts` (dynamic PQ/slug resolution), `botMonitor.ts` (dynamic watched list), `botEngine.ts` (botSlug in clock-in), intro-block/todo removal. Deploy to `lifestyledash-wpnl8v84.manus.space`.
+- **nurture-dashboard:** `agentRegistry.ts` (`resolveQueueViewer`), `routers.ts` (protected getPendingQueue/getPondSmsLeads), `SmsQueue.tsx` + `AgentCopilot.tsx` (server-driven lock). Deploy to `fub-nurture-phfprjui.manus.space`.
+
+## Session 3 — Scores
+| Job | Score |
+|---|---|
+| Registry Propagation | 9.5/10 |
+| Access Control | 9/10 |
+| Cleanup | 8.5/10 |
