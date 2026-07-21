@@ -146,6 +146,11 @@ const SMTP_USER = process.env.SMTP_USER ?? "";
 const SMTP_PASSWORD = process.env.SMTP_PASSWORD ?? "";
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "peter@lifestyledesignrealty.com";
 
+/** Lead-facing From address — verified alias on the peter@ Google Workspace account */
+export const TEAM_EMAIL = "team@lifestyledesignrealty.com";
+/** Reply-To for all lead-facing emails — replies land in Peter's inbox for hot-reply pipeline */
+export const LEAD_REPLY_TO = "peter@lifestyledesignrealty.com";
+
 // Always CC Peter + Steven on every bot clock email
 export const PETER_EMAIL = "peter@lifestyledesignrealty.com";
 export const STEVEN_EMAIL = "steven@lifestyledesignrealty.com";
@@ -1315,10 +1320,11 @@ export async function sendLeadFollowUpEmail(opts: {
   `;
 
   await sendEmail({
-    from: `${agentFirstName} | Lifestyle Design Realty <${agentEmail}>`,
+    from: `${agentFirstName} | Lifestyle Design Realty <${TEAM_EMAIL}>`,
     to: leadEmail,
     subject,
     html,
+    replyTo: LEAD_REPLY_TO,
     bcc: PETER_EMAIL,
   });
 }

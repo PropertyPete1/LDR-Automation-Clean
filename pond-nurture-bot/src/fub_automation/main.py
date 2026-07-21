@@ -104,6 +104,7 @@ class Rules:
     peter_user_id: Optional[int]
     peter_name: str
     owner_email: str
+    team_email: str  # Lead-facing From address (verified alias on peter@ GWS)
     company_name: str
     company_address: str
     default_agent_reminder_cc: Optional[str]
@@ -205,6 +206,7 @@ class Rules:
             peter_user_id=data.get("peter_user_id"),
             peter_name=data.get("peter_name", "Peter Allen"),
             owner_email=data.get("owner_email", "peter@lifestyledesignrealty.com"),
+            team_email=data.get("team_email", "team@lifestyledesignrealty.com"),
             company_name=data.get("company_name", "Lifestyle Design Realty"),
             company_address=data.get("company_address", "Configure company postal address"),
             default_agent_reminder_cc=data.get("default_agent_reminder_cc"),
@@ -1832,15 +1834,14 @@ class RuleEngine:
         if not email_body:
             self.db.log("closed_congrats", "error", person_id, {"reason": "empty LLM response"})
             return "error"
-
         full_body = append_email_footer(email_body, self.rules)
-        from_email = self.rules.owner_email
-
+        from_display = f"Peter | Lifestyle Design Realty <{self.rules.team_email}>"
         self.email.send(
             to_email=to_email,
             subject=subject,
             body=full_body,
-            from_email=from_email,
+            from_email=from_display,
+            reply_to=self.rules.owner_email,
         )
 
         # Log the note in FUB
@@ -2017,10 +2018,9 @@ class RuleEngine:
             to_email,
             generated["subject"],
             append_email_footer(generated["email_body"], self.rules),
-            from_email=self.rules.owner_email,
+            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
         )
-
         # Log a note in FUB
         try:
             note_body = (
@@ -2164,10 +2164,9 @@ class RuleEngine:
             to_email,
             subject,
             append_email_footer(email_body, self.rules),
-            from_email=self.rules.owner_email,
+            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
         )
-
         # Log a FUB note
         try:
             fub_note = (
@@ -3312,7 +3311,7 @@ class RuleEngine:
 
         # Send both plain text and HTML versions
         # Per-bot From-name: "AgentFirstName | Lifestyle Design Realty"
-        from_display = f"{first_name} | Lifestyle Design Realty <{self.rules.owner_email}>"
+        from_display = f"{first_name} | Lifestyle Design Realty <{self.rules.team_email}>"
         self.email.send(
             to_email=to_email,
             subject=subject,
@@ -3517,15 +3516,15 @@ class RuleEngine:
         )
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
-            sender_email = self.rules.owner_email
+            from_display = f"Peter | Lifestyle Design Realty <{self.rules.team_email}>"
             to_email = emails[0].get("value") or emails[0].get("email")
             if to_email:
                 self.email.send(
                     to_email,
                     generated["subject"],
                     append_email_footer(generated["email_body"], self.rules),
-                    from_email=sender_email,
-                    reply_to=sender_email,
+                    from_email=from_display,
+                    reply_to=self.rules.owner_email,
                 )
                 sent_channels.append("email")
         if self.rules.pond_nurture_sms_enabled and not self.has_any_tag(person, self.rules.sms_opt_out_tags):
@@ -4734,16 +4733,15 @@ class RuleEngine:
                 _agent_user = self.user_cache_by_id().get(int(_assigned_uid), {})
                 _agent_name = _agent_user.get("name") or _agent_user.get("firstName") or ""
                 _agent_first = str(_agent_name).strip().split()[0] if str(_agent_name).strip() else "Peter"
-            from_display = f"{_agent_first} | Lifestyle Design Realty <{sender_email}>"
-            
+            from_display = f"{_agent_first} | Lifestyle Design Realty <{self.rules.team_email}>"
             if to_email:
                 self.email.send(
                     to_email,
                     generated["subject"],
                     append_email_footer(generated["email_body"], self.rules),
                     from_email=from_display,
-                    reply_to=sender_email,
-                    bcc=[self.rules.owner_email] if sender_email.lower() != self.rules.owner_email.lower() else [],
+                    reply_to=self.rules.owner_email,
+                    bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
                 )
                 
                 # Log a note in FUB so agents can see the welcome email went out

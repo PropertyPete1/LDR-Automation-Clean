@@ -5,6 +5,7 @@
 company_name: "Lifestyle Design Realty"
 company_address: "1209 S Saint Marys St #232, San Antonio, TX 78210"
 owner_email: "peter@lifestyledesignrealty.com"
+team_email: "team@lifestyledesignrealty.com"  # Lead-facing From address (verified alias on peter@ GWS)
 default_agent_reminder_cc: "peter@lifestyledesignrealty.com"
 # Agent reminder digest emails: DISABLED — replaced by Lifestyle Bot clock-in/clock-out emails.
 agent_reminder_emails_enabled: true
