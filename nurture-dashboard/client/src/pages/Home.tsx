@@ -52,15 +52,8 @@ import LifestyleBotPanel from "@/components/LifestyleBotPanel";
 // Gold-forward chart palette
 const COLORS = ["#C9A84C", "#10B981", "#818CF8", "#F87171", "#34D399", "#FBBF24", "#60A5FA"];
 
-const AGENT_GRADIENTS: Record<string, string> = {
-  peter:    "from-amber-500 to-amber-700",
-  steven:   "from-blue-500 to-blue-700",
-  tiffany:  "from-violet-500 to-violet-700",
-  stefanie: "from-rose-500 to-rose-700",
-  abby:     "from-emerald-500 to-emerald-700",
-  irma:     "from-orange-500 to-orange-700",
-  laila:    "from-cyan-500 to-cyan-700",
-};
+// Dynamic: gradients derived from shared/agentColors.ts (Golden Rule — no hardcoded names)
+import { getAgentGradient } from "@shared/agentColors";
 
 // Shared dark tooltip style for all Recharts
 const CHART_TOOLTIP = {
@@ -417,7 +410,7 @@ export default function Home() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {rosterData.roster.map((agent) => {
                 const isOwner = agent.slug === "peter";
-                const gradient = AGENT_GRADIENTS[agent.slug] ?? "from-slate-500 to-slate-700";
+                const gradient = getAgentGradient(agent.slug);
                 const urgencyBorder = agent.do_now > 5
                   ? "border-red-500/40 shadow-[0_0_16px_rgba(239,68,68,0.12)]"
                   : agent.do_now > 0

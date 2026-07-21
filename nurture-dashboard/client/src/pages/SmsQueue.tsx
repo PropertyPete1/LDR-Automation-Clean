@@ -40,7 +40,7 @@ interface PendingLead {
   last_contact_type?: string;
 }
 
-const ROSTER_AGENT_NAMES = ["Peter", "Steven", "Tiffany", "Stefanie", "Abby", "Irma", "Laila"];
+// ROSTER_AGENT_NAMES is now dynamic — fetched from trpc.agent.getRoster (Golden Rule)
 const EXCLUDED_AGENT_NAMES = new Set(["luke", "bebe"]);
 // Peter is the pond owner — stale leads get reassigned to him, so his leads = pond leads
 const POND_OWNER = "peter";
@@ -194,6 +194,13 @@ export default function SmsQueue() {
   const [snoozePopoverOpen, setSnoozePopoverOpen] = useState<number | null>(null);
   const [customSnoozeDate, setCustomSnoozeDate] = useState<Date | undefined>(undefined);
 
+  // Dynamic roster — replaces hardcoded ROSTER_AGENT_NAMES (Golden Rule)
+  const { data: rosterData } = trpc.agent.getRoster.useQuery(undefined, { staleTime: 10 * 60_000 });
+  const ROSTER_AGENT_NAMES = useMemo(() => {
+    if (!rosterData?.roster) return [];
+    return rosterData.roster.map(a => a.name);
+  }, [rosterData]);
+
   const { data: queueData, isLoading: queueLoading, error: queueError, refetch, dataUpdatedAt } =
     trpc.fub.getPendingQueue.useQuery(
       // Pass lockedAgent as agentFilter so the SERVER only returns that agent's leads.
@@ -305,7 +312,7 @@ export default function SmsQueue() {
       .filter(a => a && !EXCLUDED_AGENT_NAMES.has(a.toLowerCase()));
     const merged = Array.from(new Set([...ROSTER_AGENT_NAMES, ...liveAgents]));
     return merged.filter(Boolean);
-  }, [leads]);
+  }, [leads, ROSTER_AGENT_NAMES]);
 
   const filteredLeads = useMemo(() => leads.filter(lead => {
     // Never show snoozed leads (hidden for today via sessionStorage)
@@ -350,7 +357,7 @@ export default function SmsQueue() {
         rate: s.total > 0 ? Math.round((s.texted / s.total) * 100) : 0,
       }))
       .sort((a, b) => b.rate - a.rate || a.agent.localeCompare(b.agent));
-  }, [leads, textedLeads]);
+  }, [leads, textedLeads, ROSTER_AGENT_NAMES]);
 
   const totalTexted = Object.keys(textedLeads).filter(id =>
     leads.some(l => l.id === Number(id))

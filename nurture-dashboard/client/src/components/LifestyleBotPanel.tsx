@@ -7,16 +7,9 @@ import { toast } from "sonner";
 import { Bot, Zap, RefreshCw, TrendingUp, MessageSquare, Users, Clock, ChevronDown, ChevronUp, CheckCircle, AlertCircle, Mail, Activity, Search, ShieldCheck, TriangleAlert, Wrench, Eye, Radio } from "lucide-react";
 
 // ── Colour map per agent ────────────────────────────────────────────────────
-const AGENT_COLORS: Record<string, { bar: string; text: string; bg: string }> = {
-  "Peter":         { bar: "bg-amber-500",   text: "text-amber-400",   bg: "bg-amber-500/8 border-amber-500/20" },
-  "Steven":        { bar: "bg-blue-500",    text: "text-blue-400",    bg: "bg-blue-500/8 border-blue-500/20" },
-  "Tiffany":       { bar: "bg-violet-500",  text: "text-violet-400",  bg: "bg-violet-500/8 border-violet-500/20" },
-  "Stefanie":      { bar: "bg-rose-500",    text: "text-rose-400",    bg: "bg-rose-500/8 border-rose-500/20" },
-  "Abby":          { bar: "bg-emerald-500", text: "text-emerald-400", bg: "bg-emerald-500/8 border-emerald-500/20" },
-  "Irma":          { bar: "bg-orange-500",  text: "text-orange-400",  bg: "bg-orange-500/8 border-orange-500/20" },
-  "Laila":         { bar: "bg-cyan-500",    text: "text-cyan-400",    bg: "bg-cyan-500/8 border-cyan-500/20" },
-  "Lifestyle Bot": { bar: "bg-purple-500",  text: "text-purple-400",  bg: "bg-purple-500/8 border-purple-500/20" },
-};
+// Dynamic: colours derived from shared/agentColors.ts (Golden Rule — no hardcoded names)
+import { getAgentColors } from "@shared/agentColors";
+const LIFESTYLE_BOT_COLORS = { bar: "bg-purple-500", text: "text-purple-400", bg: "bg-purple-500/8 border-purple-500/20" };
 
 // ── Types ───────────────────────────────────────────────────────────────────
 interface RunRecord {
@@ -417,7 +410,7 @@ export default function LifestyleBotPanel() {
                   return b.todayCount - a.todayCount;
                 })
                 .map((agent) => {
-                  const colors = AGENT_COLORS[agent.name] ?? { bar: "bg-stone-400", text: "text-muted-foreground", bg: "bg-card/4 border-white/8" };
+                  const colors = agent.isBot ? LIFESTYLE_BOT_COLORS : getAgentColors(agent.name);
                    const agentGoal = agent.goal || 10;
                   const pct = Math.min(100, Math.round((agent.todayCount / agentGoal) * 100));
                   const hitGoal = agent.todayCount >= agentGoal;
@@ -434,15 +427,7 @@ export default function LifestyleBotPanel() {
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${
                           agent.isBot
                             ? "bg-gradient-to-br from-purple-600 to-purple-800 text-white"
-                            : `bg-gradient-to-br ${
-                                agent.name === "Peter" ? "from-yellow-500 to-amber-700" :
-                                agent.name === "Steven" ? "from-blue-600 to-blue-800" :
-                                agent.name === "Tiffany" ? "from-violet-600 to-violet-800" :
-                                agent.name === "Stefanie" ? "from-rose-600 to-rose-800" :
-                                agent.name === "Abby" ? "from-emerald-600 to-emerald-800" :
-                                agent.name === "Irma" ? "from-amber-600 to-amber-800" :
-                                "from-cyan-600 to-cyan-800"
-                              } text-white`
+                            : `bg-gradient-to-br ${getAgentColors(agent.name).avatar} text-white`
                         }`}>
                           {initials}
                         </div>

@@ -16,6 +16,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { generatePersonalizedSms, makeSmsUri } from "./smsHelpers";
 import { getSmsSentByAgent } from "./db";
+import { getActiveAgents, getAgentFirstNames, getRosterAgents, clearRegistryCache } from "./agentRegistry";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,7 +30,7 @@ const ROSTER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes — roster is slow due
 let dashboardCache: { data: DashboardStats; ts: number } | null = null;
 let queueCache: { data: PendingQueueItem[]; ts: number } | null = null;
 let rosterCache: { data: AgentRosterEntry[]; ts: number } | null = null;
-export function clearRosterCache() { rosterCache = null; }
+export function clearRosterCache() { rosterCache = null; clearRegistryCache(); }
 export function clearQueueCache() { queueCache = null; }
 export function clearDashboardCache() { dashboardCache = null; }
 
@@ -340,11 +341,11 @@ export async function getDashboardStats(_fubApiKey: string): Promise<DashboardSt
 
   // Layer in live agent click data — merge DB (sms_sent_today) + legacy clicks.json
   try {
-    // Build a name-normalizer: "peter" → "Peter" (or full name if available) using ROSTER_AGENTS
+    // Build a name-normalizer: "peter" → "Peter" (or full name if available) using dynamic registry
+    const dynamicAgents = await getActiveAgents();
     const rosterNames: Record<string, string> = {};
-    for (const a of ROSTER_AGENTS) {
-      const firstName = a.name.toLowerCase();
-      rosterNames[firstName] = a.name;
+    for (const a of dynamicAgents) {
+      rosterNames[a.slug] = a.name;
     }
     const normalizeName = (raw: string): string => {
       const trimmed = (raw || "Unknown Agent").trim();
@@ -480,9 +481,9 @@ export async function getPendingQueue(fubApiKey: string, agentFilter?: string): 
   // 7 agents × 1 call each = 7 calls (well within FUB rate limits when staggered).
   //
   // Agent roster with FUB user IDs (resolved from usersMap above).
-  // All 7 agents including Peter. The pond is named after Peter but he is also an active agent
-  // with his own assigned leads in the 1-20 day window.
-  const AGENT_FIRST_NAMES = ["peter", "steven", "tiffany", "stefanie", "abby", "irma", "laila"];
+  // Dynamic: get active agent first names from FUB users via agentRegistry (Golden Rule)
+  const activeAgents = await getActiveAgents(fubGet, fubApiKey);
+  const AGENT_FIRST_NAMES = getAgentFirstNames(activeAgents);
   const agentUserIds: number[] = [];
   for (const [uid, info] of Object.entries(usersMap)) {
     const first = (info.firstName || info.name.split(" ")[0] || "").toLowerCase();
@@ -1014,15 +1015,8 @@ export interface AgentRosterEntry {
   last_active_lead_days: number | null; // days since most recently stale lead was touched
 }
 
-const ROSTER_AGENTS = [
-  { name: "Peter",    slug: "peter",    role: "Realtor & Owner" },
-  { name: "Steven",   slug: "steven",   role: "Broker & Owner" },
-  { name: "Tiffany",  slug: "tiffany",  role: "Austin" },
-  { name: "Stefanie", slug: "stefanie", role: "San Antonio" },
-  { name: "Abby",     slug: "abby",     role: "Austin" },
-  { name: "Irma",     slug: "irma",     role: "DFW" },
-  { name: "Laila",    slug: "laila",    role: "San Antonio" },
-];
+// ROSTER_AGENTS is now dynamic — built from FUB users via agentRegistry.ts
+// Golden Rule: adding a new agent to FUB automatically propagates here with zero code changes.
 
 export async function getAgentRoster(fubApiKey: string): Promise<AgentRosterEntry[]> {
   // Serve from cache if fresh
@@ -1057,6 +1051,8 @@ export async function getAgentRoster(fubApiKey: string): Promise<AgentRosterEntr
 
   // Fetch each agent sequentially with a 1.5s stagger.
   // Each agent makes 4 fast metadata-only FUB calls (limit=1) for exact counts.
+  // Dynamic: build roster from FUB users via agentRegistry (Golden Rule)
+  const ROSTER_AGENTS = getRosterAgents(await getActiveAgents(fubGet, fubApiKey));
   const roster: AgentRosterEntry[] = [];
   for (const agent of ROSTER_AGENTS) {
     const uid = nameToId[agent.name.toLowerCase()];

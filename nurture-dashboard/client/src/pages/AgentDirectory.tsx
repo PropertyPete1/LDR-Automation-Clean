@@ -5,18 +5,20 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 
-// Active roster — Peter (Broker/Owner) first, then agents
-const AGENTS = [
-  { name: "Peter",    initial: "P", color: "from-yellow-500 to-amber-700",  role: "Broker / Owner", isOwner: true },
-  { name: "Steven",   initial: "S", color: "from-blue-600 to-blue-800",   role: "Senior Agent", isOwner: false },
-  { name: "Tiffany",  initial: "T", color: "from-purple-600 to-purple-800", role: "Agent", isOwner: false },
-  { name: "Stefanie", initial: "S", color: "from-rose-600 to-rose-800",    role: "Agent", isOwner: false },
-  { name: "Abby",     initial: "A", color: "from-emerald-600 to-emerald-800", role: "Agent", isOwner: false },
-  { name: "Irma",     initial: "I", color: "from-amber-600 to-amber-800",  role: "Agent", isOwner: false },
-  { name: "Laila",    initial: "L", color: "from-teal-600 to-teal-800",    role: "Agent", isOwner: false },
-];
+// Dynamic: roster from trpc.agent.getRoster (Golden Rule — no hardcoded names)
+import { trpc } from "@/lib/trpc";
+import { getAgentAvatarGradient } from "@shared/agentColors";
 
 export default function AgentDirectory() {
+  const { data: rosterData } = trpc.agent.getRoster.useQuery(undefined, { staleTime: 10 * 60_000 });
+  const AGENTS = (rosterData?.roster ?? []).map(a => ({
+    name: a.name,
+    initial: a.name.charAt(0).toUpperCase(),
+    color: getAgentAvatarGradient(a.slug),
+    role: a.slug === "peter" ? "Broker / Owner" : "Agent",
+    isOwner: a.slug === "peter",
+  }));
+
   return (
     <div className="min-h-screen bg-background gold-glow-bg pb-16">
       {/* ── Header ── */}
@@ -49,7 +51,7 @@ export default function AgentDirectory() {
               Bot Dashboard
             </a>
             <Badge className="bg-[oklch(0.76_0.14_78/10%)] text-[oklch(0.76_0.14_78)] border border-[oklch(0.76_0.14_78/25%)] hover:bg-[oklch(0.76_0.14_78/15%)] text-[10px] px-2 py-0.5 font-mono">
-              {AGENTS.length - 1} Agents + Broker
+              {AGENTS.length > 0 ? `${AGENTS.length - 1} Agents + Broker` : "Loading..."}
             </Badge>
           </div>
         </div>

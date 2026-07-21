@@ -20,6 +20,7 @@ import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance
 import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "./memoryLayer";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
+import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -260,22 +261,10 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { personId, messageBody, channel } = input;
 
-        // Normalize agentName against the known roster to prevent bad URL params
-        // (e.g. "Maria" from Laila's FUB full name "Laila Maria") from corrupting the DB.
-        // The roster maps every known first-name variant → canonical display name.
-        const AGENT_ROSTER_MAP: Record<string, string> = {
-          peter: "Peter",
-          steven: "Steven",
-          tiffany: "Tiffany",
-          stefanie: "Stefanie",
-          abby: "Abby",
-          irma: "Irma",
-          laila: "Laila",
-          // Laila's FUB last name — map it back to Laila
-          maria: "Laila",
-        };
+        // Dynamic: normalize agentName via agentRegistry (Golden Rule — no hardcoded names)
+        const activeAgents = await getActiveAgents();
         const rawName = input.agentName.trim();
-        const agentName = AGENT_ROSTER_MAP[rawName.toLowerCase()] ?? (rawName.charAt(0).toUpperCase() + rawName.slice(1));
+        const agentName = normalizeAgentName(rawName, activeAgents);
         const now = new Date().toLocaleDateString("en-US", {
           month: "numeric",
           day: "numeric",
@@ -330,12 +319,9 @@ export const appRouter = router({
         const db = await getDb();
         if (!db) return { ids: [] };
         const sentDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
-        // Normalize agentName to canonical form
-        const AGENT_MAP: Record<string, string> = {
-          peter: 'Peter', steven: 'Steven', tiffany: 'Tiffany',
-          stefanie: 'Stefanie', abby: 'Abby', irma: 'Irma', laila: 'Laila', maria: 'Laila',
-        };
-        const canonical = AGENT_MAP[input.agentName.toLowerCase()] ?? input.agentName;
+        // Dynamic: normalize agentName via agentRegistry (Golden Rule)
+        const agentsForNorm = await getActiveAgents();
+        const canonical = normalizeAgentName(input.agentName, agentsForNorm);
         const agentRows = await db
           .select({ personId: smsSentToday.personId })
           .from(smsSentToday)
@@ -940,7 +926,8 @@ Write a natural reply that addresses their message and keeps the conversation go
      */
     getStatus: publicProcedure
       .query(async () => {
-        const ROSTER = ["Peter", "Steven", "Tiffany", "Stefanie", "Abby", "Irma", "Laila", "Lifestyle Bot"];
+        // Dynamic: build ROSTER from FUB users via agentRegistry (Golden Rule)
+        const ROSTER = getBotStatusRoster(await getActiveAgents());
         // Agent goal is a soft target for Power Queue texts (not a hard cap).
         // Lifestyle Bot's standalone run is deprecated — Pond Nurture handles all emails now.
         // The bot's "goal" is informational only (shows Pond Nurture volume in its row).
