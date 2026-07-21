@@ -17,7 +17,7 @@ There are **four connected pieces** to this system:
 | --- | --- | --- |
 | **Python Automation (5 GitHub Actions workflows)** | Pond nurture emails, speed-to-lead, reply detection, nightly health, weekly digest | GitHub Actions on `PropertyPete1/LDR-Automation-Clean` |
 | **FUB Nurture Dashboard** | Web dashboard for the Power Queue (agents text leads) + health monitoring | Manus WebDev: `fub-nurture-phfprjui.manus.space` |
-| **Lifestyle Bot Dashboard** | Runs 7 AI bots that send lifestyle emails to all assigned leads | Manus WebDev: `lifestyledash-wpnl8v84.manus.space` |
+| **Lifestyle Bot Dashboard** | Runs per-agent AI bots (data-driven `agent_bots` registry) that send lifestyle emails to assigned leads | Manus WebDev: `lifestyledash-wpnl8v84.manus.space` |
 | **Nightly Health Report** | 4am email that checks every system and auto-fixes known errors | GitHub Actions (nightly-health.yml) |
 
 ---
@@ -111,16 +111,16 @@ The Power Queue shows every agent their leads in the 1–20 day stale window, so
 - **Priority Tier (Day 14–20):** Shown at the top with a fire badge. These are the leads the agent absolutely must text today.
 - **Available Tier (Day 1–13):** Shown after the priority leads.
 
-The dashboard also receives health observations from all 7 agent bots via a secure API (`/api/healer/observations`).
+The dashboard also receives health observations from all agent bots via a secure API (`/api/healer/observations`).
 
 ---
 
-## System 3 — Lifestyle Bot Dashboard (7 Agent Bots)
+## System 3 — Lifestyle Bot Dashboard (Agent Bots)
 
 **URL:** `lifestyledash-wpnl8v84.manus.space`
 **Hosting:** Manus WebDev (unchanged by cutover)
 
-Runs 7 AI bots that send lifestyle emails to every assigned lead, every day. Each bot sends up to 15 lifestyle emails per run. The emails are AI-written, reference the lead's most recent FUB note, and are personalized to each lead's context.
+Runs one AI bot per agent, driven by the `agent_bots` registry table. The original agents run via their per-agent bot files; newer agents (e.g. Jason) run on the data-driven engine (`engineActive=true`) — adding an agent needs no code change. Each bot sends up to 15 lifestyle emails per run. The emails are AI-written, reference the lead's most recent FUB note, and are personalized to each lead's context.
 
 ---
 
@@ -132,7 +132,7 @@ Runs 7 AI bots that send lifestyle emails to every assigned lead, every day. Eac
 This script is the watchdog for the entire stack. Every morning it:
 
 1. Reads the SQLite database for any Python automation errors from the last 24 hours.
-2. Calls the Lifestyle Bot Dashboard API to get the run status and any errors from all 7 agent bots.
+2. Calls the Lifestyle Bot Dashboard API to get the run status and any errors from all agent bots.
 3. Runs auto-fix logic on known fixable errors.
 4. Scans FUB Email Marketing Events API (`/v1/emEvents`) for bounces and unsubscribes.
 5. Scans inbound text messages for opt-out language.
@@ -186,7 +186,7 @@ FUB (Follow Up Boss)
        │         Weekly Digest: Monday 8am performance summary                    │
        │         State: encrypted SQLite on 'state' branch                        │
        │                                                                           │
-       ├─── Lifestyle Bot Dashboard (daily, 7 bots) ──────────────────────────────┤
+       ├─── Lifestyle Bot Dashboard (daily, N bots) ──────────────────────────────┤
        │         Each bot sends up to 15 lifestyle emails per day                 │
        │         Writes run_start / run_complete / bot_crash → bot_observations   │
        │         Hosting: Manus WebDev (lifestyledash-wpnl8v84.manus.space)       │
