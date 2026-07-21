@@ -100,12 +100,27 @@ export function clearRegistryCache(): void {
 }
 
 /**
+ * Known aliases: FUB sometimes exposes a user's middle/last name instead of their
+ * display first name. This map catches those cases.
+ * Key = alias (lowercase), Value = canonical slug.
+ */
+const AGENT_ALIASES: Record<string, string> = {
+  maria: "laila", // Laila's FUB full name includes "Maria"
+};
+
+/**
  * Normalize an agent name to its canonical display form.
- * Handles aliases (e.g., "Maria" → "Laila") by checking FUB user last names.
+ * Handles aliases (e.g., "Maria" → "Laila") via AGENT_ALIASES map.
  * Falls back to title-casing the input if no match found.
  */
 export function normalizeAgentName(raw: string, agents: AgentEntry[]): string {
   const lower = raw.trim().toLowerCase();
+  // Check alias map first
+  const aliasSlug = AGENT_ALIASES[lower];
+  if (aliasSlug) {
+    const aliased = agents.find(a => a.slug === aliasSlug);
+    if (aliased) return aliased.name;
+  }
   // Direct match by first name / slug
   const direct = agents.find(a => a.slug === lower || a.name.toLowerCase() === lower);
   if (direct) return direct.name;
