@@ -10,7 +10,12 @@ import { botRunLogs, botObservations } from "../drizzle/schema";
 import { desc, gte, eq, and } from "drizzle-orm";
 import { sendEmail, PETER_EMAIL, STEVEN_EMAIL } from "./botHelpers";
 
-const ALL_BOTS = [
+/**
+ * LEGACY FALLBACK ONLY — used when the agent_bots table is unreachable.
+ * The live watched-bot list is built dynamically from agent_bots
+ * (Golden Rule: a new agent row is monitored with zero code changes).
+ */
+const ALL_BOTS_FALLBACK = [
   { slug: "sp500_peter",  name: "S&P500 Lifestyle Bot (Peter)" },
   { slug: "sp500_steven", name: "S&P500 Lifestyle Bot (Steven)" },
   { slug: "tiffany",     name: "Tiffany's Lifestyle Bot" },
@@ -20,6 +25,27 @@ const ALL_BOTS = [
   { slug: "laila",       name: "Laila's Lifestyle Bot" },
   { slug: "jason",       name: "Jason's Lifestyle Bot" },
 ];
+
+/** Pure mapper (exported for tests): agent_bots rows → watched bot list */
+export function buildWatchedBotList(
+  rows: Array<{ botSlug: string; botName: string }>
+): Array<{ slug: string; name: string }> {
+  if (!rows.length) return ALL_BOTS_FALLBACK;
+  return rows.map(r => ({ slug: r.botSlug, name: r.botName }));
+}
+
+/** Dynamic watched-bot list from the agent_bots table (fallback to static). */
+async function getAllBots(): Promise<Array<{ slug: string; name: string }>> {
+  try {
+    const db = await getDb();
+    if (!db) return ALL_BOTS_FALLBACK;
+    const { agentBots } = await import("../drizzle/schema");
+    const rows = await db.select().from(agentBots);
+    return buildWatchedBotList(rows);
+  } catch {
+    return ALL_BOTS_FALLBACK;
+  }
+}
 
 export interface BotHealthResult {
   slug: string;
@@ -34,14 +60,15 @@ export interface BotHealthResult {
 
 export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
   const db = await getDb();
-  if (!db) return ALL_BOTS.map(b => ({ ...b, lastRanAt: null, sent: 0, errored: 0, skipped: 0, status: "not_run" as const, ranToday: false }));
+  const allBots = await getAllBots();
+  if (!db) return allBots.map(b => ({ ...b, lastRanAt: null, sent: 0, errored: 0, skipped: 0, status: "not_run" as const, ranToday: false }));
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
 
   const results: BotHealthResult[] = [];
 
-  for (const bot of ALL_BOTS) {
+  for (const bot of allBots) {
     // Get the most recent run for this bot
     const [lastRun] = await db
       .select()

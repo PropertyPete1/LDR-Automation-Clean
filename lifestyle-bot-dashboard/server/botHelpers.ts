@@ -1377,10 +1377,12 @@ const NEW_DASHBOARD_BASE = "https://lifestyledash-wpnl8v84.manus.space";
 const LEADER_AGENTS = new Set(["peter", "steven", "stefanie", "rue"]);
 
 /**
- * Maps agent first name (lowercase) to their bot slug on the new Lifestyle Bot Dashboard.
- * Leaders get the full dashboard (/), non-leaders get /agent/:slug.
+ * LEGACY FALLBACK ONLY — used when the agent_bots table is unreachable or has
+ * no row for the agent (e.g. legacy "Rue" alias). The live source of truth is
+ * the agent_bots table (Golden Rule: new agents propagate with zero code
+ * changes via resolveAgentBotRow below).
  */
-const AGENT_DASHBOARD_SLUG: Record<string, string> = {
+const AGENT_DASHBOARD_SLUG_FALLBACK: Record<string, string> = {
   peter: "peter",
   steven: "steven",
   tiffany: "tiffany",
@@ -1391,8 +1393,8 @@ const AGENT_DASHBOARD_SLUG: Record<string, string> = {
   laila: "laila",
 };
 
-/** Maps bot agentFirstName (lowercase) to the FUB display name used by the Power Queue ?agent= filter */
-const POWER_QUEUE_AGENT_NAME: Record<string, string> = {
+/** LEGACY FALLBACK ONLY — see AGENT_DASHBOARD_SLUG_FALLBACK note above. */
+const POWER_QUEUE_AGENT_NAME_FALLBACK: Record<string, string> = {
   peter: "Peter",
   steven: "Steven",
   tiffany: "Tiffany",
@@ -1402,6 +1404,61 @@ const POWER_QUEUE_AGENT_NAME: Record<string, string> = {
   irma: "Irma",
   laila: "Laila",
 };
+
+/**
+ * Dynamic agent lookup (Golden Rule): resolve the agent_bots row for an agent
+ * first name. Any agent added to agent_bots automatically gets a correct
+ * Power Queue link and dashboard slug with zero code changes.
+ */
+export async function resolveAgentBotRow(
+  agentFirstName: string
+): Promise<{ botSlug: string; powerQueueName: string | null; agentFirstName: string } | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const { agentBots } = await import("../drizzle/schema");
+    const rows = await db.select().from(agentBots);
+    const lower = agentFirstName.trim().toLowerCase();
+    const row = rows.find(
+      r => r.agentFirstName.toLowerCase() === lower || r.botSlug.toLowerCase() === lower
+    );
+    if (!row) return null;
+    return { botSlug: row.botSlug, powerQueueName: row.powerQueueName, agentFirstName: row.agentFirstName };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pure resolution logic (exported for tests): given an optional agent_bots row
+ * and the agent first name, produce the Power Queue display name and slug.
+ * Precedence: agent_bots row → legacy fallback map → title-cased first name.
+ */
+export function derivePowerQueueName(
+  row: { powerQueueName: string | null; agentFirstName: string } | null,
+  agentFirstName: string
+): string {
+  if (row) return row.powerQueueName ?? row.agentFirstName;
+  const lower = agentFirstName.toLowerCase();
+  return (
+    POWER_QUEUE_AGENT_NAME_FALLBACK[lower] ??
+    agentFirstName.charAt(0).toUpperCase() + agentFirstName.slice(1).toLowerCase()
+  );
+}
+
+/** Pure resolution logic (exported for tests): dashboard slug precedence. */
+export function deriveDashboardSlug(
+  explicitSlug: string | null | undefined,
+  row: { botSlug: string } | null,
+  agentFirstName: string
+): string | null {
+  return (
+    explicitSlug ??
+    row?.botSlug ??
+    AGENT_DASHBOARD_SLUG_FALLBACK[agentFirstName.toLowerCase()] ??
+    null
+  );
+}
 
 export async function sendClockinEmail(opts: {
   botName: string;
@@ -1423,13 +1480,16 @@ export async function sendClockinEmail(opts: {
   const agentDisplay = isCombined ? "Steven Van Orden and Peter Allen" : `${agentFirstName} ${agentLastName}`;
   const dailyQuote = getDailyQuote();
 
-  // Build Power Queue + agent dashboard links
-  const pqAgentName = isCombined ? null : POWER_QUEUE_AGENT_NAME[agentFirstName.toLowerCase()];
+  // Build Power Queue + agent dashboard links.
+  // Golden Rule: resolve from the agent_bots table first (any new agent row
+  // propagates here automatically), fall back to the legacy static maps.
+  const agentRow = isCombined ? null : await resolveAgentBotRow(agentFirstName);
+  const pqAgentName = isCombined ? null : derivePowerQueueName(agentRow, agentFirstName);
   const powerQueueUrl = pqAgentName
     ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
     : `${OLD_DASHBOARD_BASE}/sms-queue`;
-  // Derive the slug: prefer explicit botSlug param, then lookup by name, then null
-  const agentSlug = opts.botSlug ?? (isCombined ? null : AGENT_DASHBOARD_SLUG[agentFirstName.toLowerCase()] ?? null);
+  // Derive the slug: prefer explicit botSlug param, then agent_bots row, then fallback map
+  const agentSlug = isCombined ? null : deriveDashboardSlug(opts.botSlug, agentRow, agentFirstName);
   const isLeader = isCombined || (agentFirstName && LEADER_AGENTS.has(agentFirstName.toLowerCase()));
   // Every agent gets exactly ONE dashboard button — leaders go to /, non-leaders go to /agent/:slug
   const agentDashboardUrl = isLeader
