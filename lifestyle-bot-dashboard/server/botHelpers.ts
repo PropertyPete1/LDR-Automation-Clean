@@ -1485,9 +1485,15 @@ export async function sendClockinEmail(opts: {
   // propagates here automatically), fall back to the legacy static maps.
   const agentRow = isCombined ? null : await resolveAgentBotRow(agentFirstName);
   const pqAgentName = isCombined ? null : derivePowerQueueName(agentRow, agentFirstName);
-  const powerQueueUrl = pqAgentName
-    ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
-    : `${OLD_DASHBOARD_BASE}/sms-queue`;
+  const pqAdminToken = process.env.POWER_QUEUE_ADMIN_TOKEN ?? "";
+  // Peter (combined or solo) gets the admin URL showing ALL agents;
+  // other agents get their scoped URL.
+  const isPeter = isCombined || agentFirstName.toLowerCase() === "peter";
+  const powerQueueUrl = isPeter && pqAdminToken
+    ? `${OLD_DASHBOARD_BASE}/sms-queue?admin=${encodeURIComponent(pqAdminToken)}&agent=all`
+    : pqAgentName
+      ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
+      : `${OLD_DASHBOARD_BASE}/sms-queue`;
   // Derive the slug: prefer explicit botSlug param, then agent_bots row, then fallback map
   const agentSlug = isCombined ? null : deriveDashboardSlug(opts.botSlug, agentRow, agentFirstName);
   const isLeader = isCombined || (agentFirstName && LEADER_AGENTS.has(agentFirstName.toLowerCase()));
