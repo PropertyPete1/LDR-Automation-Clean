@@ -11,6 +11,26 @@ vi.mock("./_core/llm", () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
+// Mock the dynamic agent registry's FUB-users lookup (added in b564101) so it
+// does NOT consume a queued mockFetch response. normalizeAgentName stays REAL,
+// so the Maria→Laila alias is genuinely exercised end-to-end.
+vi.mock("./agentRegistry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./agentRegistry")>();
+  return {
+    ...actual,
+    getActiveAgents: vi.fn().mockResolvedValue([
+      { name: "Peter", slug: "peter", role: "Agent", fubUserId: 2 },
+      { name: "Steven", slug: "steven", role: "Agent", fubUserId: 1 },
+      { name: "Laila", slug: "laila", role: "Agent", fubUserId: 35 },
+      { name: "Tiffany", slug: "tiffany", role: "Agent", fubUserId: 20 },
+      { name: "Abby", slug: "abby", role: "Agent", fubUserId: 28 },
+      { name: "Irma", slug: "irma", role: "Agent", fubUserId: 33 },
+      { name: "Stefanie", slug: "stefanie", role: "Agent", fubUserId: 31 },
+      { name: "Jason", slug: "jason", role: "Agent", fubUserId: 37 },
+    ]),
+  };
+});
+
 // Mock ENV
 vi.mock("./_core/env", () => ({
   ENV: {
