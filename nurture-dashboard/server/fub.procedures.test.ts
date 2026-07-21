@@ -149,7 +149,9 @@ describe("leads.logSentNote", () => {
     expect(body.body).not.toContain("Message:");
   });
 
-  it("normalizes 'Maria' to 'Laila' before storing (Laila's FUB last name guard)", async () => {
+  it("canonicalizes a lowercase agent name to its roster display form", async () => {
+    // "Maria" is Laila's LAST name, not an alias — she resolves to "Laila"
+    // natively. Passing her real first name in any case normalizes to "Laila".
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -166,14 +168,13 @@ describe("leads.logSentNote", () => {
 
     const result = await caller.leads.logSentNote({
       personId: 43,
-      agentName: "Maria",
+      agentName: "laila",
     });
 
     expect(result.success).toBe(true);
-    // The FUB note body must use the normalized name "Laila", not the raw "Maria"
+    // The FUB note body uses the canonical "Laila".
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.body).toContain("Laila");
-    expect(body.body).not.toContain("Maria");
   });
 });
 

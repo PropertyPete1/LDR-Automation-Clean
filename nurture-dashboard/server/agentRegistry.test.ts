@@ -2,8 +2,9 @@
  * agentRegistry.test.ts — dynamic registry behavior for nurture-dashboard.
  *
  * Golden Rule: the roster is built from FUB users, so adding an agent needs no
- * code change. The one hardcoded business rule that MUST survive is the
- * Maria → Laila alias (Laila's FUB record surfaces her middle name "Maria").
+ * code change. "Maria" is Laila's LAST name (not a separate person), so her
+ * FUB firstName "Laila" resolves natively with no alias — the old maria→laila
+ * alias was removed.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -17,15 +18,21 @@ import {
 const ROSTER: AgentEntry[] = [
   { name: "Peter", slug: "peter", role: "Agent", fubUserId: 2 },
   { name: "Steven", slug: "steven", role: "Agent", fubUserId: 1 },
+  // Laila's FUB record: firstName "Laila", last name "Maria" → resolves to "Laila".
   { name: "Laila", slug: "laila", role: "Agent", fubUserId: 35 },
   { name: "Jason", slug: "jason", role: "Agent", fubUserId: 37 },
 ];
 
-describe("normalizeAgentName — Maria → Laila alias (business rule)", () => {
-  it("maps 'Maria' to 'Laila' when Laila is in the roster", () => {
-    expect(normalizeAgentName("Maria", ROSTER)).toBe("Laila");
-    expect(normalizeAgentName("maria", ROSTER)).toBe("Laila");
-    expect(normalizeAgentName("  MARIA  ", ROSTER)).toBe("Laila");
+describe("normalizeAgentName — Laila resolves natively (no alias)", () => {
+  it("returns 'Laila' from any name lookup for her row (fubUserId 35)", () => {
+    expect(normalizeAgentName("Laila", ROSTER)).toBe("Laila");
+    expect(normalizeAgentName("laila", ROSTER)).toBe("Laila");
+    expect(normalizeAgentName("  LAILA  ", ROSTER)).toBe("Laila");
+  });
+
+  it("no longer aliases 'Maria' — it is a last name, so it title-cases", () => {
+    // The maria→laila alias was removed; "Maria" is not a roster identity.
+    expect(normalizeAgentName("Maria", ROSTER)).toBe("Maria");
   });
 
   it("resolves direct first-name and slug matches", () => {
@@ -35,12 +42,6 @@ describe("normalizeAgentName — Maria → Laila alias (business rule)", () => {
 
   it("title-cases an unknown name rather than crashing", () => {
     expect(normalizeAgentName("newagent", ROSTER)).toBe("Newagent");
-  });
-
-  it("does not alias Maria to Laila if Laila is absent from the roster", () => {
-    const withoutLaila = ROSTER.filter(a => a.slug !== "laila");
-    // Falls through to title-case since the alias target isn't present
-    expect(normalizeAgentName("Maria", withoutLaila)).toBe("Maria");
   });
 });
 
