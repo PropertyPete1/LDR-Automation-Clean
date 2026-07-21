@@ -141,3 +141,34 @@ nurture-dashboard was already dynamic (`b564101`); lifestyle-bot-dashboard was N
 `registryPropagation.test.ts` proves a brand-new `testagent` row propagates to: Power Queue link (`derivePowerQueueName`), dashboard slug (`deriveDashboardSlug`), and Bot Monitor watched list (`buildWatchedBotList`) with zero code change. Unit-level (the mirror has no live MySQL). **Requires human verification:** insert a real `testagent` row in the live DB, confirm it appears in the Power Queue dropdown + monitor email, then delete the row.
 
 **Score 9.5/10** — full dynamic propagation with tests; −0.5 because the live DB round-trip is unverifiable from the repo mirror.
+
+## Access Control — **Power Queue now server-enforced** (9/10)
+
+### The vulnerability (as reported)
+Access control was **URL-param only**. `SmsQueue.tsx` computed `lockedAgent` from `?agent=` in the URL; the `getPendingQueue` tRPC procedure was `publicProcedure` and returned the **full queue** whenever no filter was passed. Any agent could delete the `?agent=` query string (or call the API directly) and see **every agent's leads**. There was no server-side identity check anywhere.
+
+### The fix (`390aefc`)
+- **Server is the boundary.** `resolveQueueViewer(user, agents)` (pure, tested) decides admin vs agent from the authenticated `ctx.user`. `getPendingQueue` is now `protectedProcedure`; for non-admins it **ignores the client `agentFilter` and forces the caller's own name** (unresolved caller → impossible filter → empty result, deny-by-default). `getPondSmsLeads` is protected and returns `[]` for non-admins (pond leads are Peter's — cross-agent).
+- **Admin** = dashboard `role === "admin"` OR Peter/Steven login email OR resolved FUB user id ∈ {1, 2}.
+- **Client** now derives its lock from the server response (`isAdmin`/`agentName`), not the URL: non-admins get the dropdown hidden (lock chip), heat chart reduced to their own tile, and the pond section hidden. Admins keep the full dropdown, heat chart, and pond.
+
+### 2d — Behavioral tests (`queueAccessControl.test.ts`, 10 tests, all green)
+| Scenario | Asserted |
+|---|---|
+| Peter / Steven / role=admin | `isAdmin=true`; may pass any `agentFilter` or none (full queue) |
+| Tiffany (FUB 20) | `isAdmin=false`, locked to "Tiffany"; a crafted `agentFilter="jason"` **and** a removed filter both collapse to "Tiffany" |
+| Unauthenticated | not admin, no agent |
+| Unresolved non-admin | forced to `__no_such_agent__` → empty result |
+
+### What's protected
+Cross-agent lead data on `getPendingQueue` and the pond list — an agent can no longer reach another agent's leads by any client manipulation, because the filter is derived server-side from their session.
+
+### Deployment checklist (nurture-dashboard)
+1. Deploy nurture-dashboard (server + client) with `390aefc`.
+2. Confirm the deployed `users` rows carry the expected `email`/`role` so agents resolve to their roster identity (the admin bridge is email/FUB-id since the dashboard `users` table has no FUB id column).
+3. **Requires human verification (browser):** log in as a non-admin agent → confirm no "All Agents" dropdown, only their own leads and heat tile, no pond section; log in as Peter → confirm full dropdown + all agents + pond.
+
+**Score 9/10** — the server boundary is closed and unit-tested; −1 because the end-to-end browser login and the live `users.role`/email mapping can only be verified post-deploy.
+
+### Pre-existing test note
+`fub.procedures.test.ts` has 6 failures that **pre-date this work** (identical with my changes stashed): `logSentNote` and `getPendingQueue` pagination tests need a live FUB fetch mock that the repo mirror doesn't provide (`Cannot read properties of undefined (reading 'ok')`). Not introduced by Job 2; flagged for the harness owner.
