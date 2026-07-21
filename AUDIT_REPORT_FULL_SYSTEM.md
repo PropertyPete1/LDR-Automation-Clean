@@ -234,3 +234,67 @@ Fixed the stale "7 AI bots" / "7 agent bots" count (components table, System 3 h
 | Registry Propagation | 9.5/10 |
 | Access Control | 9/10 |
 | Cleanup | 8.5/10 |
+
+---
+
+# Access Model — Final Verification (Session 4, 2026-07-21)
+
+## Verdict: **6/10 — NOT 10/10.**
+The redesigned URL-param/token model is **correct and coherent for the two lead-list endpoints it gates** (`getPendingQueue`, `getPondSmsLeads`) — that part is 10/10 and now backed by a test that runs the *real* decision function. But the "remove the login wall" change (`c19fa5b`) left **the entire rest of the tRPC surface `publicProcedure`**, including endpoints that return lead PII by id and endpoints that trigger real email sends. The model is sound; its *coverage* is incomplete. Fixing coverage safely requires a coordinated client+server scoping change I can't verify against the live UI, so I fixed the test-integrity defect + Peter-token test and am flagging the rest precisely rather than blind-patching a running dashboard.
+
+## Jobs 1a–1f
+- **1a getPendingQueue** — ✅ PASS. Agent param scopes case-insensitively (name or slug) against the live roster; unknown agent → `__no_such_agent__` (empty); no param / `agent=all` without token → `__empty__`; valid token → full queue or admin-filtered. **Fixed a real test defect:** `queueAccessControl.test.ts` previously tested a *copy* of the logic re-implemented in the test file — it could not catch the procedure drifting. Extracted `resolveQueueAccess()` (shared, in `agentRegistry.ts`), wired the procedure to it, and pointed the test at the real function (13 assertions, green). `fff7d06`.
+- **1b getPondSmsLeads** — ✅ PASS. Token-only via `isAdminToken()`; `[]` otherwise.
+- **1c getRoster + getDashboardStats** — ❌ **STILL PUBLIC.** The redesign updated the Home *client* to read `?agent`/`?admin` but never gated the *server* endpoints. Both remain `publicProcedure` returning every agent's lead counts + company aggregates to anyone. **Flagged, not fixed** (see rationale + recommendation below).
+- **1d every publicProcedure classified** — see table below.
+- **1e clock-in admin URL** — ✅ PASS + **new test** (`clockinAdminUrl.test.ts`, 4 assertions): `POWER_QUEUE_ADMIN_TOKEN` reaches **only** Peter's clock-in (`admin=TOKEN&agent=all`); Tiffany + a sweep of Stefanie/Abby/Irma/Laila/Jason/Steven get scoped `?agent=Name` with no token; token unset → Peter falls back to a plain link.
+- **1f token hygiene** — ✅ PASS. `powerQueueUrl` is used only inside the email HTML anchor; grep of both TS projects + Python found **no** logging of the token or the URL, and it never enters a FUB note or observation.
+
+## 1d — Every `publicProcedure` classified
+| Bucket | Procedures | Verdict |
+|---|---|---|
+| **Scoped/gated (correct)** | `fub.getPendingQueue` (param+token), `fub.getPondSmsLeads` (token) | ✅ FIXED/PASS |
+| **Benign** | `auth.me`, `auth.logout`, `system.*`, `logClientError`, `refreshRoster`, `isLeadSuppressed`, `getSuppressionList`, `getSnoozeInfo`, `getTodayTextedLeadIds`, `getDailySmsGoal` | ✅ low/again no cross-agent PII |
+| **Cross-agent counts — LEAK (medium)** | `fub.getDashboardStats`, `agent.getRoster`, `agent.getLeads({agentName})`, `leads.getWeeklyStats` | ⚠️ returns any/all agents' pipeline data with no token |
+| **Lead PII by personId — LEAK (HIGH)** | `fub.getLatestInboundSms`, `leads.getLastInbound`, `leads.getNotes` | 🔴 anyone can enumerate sequential `personId`s and scrape every lead's FUB notes + inbound texts |
+| **Public side-effect mutations (HIGH)** | `bot.runNow` (triggers a real lifestyle-bot email run), `bot.runAutoPondNow` (reassigns leads), `bot.runBounceNow`, `bot.runMonitorNow`, `audit.run`, `leads.markUnsubscribe`, `leads.snoozeLead`, `leads.logSentNote`, `leads.recordAction`, `*.markObsFixed`, `ai.saveMemory`, `ai.logFeedback` | 🔴 callable by anyone with the URL; no token/ownership check |
+| **LLM cost/abuse (medium)** | `ai.chat`, `ai.draftSms`, `ai.draftReply`, `ai.dailyBriefing` | ⚠️ unauthenticated callers can run the Copilot/drafts (LLM spend) |
+| **System/observation reads (low)** | `bot.getStatus/getRunHistory/getMonitorStatus/getObservations/getDaySummary/getPondPromotionHistory`, `ai.getMemories/getWinningPatterns` | ⚠️ observations are person_id-only (prior audit), so low PII risk |
+
+## Why I flagged rather than blind-patched (1c/1d)
+The no-login dashboard *itself* calls these endpoints without a token — an agent viewing their scoped queue needs `getNotes`/`getLastInbound` for lead context; tap-to-text calls `logSentNote`. Correctly closing them means **per-request ownership scoping** (verify the `personId`'s assigned agent matches the `?agent=` param) plus token-gating the admin-only triggers and passing `?agent`/`?admin` from every client call site — a coordinated change whose UI I cannot exercise from the repo mirror. Shipping that blind would likely break agent access or Peter's admin buttons. The safe, high-value fixes (shared tested access fn; Peter-only token test) are done; the rest is specified below.
+
+## Recommended fix (the completeness pass the redesign missed)
+1. **Token-gate the pure admin triggers** — `bot.runNow/runAutoPondNow/runBounceNow/runMonitorNow`, `audit.run`, `markUnsubscribe`: require `isAdminToken(input.adminToken, ENV.powerQueueAdminToken)`; return FORBIDDEN otherwise. Agents never call these. (~1–2 h, low UI risk.)
+2. **Scope the count endpoints** — `getDashboardStats`/`getRoster`/`getLeads`/`getWeeklyStats`: apply `resolveQueueAccess` (agent param → own row only; admin token → all; none → empty) and pass `?agent`/`?admin` from `Home.tsx` (already read there). (~half day + live check.)
+3. **Scope the PII reads** — `getNotes`/`getLastInbound`/`getLatestInboundSms`: require the caller's `?agent=` to match the lead's assigned agent (one FUB lookup, cacheable), or fold them behind the same token. (~half day.)
+4. Optional: rate-limit / token-gate the `ai.*` LLM endpoints to prevent unauthenticated spend.
+
+## Job 2 — 12-element functional sweep (code-level)
+1. **Agent dropdown** — client renders it only in admin view (`?admin` token); server `getPendingQueue` returns `isAdmin` to drive it. ✅ (unauth screenshot still shows the empty dropdown chrome — cosmetic, no data).
+2. **Hot-reply pinning** — `dashboardData.ts` flags `Replied - Paused` → `is_hot_reply`, sorted first. ✅ (unchanged).
+3. **Lead cards** — days-stale from `created`, engagement tier, context line — code intact; **live values unverified (no session).**
+4. **AI SMS draft** — `ai.draftSms` calls `api.anthropic.com` directly (`claude-sonnet-4-6`), per-day cache, rule-12 present; asserted by `ai.draftSms.test.ts` (4). ✅ *(other `ai.*` still use the Forge gateway — parked, per instructions.)*
+5. **Tap-to-Text** — writes FUB note + `queue_actions` row via `logSentNote`/`recordAction`; **but both are public mutations** (see HIGH bucket). Function ✅ / access ❌.
+6. **Call Instead** — `recordAction` note + action; same public-mutation caveat.
+7. **Snooze** — options render; `snoozeLead` writes FUB note once + `lead_snoozes` row, returns on date, display-only; public-mutation caveat.
+8. **Refresh** — busts caches, refetches. ✅
+9. **Bot Dashboard link** — ✅ verified live earlier → `https://lifestyledash-wpnl8v84.manus.space/`.
+10. **Weekly stats contract** — `getWeeklyStats` field names match `weekly_digest.py`; cross-system test in the Python suite. ✅ (needs token-gating — flagged).
+11. **Agent Copilot** — uses the Forge `invokeLLM` gateway (known parked dependency; not rewired). Read-only Q&A + draft helpers; no write endpoints exposed *through it*. ✅ read-only.
+12. **Pond SMS section** — admin-token only (`getPondSmsLeads`). ✅
+
+## Job 3 — regression sweep
+- **Suites:** nurture-dashboard **87 passed / 17 env-skipped / 0 failed**; lifestyle-bot-dashboard **140 passed / 6 env-skipped / 0 failed**; Python **44 passed**. tsc clean both projects **except** pre-existing `nightlyHealer.ts` mirror drift (19 errors, never runs from this repo); `py_compile` clean.
+- **Golden Rule** — still holds (`registryPropagation.test.ts`); the URL-param model resolves agents from the same live roster.
+- **Jason** — consistent: scoped link `?agent=Jason`; clock-in test confirms he never receives the admin token.
+- **Diff since 038bfcb** — send-path changes are exactly (a) the clock-in admin-URL builder and (b) the intentional From-address switch to `team@lifestyledesignrealty.com` (`ecfcaf5`, tested by `emailFromAddress.test.ts` + `test_email_from_address.py`). No caps/cadences/recipients/suppression semantics changed.
+- **Suppression/SOI/deal protection** — spot-run green within the 44 Python + TS suites.
+
+## Requires human verification
+1. **Live browser pass with the admin token** — I could not authenticate (no session; entering credentials is disallowed) so lead-card values, AI-draft personalization, tap-to-text, snooze, and copilot answers are code-verified only. Set `POWER_QUEUE_ADMIN_TOKEN`, open `?admin=TOKEN&agent=all`, and spot-check.
+2. **Confirm the PII-read + public-mutation exposure** on the live host (e.g., `curl` `bot.runNow` / `getNotes?personId=1`) and prioritize the recommended gating.
+3. Gmail "send-as" for the new `team@` From address (per the deploy note) — verify Gmail shows "Tiffany | Lifestyle Design Realty", not a rewrite.
+
+## What would make it 10/10
+Apply the four-step completeness fix above (token-gate admin triggers; scope count + PII endpoints via `resolveQueueAccess`/ownership; pass `?agent`/`?admin` from every client call). The foundation is right — a single shared, now-tested decision function exists; it just needs to be applied across the surface, then verified in a live admin session.
