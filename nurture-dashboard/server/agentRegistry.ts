@@ -150,3 +150,63 @@ export function getRosterAgents(agents: AgentEntry[]): Array<{ name: string; slu
 export function getBotStatusRoster(agents: AgentEntry[]): string[] {
   return [...agents.map(a => a.name), "Lifestyle Bot"];
 }
+
+// ─── Power Queue access control ──────────────────────────────────────────────
+
+/** FUB user IDs that always get the admin (all-agents) view: Steven=1, Peter=2. */
+export const ADMIN_FUB_USER_IDS = new Set([1, 2]);
+
+/** Dashboard login emails that always get the admin view (belt-and-suspenders). */
+const ADMIN_EMAILS = new Set([
+  "peter@lifestyledesignrealty.com",
+  "steven@lifestyledesignrealty.com",
+]);
+
+export interface QueueViewer {
+  /** Admin sees the full "All Agents" dropdown, heat chart, and every agent's leads. */
+  isAdmin: boolean;
+  /** For a non-admin agent, the canonical roster name they are locked to (else null). */
+  agentName: string | null;
+  /** The resolved FUB user id, when the caller maps to a roster agent. */
+  fubUserId: number | null;
+}
+
+/**
+ * Resolve the Power Queue viewer from the authenticated dashboard user.
+ *
+ * A caller is admin if their dashboard role is "admin", their login email is
+ * Peter's/Steven's, OR they resolve to a roster agent with FUB id 1 or 2.
+ * Otherwise they are a plain agent, locked to their own roster name — the
+ * server uses this to force the lead filter so an agent can never see another
+ * agent's leads (the client URL ?agent= param is advisory only).
+ *
+ * Pure and dependency-free so it is unit-testable without a DB or FUB.
+ */
+export function resolveQueueViewer(
+  user: { email?: string | null; name?: string | null; role?: string | null } | null,
+  agents: AgentEntry[]
+): QueueViewer {
+  if (!user) return { isAdmin: false, agentName: null, fubUserId: null };
+
+  const email = (user.email ?? "").toLowerCase().trim();
+  const emailLocal = email.split("@")[0];
+  const nameFirst = (user.name ?? "").trim().toLowerCase().split(/\s+/)[0];
+
+  // Match the caller to a roster agent by email local-part, slug, or first name.
+  const matched =
+    agents.find(a => a.slug === emailLocal) ??
+    agents.find(a => a.slug === nameFirst) ??
+    agents.find(a => a.name.toLowerCase() === nameFirst) ??
+    null;
+
+  const isAdmin =
+    (user.role ?? "") === "admin" ||
+    ADMIN_EMAILS.has(email) ||
+    (matched != null && ADMIN_FUB_USER_IDS.has(matched.fubUserId));
+
+  return {
+    isAdmin,
+    agentName: matched?.name ?? null,
+    fubUserId: matched?.fubUserId ?? null,
+  };
+}

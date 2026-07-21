@@ -58,7 +58,7 @@ export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProp
       enabled: !propLeads, // only fetch if no leads were passed as props
     }
   );
-  const leads = propLeads ?? fetchedLeads ?? [];
+  const leads = propLeads ?? fetchedLeads?.leads ?? [];
 
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);

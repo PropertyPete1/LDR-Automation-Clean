@@ -220,7 +220,13 @@ export default function SmsQueue() {
     { enabled: !!_agentNameForSeed, staleTime: 60 * 1000 }
   );
 
-  const leads: PendingLead[] = queueData || [];
+  const leads: PendingLead[] = queueData?.leads || [];
+  // Server-derived access control: non-admins are locked to their own leads.
+  const isAdmin: boolean = queueData?.isAdmin ?? false;
+  const serverAgentName: string | null = queueData?.agentName ?? null;
+  // Effective lock: admins may use the URL ?agent= filter; non-admins are always
+  // locked to their own agent name (the server enforces this regardless).
+  const effectiveLock: string | null = isAdmin ? lockedAgent : (serverAgentName ?? lockedAgent);
 
   const logSentNote = trpc.leads.logSentNote.useMutation({
     onError: (err) => console.error("FUB note log failed:", err.message),
@@ -319,11 +325,11 @@ export default function SmsQueue() {
     if (snoozedLeads.has(lead.id)) return false;
     const agentLower = lead.assigned_agent.toLowerCase();
     let matchesAgent: boolean;
-    if (lockedAgent) {
-      // Agent is locked via ?agent= URL param — ALWAYS filter to only that agent's leads.
-      // This applies in both normal mode AND Free Pick mode.
-      // Free Pick only unlocks the 1-13 day tier within the agent's OWN leads.
-      matchesAgent = agentLower === lockedAgent.toLowerCase();
+    if (effectiveLock) {
+      // Locked to a single agent — either a non-admin viewer (server-enforced)
+      // or an admin using the ?agent= URL param. ALWAYS filter to that agent's
+      // leads, in both normal mode AND Free Pick mode.
+      matchesAgent = agentLower === effectiveLock.toLowerCase();
     } else if (freePick) {
       // Free Pick (admin/no lock): show all agents' leads including 1-13 day tier.
       matchesAgent = true;
@@ -337,7 +343,7 @@ export default function SmsQueue() {
       lead.phone.includes(searchQuery) ||
       lead.city.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesAgent && matchesSearch;
-  }), [leads, selectedAgent, searchQuery, freePick, snoozedLeads, lockedAgent]);
+  }), [leads, selectedAgent, searchQuery, freePick, snoozedLeads, effectiveLock]);
 
   const agentStats = useMemo(() => {
     const stats: Record<string, { total: number; texted: number }> = {};
@@ -855,14 +861,14 @@ export default function SmsQueue() {
         </div>
 
         {/* ── Agent Heat Chart / Personal Progress Bar ── */}
-        {lockedAgent ? (
+        {effectiveLock ? (
           // — CHANGE 3: Personal progress bar for locked agents —
           (() => {
-            const myStats = agentStats.find(s => s.agent.toLowerCase() === lockedAgent.toLowerCase());
+            const myStats = agentStats.find(s => s.agent.toLowerCase() === effectiveLock.toLowerCase());
             const myTotal = myStats?.total ?? filteredLeads.length;
             const myTexted = myStats?.texted ?? Object.keys(textedLeads).filter(id => filteredLeads.some(l => l.id === Number(id))).length;
             const myRate = myTotal > 0 ? Math.round((myTexted / myTotal) * 100) : 0;
-            const displayName = lockedAgent.charAt(0).toUpperCase() + lockedAgent.slice(1).toLowerCase();
+            const displayName = effectiveLock.charAt(0).toUpperCase() + effectiveLock.slice(1).toLowerCase();
             return (
               <Card className="bg-white/4 border-white/10">
                 <CardContent className="px-5 py-4">
@@ -930,12 +936,12 @@ export default function SmsQueue() {
               className="pl-9 h-10 border-white/10 bg-white/4 text-white/80 placeholder:text-white/30 focus-visible:ring-amber-500/40"
             />
           </div>
-          {/* — CHANGE 1: Lock dropdown when ?agent= is in URL — */}
-          {lockedAgent ? (
+          {/* — CHANGE 1: Lock dropdown for non-admins (server-enforced) or ?agent= URL — */}
+          {effectiveLock ? (
             <div className="w-full sm:w-44 h-10 flex items-center gap-2 px-3 rounded-lg border border-amber-500/30 bg-amber-50 cursor-not-allowed select-none">
               <Lock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
               <span className="text-sm font-semibold text-amber-700 truncate">
-                {lockedAgent.charAt(0).toUpperCase() + lockedAgent.slice(1).toLowerCase()}'s Leads Only
+                {effectiveLock.charAt(0).toUpperCase() + effectiveLock.slice(1).toLowerCase()}'s Leads Only
               </span>
             </div>
           ) : (
@@ -980,8 +986,8 @@ export default function SmsQueue() {
               </div>
               <div className="space-y-1.5">
                 <h3 className="text-lg font-bold text-foreground">
-                  {lockedAgent
-                    ? `You're all caught up, ${lockedAgent.charAt(0).toUpperCase() + lockedAgent.slice(1)}! 🎉`
+                  {effectiveLock
+                    ? `You're all caught up, ${effectiveLock.charAt(0).toUpperCase() + effectiveLock.slice(1)}! 🎉`
                     : searchQuery
                     ? "No leads match your search"
                     : "You're all caught up! 🎉"}
@@ -1412,7 +1418,7 @@ export default function SmsQueue() {
       </main>
 
       {/* ── Pond Leads — SMS Only (Peter only) ── */}
-      {!lockedAgent && <PondSmsSection />}
+      {isAdmin && !lockedAgent && <PondSmsSection />}
     </div>
   );
 }

@@ -20,7 +20,7 @@ import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance
 import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "./memoryLayer";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
-import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
+import { getActiveAgents, normalizeAgentName, getBotStatusRoster, resolveQueueViewer } from "./agentRegistry";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -211,20 +211,33 @@ export const appRouter = router({
      * Returns the live pending SMS queue — leads that are stale and have a
      * phone number, enriched with a pre-generated SMS body and redirect link.
      */
-    getPendingQueue: publicProcedure
+    getPendingQueue: protectedProcedure
       .input(z.object({ agentFilter: z.string().optional() }))
-      .query(async ({ input }) => {
-        // agentFilter: when provided, server only returns that agent's leads.
-        // When omitted (Peter/admin), returns the full queue.
-        return getPendingQueue(ENV.fubApiKey, input.agentFilter);
+      .query(async ({ input, ctx }) => {
+        // ── Access control ────────────────────────────────────────────────
+        // Admins (Peter/Steven or role=admin) may filter to any agent or see
+        // all. Non-admin agents are FORCED to their own leads regardless of the
+        // client-supplied agentFilter — the URL ?agent= param is advisory only.
+        const agents = await getActiveAgents(undefined, ENV.fubApiKey);
+        const viewer = resolveQueueViewer(ctx.user, agents);
+        const effectiveFilter = viewer.isAdmin
+          ? input.agentFilter
+          : (viewer.agentName ?? "__no_such_agent__"); // unresolved agent → empty result
+        const leads = await getPendingQueue(ENV.fubApiKey, effectiveFilter);
+        return { leads, isAdmin: viewer.isAdmin, agentName: viewer.agentName };
       }),
 
     /**
      * Returns pond leads tagged "bad-email" that have a valid phone number.
      * These are leads whose email bounced but still have a working phone —
      * shown in Peter's Power Queue under "Pond Leads — SMS Only" section.
+     * Pond leads belong to Peter, so only admins may see them; a non-admin
+     * agent gets an empty list (no cross-agent data).
      */
-    getPondSmsLeads: publicProcedure.query(async () => {
+    getPondSmsLeads: protectedProcedure.query(async ({ ctx }) => {
+      const agents = await getActiveAgents(undefined, ENV.fubApiKey);
+      const viewer = resolveQueueViewer(ctx.user, agents);
+      if (!viewer.isAdmin) return [];
       return getPondSmsOnlyLeads(ENV.fubApiKey);
     }),
   }),
