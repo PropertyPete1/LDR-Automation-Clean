@@ -199,3 +199,61 @@ export function resolveQueueViewer(
     fubUserId: matched?.fubUserId ?? null,
   };
 }
+
+// ─── URL-param / admin-token access model (current — no login) ───────────────
+
+export interface QueueAccess {
+  /** The name to pass to getPendingQueue's agentFilter, or undefined = full queue.
+   *  Sentinels: "__empty__" (no valid identity → return nothing),
+   *  "__no_such_agent__" (agent param didn't match the roster → return nothing). */
+  effectiveFilter: string | undefined;
+  isAdmin: boolean;
+  agentName: string | null;
+}
+
+/**
+ * THE real Power Queue access decision, shared by every scoped procedure so
+ * the behavior and its test can never drift (the test imports THIS function).
+ *
+ * Model (no login): identity comes from the URL.
+ *  - ?admin=TOKEN (matching POWER_QUEUE_ADMIN_TOKEN) → admin; ?agent=all = full
+ *    queue, or admin may filter to a specific agent.
+ *  - ?agent=Name (valid roster name/slug, case-insensitive) → scoped to that
+ *    agent only.
+ *  - anything else (no params, agent=all without token, unknown agent) →
+ *    an impossible/empty filter so the caller returns no leads.
+ *
+ * Pure and dependency-free (roster passed in) for exhaustive unit testing.
+ */
+export function resolveQueueAccess(
+  input: { agentFilter?: string; adminToken?: string },
+  configuredToken: string,
+  agents: AgentEntry[]
+): QueueAccess {
+  const isAdmin = !!(input.adminToken && configuredToken && input.adminToken === configuredToken);
+
+  if (isAdmin) {
+    const filter = input.agentFilter === "all" ? undefined : input.agentFilter;
+    return { effectiveFilter: filter, isAdmin: true, agentName: null };
+  }
+
+  // Non-admin: an agent param is REQUIRED and scopes the result.
+  if (!input.agentFilter || input.agentFilter === "all") {
+    return { effectiveFilter: "__empty__", isAdmin: false, agentName: null };
+  }
+
+  const matched = agents.find(
+    a => a.slug === input.agentFilter!.toLowerCase() ||
+         a.name.toLowerCase() === input.agentFilter!.toLowerCase()
+  );
+  return {
+    effectiveFilter: matched ? matched.name : "__no_such_agent__",
+    isAdmin: false,
+    agentName: matched?.name ?? null,
+  };
+}
+
+/** True iff the supplied admin token matches the configured one (non-empty). */
+export function isAdminToken(adminToken: string | undefined, configuredToken: string): boolean {
+  return !!(adminToken && configuredToken && adminToken === configuredToken);
+}

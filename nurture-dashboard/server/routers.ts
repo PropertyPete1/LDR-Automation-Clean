@@ -20,7 +20,7 @@ import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance
 import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "./memoryLayer";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
-import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
+import { getActiveAgents, normalizeAgentName, getBotStatusRoster, resolveQueueAccess, isAdminToken } from "./agentRegistry";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -219,33 +219,17 @@ export const appRouter = router({
       .query(async ({ input }) => {
         // ── URL-param-based access control (no login required) ─────────────
         // Each agent gets their own link with ?agent=Name. The server scopes
-        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all
-        // to see the full queue.
-        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
-          input.adminToken === ENV.powerQueueAdminToken);
-
-        if (isAdmin) {
-          // Admin token valid — return full queue or filtered to requested agent
-          const filter = input.agentFilter === "all" ? undefined : input.agentFilter;
-          const leads = await getPendingQueue(ENV.fubApiKey, filter);
-          return { leads, isAdmin: true, agentName: null };
-        }
-
-        // Non-admin: agent param is REQUIRED and scopes the result
-        if (!input.agentFilter || input.agentFilter === "all") {
-          // No agent specified and no admin token → empty result
-          return { leads: [], isAdmin: false, agentName: null };
-        }
-
-        // Validate agent name against the live roster
+        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all.
+        // Decision logic lives in resolveQueueAccess() (shared + unit-tested).
         const agents = await getActiveAgents(undefined, ENV.fubApiKey);
-        const matched = agents.find(a =>
-          a.slug === input.agentFilter!.toLowerCase() ||
-          a.name.toLowerCase() === input.agentFilter!.toLowerCase()
-        );
-        const effectiveFilter = matched ? matched.name : "__no_such_agent__";
-        const leads = await getPendingQueue(ENV.fubApiKey, effectiveFilter);
-        return { leads, isAdmin: false, agentName: matched?.name ?? null };
+        const access = resolveQueueAccess(input, ENV.powerQueueAdminToken, agents);
+        // Sentinel filters ("__empty__" / "__no_such_agent__") never match a
+        // real agent, so getPendingQueue returns nothing for them.
+        if (access.effectiveFilter === "__empty__") {
+          return { leads: [], isAdmin: access.isAdmin, agentName: null };
+        }
+        const leads = await getPendingQueue(ENV.fubApiKey, access.effectiveFilter);
+        return { leads, isAdmin: access.isAdmin, agentName: access.agentName };
       }),
 
     /**
@@ -258,10 +242,8 @@ export const appRouter = router({
     getPondSmsLeads: publicProcedure
       .input(z.object({ adminToken: z.string().optional() }))
       .query(async ({ input }) => {
-        // Only admin token holders can see pond SMS leads
-        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
-          input.adminToken === ENV.powerQueueAdminToken);
-        if (!isAdmin) return [];
+        // Only admin token holders can see pond SMS leads (pond = Peter's).
+        if (!isAdminToken(input.adminToken, ENV.powerQueueAdminToken)) return [];
         return getPondSmsOnlyLeads(ENV.fubApiKey);
       }),
   }),
