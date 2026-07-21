@@ -2,6 +2,36 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+// Mock ENV
+vi.mock("./_core/env", () => ({
+  ENV: {
+    fubApiKey: "test_fub_key",
+    forgeApiUrl: "https://api.test.com",
+    forgeApiKey: "test_forge_key",
+    appId: "test_app_id",
+    cookieSecret: "test_secret",
+    databaseUrl: "mysql://test",
+    oAuthServerUrl: "https://oauth.test.com",
+    ownerOpenId: "test_owner",
+    isProduction: false,
+    powerQueueAdminToken: "test_admin_token",
+  },
+}));
+
+// Mock agent registry for access control
+vi.mock("./agentRegistry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./agentRegistry")>();
+  return {
+    ...actual,
+    getActiveAgents: vi.fn().mockResolvedValue([
+      { name: "Peter", slug: "peter", role: "Agent", fubUserId: 2 },
+      { name: "Steven", slug: "steven", role: "Agent", fubUserId: 1 },
+      { name: "Tiffany", slug: "tiffany", role: "Agent", fubUserId: 20 },
+      { name: "Stefanie", slug: "stefanie", role: "Agent", fubUserId: 31 },
+    ]),
+  };
+});
+
 // Mock the LLM module to avoid real API calls in tests
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn().mockResolvedValue({
@@ -54,6 +84,7 @@ describe("ai.chat", () => {
 
     const result = await caller.ai.chat({
       messages: [{ role: "user", content: "Draft a quick SMS for a lead in Austin" }],
+      adminToken: "test_admin_token",
     });
 
     expect(result).toHaveProperty("content");
@@ -77,6 +108,7 @@ describe("ai.chat", () => {
         assigned_agent: "Steven",
         sms_body: "Hey Sarah, hope you had a great week!",
       },
+      agent: "Steven",
     });
 
     expect(result).toHaveProperty("content");
@@ -93,6 +125,7 @@ describe("ai.chat", () => {
         { role: "assistant", content: "Hey! Are you still looking for homes in Texas? 😊" },
         { role: "user", content: "Make it shorter and more casual" },
       ],
+      adminToken: "test_admin_token",
     });
 
     expect(result).toHaveProperty("content");
@@ -121,6 +154,7 @@ describe("ai.chat", () => {
         notes: "Interested in 3BR, budget around $350k | Called back last week",
         last_inbound_text: "Yes I am still interested, what are the rates?",
       },
+      agent: "Stefanie",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -142,6 +176,7 @@ describe("ai.chat", () => {
 
     await caller.ai.chat({
       messages: [{ role: "user", content: "Hello" }],
+      adminToken: "test_admin_token",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -178,6 +213,7 @@ describe("ai.chat", () => {
         name: "Test Lead",
         assigned_agent: "Steven",
       },
+      agent: "Steven",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -217,6 +253,7 @@ describe("ai.chat", () => {
         name: "Test Lead 2",
         assigned_agent: "Steven",
       },
+      agent: "Steven",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -237,6 +274,7 @@ describe("copilot.saveMemory", () => {
       memoryText: "Steven's leads are mostly in Austin and prefer new construction",
       category: "market_knowledge",
       importanceScore: 3,
+      agent: "Steven",
     });
 
     expect(result).toEqual({ success: true });
@@ -254,6 +292,7 @@ describe("copilot.logFeedback", () => {
       leadCity: "San Antonio",
       draftType: "outbound",
       action: "sent",
+      agent: "Steven",
     });
 
     expect(result).toEqual({ success: true });
@@ -269,6 +308,7 @@ describe("copilot.logFeedback", () => {
       leadCity: "Austin",
       draftType: "outbound",
       action: "regenerated",
+      agent: "Tiffany",
     });
 
     expect(result).toEqual({ success: true });

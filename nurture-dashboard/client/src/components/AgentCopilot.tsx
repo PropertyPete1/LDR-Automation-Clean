@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -50,12 +50,26 @@ interface AgentCopilotProps {
 }
 
 export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProps) {
+  // URL-param access context
+  const urlAdminToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("admin") ?? "";
+  }, []);
+  const urlAgent = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("agent") ?? "";
+  }, []);
+  const accessParams = useMemo(() => ({
+    ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
+    ...(urlAgent ? { agent: urlAgent } : {}),
+  }), [urlAdminToken, urlAgent]);
+
   // Self-fetch leads so the lead selector works on any page
   const { data: fetchedLeads } = trpc.fub.getPendingQueue.useQuery(
-    {}, // Copilot — no agentFilter, fetches full queue for lead selector
+    { agentFilter: urlAgent || undefined, adminToken: urlAdminToken || undefined },
     {
       staleTime: 5 * 60 * 1000, // cache for 5 minutes
-      enabled: !propLeads, // only fetch if no leads were passed as props
+      enabled: !propLeads && !!(urlAdminToken || urlAgent), // only fetch if no leads were passed as props and we have access
     }
   );
   const leads = propLeads ?? fetchedLeads?.leads ?? [];
@@ -70,7 +84,7 @@ export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProp
   // Learning system — memory
   const agentName = selectedLead?.assigned_agent || "";
   const { data: memoriesData } = trpc.copilot.getMemories.useQuery(
-    { agentName },
+    { agentName, ...accessParams },
     { enabled: !!agentName && isOpen, staleTime: 2 * 60 * 1000 }
   );
   const memoryCount = memoriesData?.memories?.length ?? 0;
@@ -162,6 +176,7 @@ export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProp
             memoryText,
             category: "general",
             importanceScore: 1,
+            ...accessParams,
           });
         }
       }
@@ -254,6 +269,7 @@ export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProp
             last_inbound_text: selectedLead.last_inbound_text,
           }
         : undefined,
+      ...accessParams,
     });
   };
 

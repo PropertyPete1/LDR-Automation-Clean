@@ -91,37 +91,43 @@ export default function Home() {
   }, [urlAgent, urlAdminToken]);
 
   // ── Live data ─────────────────────────────────────────────────────────────
+  // Build access params for admin-gated procedures
+  const accessParams = useMemo(() => ({
+    ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
+    ...(urlAgent ? { agent: urlAgent } : {}),
+  }), [urlAdminToken, urlAgent]);
+
   const { data, isLoading, error, refetch, isRefetching } = trpc.fub.getDashboardStats.useQuery(
-    undefined,
-    { staleTime: 25_000, refetchInterval: 30_000, refetchIntervalInBackground: false }
+    accessParams,
+    { staleTime: 25_000, refetchInterval: 30_000, refetchIntervalInBackground: false, enabled: isAdminView }
   );
 
   const { data: rosterData, isLoading: rosterLoading, refetch: refetchRoster } =
-    trpc.agent.getRoster.useQuery(undefined, { staleTime: 10 * 60_000 });
+    trpc.agent.getRoster.useQuery(accessParams, { staleTime: 10 * 60_000, enabled: isAdminView });
 
   const { data: botStatus } = trpc.bot.getStatus.useQuery(
-    undefined,
-    { staleTime: 2 * 60_000, refetchInterval: 2 * 60_000 }
+    accessParams,
+    { staleTime: 2 * 60_000, refetchInterval: 2 * 60_000, enabled: isAdminView }
   );
 
   // AI daily briefing
   const { data: briefingData, isLoading: briefingLoading } = trpc.ai.dailyBriefing.useQuery(
-    undefined,
-    { staleTime: 10 * 60_000, retry: 1 }
+    accessParams,
+    { staleTime: 10 * 60_000, retry: 1, enabled: isAdminView }
   );
 
   const utils = trpc.useUtils();
 
   const refreshRosterMutation = trpc.agent.refreshRoster.useMutation({
     onSuccess: (d) => {
-      utils.agent.getRoster.setData(undefined, d);
+      utils.agent.getRoster.setData(accessParams, d);
       toast.success("Roster refreshed", { description: "All agent counts updated live from FUB." });
     },
     onError: () => toast.error("Refresh failed", { description: "Could not reach FUB. Try again." }),
   });
 
   const { data: auditData, isLoading: auditLoading, refetch: refetchAudit } =
-    trpc.audit.getStatus.useQuery(undefined, { staleTime: 60_000 });
+    trpc.audit.getStatus.useQuery(accessParams, { staleTime: 60_000, enabled: isAdminView });
 
   const runAuditMutation = trpc.audit.run.useMutation({
     onSuccess: () => { void utils.audit.getStatus.invalidate(); },
@@ -137,7 +143,7 @@ export default function Home() {
 
   const auditRunning = runAuditMutation.isPending;
   const fetchAuditStatus = useCallback(() => { void refetchAudit(); }, [refetchAudit]);
-  const handleRunAudit = useCallback(() => { runAuditMutation.mutate(); }, [runAuditMutation]);
+  const handleRunAudit = useCallback(() => { runAuditMutation.mutate(accessParams); }, [runAuditMutation, accessParams]);
 
   // ── Derived stats ─────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -407,7 +413,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground border-border bg-transparent hover:bg-secondary shadow-none"
-                onClick={() => refreshRosterMutation.mutate()} disabled={refreshRosterMutation.isPending || rosterLoading}>
+                onClick={() => refreshRosterMutation.mutate(accessParams)} disabled={refreshRosterMutation.isPending || rosterLoading}>
                 <RefreshCw className={`h-3 w-3 ${refreshRosterMutation.isPending ? "animate-spin" : ""}`} />
                 {refreshRosterMutation.isPending ? "Fetching…" : "Refresh"}
               </Button>

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-17T13:34:45.658623+00:00",
+  "generated_at": "2026-07-13T15:09:27.513007+00:00",
   "rules": {
     "company_name": "Lifestyle Design Realty",
     "company_address": "1209 S Saint Marys St #232, San Antonio, TX 78210",
@@ -15,7 +15,7 @@
     {
       "action": "agent_followup_reminder",
       "status": "email_digest_sent",
-      "cnt": 2968
+      "cnt": 3279
     },
     {
       "action": "agent_followup_reminder",
@@ -30,87 +30,102 @@
     {
       "action": "closed_drip",
       "status": "sent",
-      "cnt": 80
+      "cnt": 110
     },
     {
       "action": "closed_drip",
       "status": "skipped",
-      "cnt": 119
+      "cnt": 1283
     },
     {
       "action": "closed_drip",
       "status": "suppressed",
-      "cnt": 7
+      "cnt": 272
     },
     {
       "action": "new_lead_reassigned",
       "status": "completed",
-      "cnt": 4
+      "cnt": 19
     },
     {
       "action": "new_lead_timer",
       "status": "canceled_touched",
-      "cnt": 22
+      "cnt": 65
     },
     {
       "action": "new_lead_timer",
       "status": "started_polling",
-      "cnt": 26
+      "cnt": 84
     },
     {
       "action": "new_lead_warning",
       "status": "created",
-      "cnt": 4
+      "cnt": 19
+    },
+    {
+      "action": "new_lead_warning",
+      "status": "created_at_reassignment",
+      "cnt": 5
     },
     {
       "action": "phase2_daily_summary",
       "status": "sent",
-      "cnt": 12
+      "cnt": 25
     },
     {
       "action": "pond_keyword_reassignment",
       "status": "completed",
-      "cnt": 74
+      "cnt": 149
     },
     {
       "action": "pond_keyword_reassignment",
       "status": "error",
-      "cnt": 6
+      "cnt": 11
     },
     {
       "action": "pond_nurture",
       "status": "error",
-      "cnt": 48
+      "cnt": 53
     },
     {
       "action": "pond_nurture",
       "status": "launch_cap_reached",
-      "cnt": 15
+      "cnt": 29
     },
     {
       "action": "pond_nurture",
       "status": "sent",
-      "cnt": 1301
+      "cnt": 2863
     },
     {
       "action": "pond_nurture",
       "status": "skipped",
-      "cnt": 6316
+      "cnt": 18629
     },
     {
       "action": "pond_nurture",
       "status": "sms_error",
-      "cnt": 93
+      "cnt": 384
     },
     {
       "action": "pond_nurture",
       "status": "suppressed",
-      "cnt": 2400
+      "cnt": 8111
+    },
+    {
+      "action": "reply_detected",
+      "status": "error",
+      "cnt": 186
+    },
+    {
+      "action": "speed_to_lead_alert",
+      "status": "sent",
+      "cnt": 6
     },
     {
       "action": "stale_agent_pond_reassignment",
       "status": "completed",
-      "cnt": 808
+      "cnt": 809
     },
     {
       "action": "stale_agent_pond_reassignment",
@@ -120,430 +135,10 @@
     {
       "action": "stale_agent_pond_reassignment",
       "status": "suppressed",
-      "cnt": 2022
+      "cnt": 2677
     }
   ],
   "timeline": [
-    {
-      "date": "2026-06-03",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 571
-    },
-    {
-      "date": "2026-06-03",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-04",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 96
-    },
-    {
-      "date": "2026-06-04",
-      "action": "agent_followup_reminder",
-      "status": "error",
-      "cnt": 9
-    },
-    {
-      "date": "2026-06-04",
-      "action": "new_lead_reassigned",
-      "status": "completed",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-04",
-      "action": "new_lead_warning",
-      "status": "created",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-04",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 2
-    },
-    {
-      "date": "2026-06-05",
-      "action": "agent_followup_reminder",
-      "status": "error",
-      "cnt": 10
-    },
-    {
-      "date": "2026-06-05",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-05",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "cnt": 3
-    },
-    {
-      "date": "2026-06-05",
-      "action": "pond_nurture",
-      "status": "sent",
-      "cnt": 301
-    },
-    {
-      "date": "2026-06-05",
-      "action": "pond_nurture",
-      "status": "skipped",
-      "cnt": 50
-    },
-    {
-      "date": "2026-06-05",
-      "action": "pond_nurture",
-      "status": "suppressed",
-      "cnt": 64
-    },
-    {
-      "date": "2026-06-05",
-      "action": "stale_agent_pond_reassignment",
-      "status": "completed",
-      "cnt": 301
-    },
-    {
-      "date": "2026-06-05",
-      "action": "stale_agent_pond_reassignment",
-      "status": "launch_cap_reached",
-      "cnt": 3
-    },
-    {
-      "date": "2026-06-05",
-      "action": "stale_agent_pond_reassignment",
-      "status": "suppressed",
-      "cnt": 27
-    },
-    {
-      "date": "2026-06-06",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 9
-    },
-    {
-      "date": "2026-06-06",
-      "action": "pond_keyword_reassignment",
-      "status": "completed",
-      "cnt": 14
-    },
-    {
-      "date": "2026-06-06",
-      "action": "pond_keyword_reassignment",
-      "status": "error",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-07",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 2111
-    },
-    {
-      "date": "2026-06-07",
-      "action": "new_lead_timer",
-      "status": "canceled_touched",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-07",
-      "action": "new_lead_timer",
-      "status": "started_polling",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-07",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_keyword_reassignment",
-      "status": "completed",
-      "cnt": 31
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_keyword_reassignment",
-      "status": "error",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_nurture",
-      "status": "error",
-      "cnt": 48
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_nurture",
-      "status": "sent",
-      "cnt": 200
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_nurture",
-      "status": "skipped",
-      "cnt": 503
-    },
-    {
-      "date": "2026-06-07",
-      "action": "pond_nurture",
-      "status": "suppressed",
-      "cnt": 554
-    },
-    {
-      "date": "2026-06-07",
-      "action": "stale_agent_pond_reassignment",
-      "status": "completed",
-      "cnt": 400
-    },
-    {
-      "date": "2026-06-07",
-      "action": "stale_agent_pond_reassignment",
-      "status": "launch_cap_reached",
-      "cnt": 6
-    },
-    {
-      "date": "2026-06-07",
-      "action": "stale_agent_pond_reassignment",
-      "status": "suppressed",
-      "cnt": 220
-    },
-    {
-      "date": "2026-06-08",
-      "action": "new_lead_reassigned",
-      "status": "completed",
-      "cnt": 2
-    },
-    {
-      "date": "2026-06-08",
-      "action": "new_lead_timer",
-      "status": "canceled_touched",
-      "cnt": 2
-    },
-    {
-      "date": "2026-06-08",
-      "action": "new_lead_timer",
-      "status": "started_polling",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-09",
-      "action": "new_lead_reassigned",
-      "status": "completed",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-09",
-      "action": "new_lead_timer",
-      "status": "canceled_touched",
-      "cnt": 6
-    },
-    {
-      "date": "2026-06-09",
-      "action": "new_lead_timer",
-      "status": "started_polling",
-      "cnt": 7
-    },
-    {
-      "date": "2026-06-09",
-      "action": "new_lead_warning",
-      "status": "created",
-      "cnt": 3
-    },
-    {
-      "date": "2026-06-10",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 43
-    },
-    {
-      "date": "2026-06-10",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-10",
-      "action": "pond_keyword_reassignment",
-      "status": "completed",
-      "cnt": 5
-    },
-    {
-      "date": "2026-06-10",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-10",
-      "action": "pond_nurture",
-      "status": "sent",
-      "cnt": 100
-    },
-    {
-      "date": "2026-06-10",
-      "action": "pond_nurture",
-      "status": "skipped",
-      "cnt": 252
-    },
-    {
-      "date": "2026-06-10",
-      "action": "pond_nurture",
-      "status": "suppressed",
-      "cnt": 183
-    },
-    {
-      "date": "2026-06-10",
-      "action": "stale_agent_pond_reassignment",
-      "status": "completed",
-      "cnt": 100
-    },
-    {
-      "date": "2026-06-10",
-      "action": "stale_agent_pond_reassignment",
-      "status": "launch_cap_reached",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-10",
-      "action": "stale_agent_pond_reassignment",
-      "status": "suppressed",
-      "cnt": 204
-    },
-    {
-      "date": "2026-06-11",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 44
-    },
-    {
-      "date": "2026-06-11",
-      "action": "new_lead_timer",
-      "status": "started_polling",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-11",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-11",
-      "action": "pond_keyword_reassignment",
-      "status": "completed",
-      "cnt": 3
-    },
-    {
-      "date": "2026-06-11",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-11",
-      "action": "pond_nurture",
-      "status": "sent",
-      "cnt": 100
-    },
-    {
-      "date": "2026-06-11",
-      "action": "pond_nurture",
-      "status": "skipped",
-      "cnt": 352
-    },
-    {
-      "date": "2026-06-11",
-      "action": "pond_nurture",
-      "status": "suppressed",
-      "cnt": 189
-    },
-    {
-      "date": "2026-06-11",
-      "action": "stale_agent_pond_reassignment",
-      "status": "completed",
-      "cnt": 5
-    },
-    {
-      "date": "2026-06-11",
-      "action": "stale_agent_pond_reassignment",
-      "status": "suppressed",
-      "cnt": 238
-    },
-    {
-      "date": "2026-06-12",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "cnt": 30
-    },
-    {
-      "date": "2026-06-12",
-      "action": "new_lead_timer",
-      "status": "canceled_touched",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-12",
-      "action": "new_lead_timer",
-      "status": "started_polling",
-      "cnt": 4
-    },
-    {
-      "date": "2026-06-12",
-      "action": "phase2_daily_summary",
-      "status": "sent",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-12",
-      "action": "pond_keyword_reassignment",
-      "status": "completed",
-      "cnt": 3
-    },
-    {
-      "date": "2026-06-12",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "cnt": 1
-    },
-    {
-      "date": "2026-06-12",
-      "action": "pond_nurture",
-      "status": "sent",
-      "cnt": 100
-    },
-    {
-      "date": "2026-06-12",
-      "action": "pond_nurture",
-      "status": "skipped",
-      "cnt": 455
-    },
-    {
-      "date": "2026-06-12",
-      "action": "pond_nurture",
-      "status": "suppressed",
-      "cnt": 189
-    },
-    {
-      "date": "2026-06-12",
-      "action": "stale_agent_pond_reassignment",
-      "status": "suppressed",
-      "cnt": 210
-    },
     {
       "date": "2026-06-13",
       "action": "agent_followup_reminder",
@@ -915,54 +510,2648 @@
       "action": "stale_agent_pond_reassignment",
       "status": "suppressed",
       "cnt": 170
+    },
+    {
+      "date": "2026-06-18",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-18",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-19",
+      "action": "closed_drip",
+      "status": "sent",
+      "cnt": 8
+    },
+    {
+      "date": "2026-06-19",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 79
+    },
+    {
+      "date": "2026-06-19",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-06-19",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-19",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_keyword_reassignment",
+      "status": "error",
+      "cnt": 4
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 819
+    },
+    {
+      "date": "2026-06-19",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 216
+    },
+    {
+      "date": "2026-06-19",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 108
+    },
+    {
+      "date": "2026-06-20",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-20",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-20",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-20",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-20",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 17
+    },
+    {
+      "date": "2026-06-20",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 1424
+    },
+    {
+      "date": "2026-06-20",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 326
+    },
+    {
+      "date": "2026-06-20",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 103
+    },
+    {
+      "date": "2026-06-21",
+      "action": "closed_drip",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-21",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 87
+    },
+    {
+      "date": "2026-06-21",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 12
+    },
+    {
+      "date": "2026-06-21",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 10
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 1645
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_nurture",
+      "status": "sms_error",
+      "cnt": 98
+    },
+    {
+      "date": "2026-06-21",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 377
+    },
+    {
+      "date": "2026-06-21",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 94
+    },
+    {
+      "date": "2026-06-22",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 88
+    },
+    {
+      "date": "2026-06-22",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 12
+    },
+    {
+      "date": "2026-06-22",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-22",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-22",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 38
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 1711
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_nurture",
+      "status": "sms_error",
+      "cnt": 98
+    },
+    {
+      "date": "2026-06-22",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 389
+    },
+    {
+      "date": "2026-06-22",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 95
+    },
+    {
+      "date": "2026-06-23",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 88
+    },
+    {
+      "date": "2026-06-23",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 12
+    },
+    {
+      "date": "2026-06-23",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-06-23",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 4
+    },
+    {
+      "date": "2026-06-23",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 7
+    },
+    {
+      "date": "2026-06-23",
+      "action": "new_lead_warning",
+      "status": "created_at_reassignment",
+      "cnt": 4
+    },
+    {
+      "date": "2026-06-23",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 19
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 116
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_nurture",
+      "status": "sms_error",
+      "cnt": 95
+    },
+    {
+      "date": "2026-06-23",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 184
+    },
+    {
+      "date": "2026-06-23",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 95
+    },
+    {
+      "date": "2026-06-25",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 256
+    },
+    {
+      "date": "2026-06-25",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 87
+    },
+    {
+      "date": "2026-06-25",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 13
+    },
+    {
+      "date": "2026-06-25",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-25",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-25",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-25",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-25",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-25",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-25",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-06-25",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 169
+    },
+    {
+      "date": "2026-06-25",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 201
+    },
+    {
+      "date": "2026-06-25",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 95
+    },
+    {
+      "date": "2026-06-26",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-26",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-26",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-26",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-26",
+      "action": "pond_nurture",
+      "status": "error",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-26",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 53
+    },
+    {
+      "date": "2026-06-26",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 319
+    },
+    {
+      "date": "2026-06-26",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 285
+    },
+    {
+      "date": "2026-06-26",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-06-28",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-28",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 3
+    },
+    {
+      "date": "2026-06-29",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-06-29",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-02",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-02",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-02",
+      "action": "new_lead_warning",
+      "status": "created_at_reassignment",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-02",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 17
+    },
+    {
+      "date": "2026-07-02",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 35
+    },
+    {
+      "date": "2026-07-02",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 39
+    },
+    {
+      "date": "2026-07-02",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-03",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-03",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-03",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 12
+    },
+    {
+      "date": "2026-07-03",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 228
+    },
+    {
+      "date": "2026-07-03",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 209
+    },
+    {
+      "date": "2026-07-03",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-04",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-04",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-04",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 62
+    },
+    {
+      "date": "2026-07-04",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 460
+    },
+    {
+      "date": "2026-07-04",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 435
+    },
+    {
+      "date": "2026-07-04",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 9
+    },
+    {
+      "date": "2026-07-05",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 39
+    },
+    {
+      "date": "2026-07-05",
+      "action": "closed_drip",
+      "status": "sent",
+      "cnt": 5
+    },
+    {
+      "date": "2026-07-05",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 87
+    },
+    {
+      "date": "2026-07-05",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 26
+    },
+    {
+      "date": "2026-07-05",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "pond_nurture",
+      "status": "error",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-05",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-05",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-05",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 359
+    },
+    {
+      "date": "2026-07-05",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 272
+    },
+    {
+      "date": "2026-07-05",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-06",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-06",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 92
+    },
+    {
+      "date": "2026-07-06",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 26
+    },
+    {
+      "date": "2026-07-06",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 5
+    },
+    {
+      "date": "2026-07-06",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 5
+    },
+    {
+      "date": "2026-07-06",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-06",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-06",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-06",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 1129
+    },
+    {
+      "date": "2026-07-06",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 461
+    },
+    {
+      "date": "2026-07-06",
+      "action": "stale_agent_pond_reassignment",
+      "status": "completed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-06",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-07",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-07",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 92
+    },
+    {
+      "date": "2026-07-07",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 26
+    },
+    {
+      "date": "2026-07-07",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-07",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-07",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-07",
+      "action": "pond_keyword_reassignment",
+      "status": "error",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-07",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-07",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-07",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 340
+    },
+    {
+      "date": "2026-07-07",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 270
+    },
+    {
+      "date": "2026-07-07",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 12
+    },
+    {
+      "date": "2026-07-08",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-08",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 91
+    },
+    {
+      "date": "2026-07-08",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 26
+    },
+    {
+      "date": "2026-07-08",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-08",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-08",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-08",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-08",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-08",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-08",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-08",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 523
+    },
+    {
+      "date": "2026-07-08",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 329
+    },
+    {
+      "date": "2026-07-08",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-09",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-09",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 90
+    },
+    {
+      "date": "2026-07-09",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 27
+    },
+    {
+      "date": "2026-07-09",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-09",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-09",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-09",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 604
+    },
+    {
+      "date": "2026-07-09",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 373
+    },
+    {
+      "date": "2026-07-09",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-10",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-10",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 89
+    },
+    {
+      "date": "2026-07-10",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 27
+    },
+    {
+      "date": "2026-07-10",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 3
+    },
+    {
+      "date": "2026-07-10",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 6
+    },
+    {
+      "date": "2026-07-10",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 9
+    },
+    {
+      "date": "2026-07-10",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-10",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-10",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-10",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-10",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 353
+    },
+    {
+      "date": "2026-07-10",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 287
+    },
+    {
+      "date": "2026-07-10",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-11",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-11",
+      "action": "closed_drip",
+      "status": "sent",
+      "cnt": 16
+    },
+    {
+      "date": "2026-07-11",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 89
+    },
+    {
+      "date": "2026-07-11",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 27
+    },
+    {
+      "date": "2026-07-11",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-11",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-11",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-11",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-11",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-11",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 595
+    },
+    {
+      "date": "2026-07-11",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 346
+    },
+    {
+      "date": "2026-07-11",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-12",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-12",
+      "action": "new_lead_reassigned",
+      "status": "completed",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-12",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 4
+    },
+    {
+      "date": "2026-07-12",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 6
+    },
+    {
+      "date": "2026-07-12",
+      "action": "new_lead_warning",
+      "status": "created",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-12",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-12",
+      "action": "pond_keyword_reassignment",
+      "status": "completed",
+      "cnt": 3
+    },
+    {
+      "date": "2026-07-12",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-12",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 101
+    },
+    {
+      "date": "2026-07-12",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 687
+    },
+    {
+      "date": "2026-07-12",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 347
+    },
+    {
+      "date": "2026-07-12",
+      "action": "reply_detected",
+      "status": "error",
+      "cnt": 185
+    },
+    {
+      "date": "2026-07-12",
+      "action": "speed_to_lead_alert",
+      "status": "sent",
+      "cnt": 5
+    },
+    {
+      "date": "2026-07-12",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 8
+    },
+    {
+      "date": "2026-07-13",
+      "action": "agent_followup_reminder",
+      "status": "email_digest_sent",
+      "cnt": 2
+    },
+    {
+      "date": "2026-07-13",
+      "action": "closed_drip",
+      "status": "skipped",
+      "cnt": 105
+    },
+    {
+      "date": "2026-07-13",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "cnt": 27
+    },
+    {
+      "date": "2026-07-13",
+      "action": "new_lead_timer",
+      "status": "canceled_touched",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "new_lead_timer",
+      "status": "started_polling",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "phase2_daily_summary",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "pond_nurture",
+      "status": "launch_cap_reached",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "pond_nurture",
+      "status": "sent",
+      "cnt": 100
+    },
+    {
+      "date": "2026-07-13",
+      "action": "pond_nurture",
+      "status": "skipped",
+      "cnt": 797
+    },
+    {
+      "date": "2026-07-13",
+      "action": "pond_nurture",
+      "status": "suppressed",
+      "cnt": 365
+    },
+    {
+      "date": "2026-07-13",
+      "action": "reply_detected",
+      "status": "error",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "speed_to_lead_alert",
+      "status": "sent",
+      "cnt": 1
+    },
+    {
+      "date": "2026-07-13",
+      "action": "stale_agent_pond_reassignment",
+      "status": "suppressed",
+      "cnt": 9
     }
   ],
   "suppressions": [
     {
       "reason": "closed_drip::manual suppression tag",
-      "count": 1
+      "count": 30
     },
     {
       "reason": "closed_drip::no email or email outreach disabled",
+      "count": 242
+    },
+    {
+      "reason": "pond_nurture::Barbara is under contract and unwilling to cancel, indicating she is no longer an active buyer.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Barbara is under contract on a home and unwilling to cancel, indicating she is no longer an active buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Emma clearly stated she is working with another realtor, indicating she is served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Emma explicitly stated she is working with another realtor, indicating she is served by someone else.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Grace is resigning her existing lease, indicating she is renting and not actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Grace is resigning her lease, indicating she is renting and not actively buying or selling.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Ivan prefers to work alone using Zillow, indicating he is not engaging with agent or CRM outreach.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Ivan prefers to work alone using Zillow, indicating he is not engaging with the agent or CRM outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Ivan prefers to work alone using Zillow, indicating no engagement with agent or CRM outreach.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Jesse explicitly put his home search on hold due to an urgent issue, indicating unavailability as a buyer currently.",
+      "count": 9
+    },
+    {
+      "reason": "pond_nurture::Jesse put his search on hold due to an urgent issue, indicating unavailability as a potential buyer currently.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead already purchased a property recently and requested removal from the list.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead appears to be working with another agent and loan officer, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead applied elsewhere and was told to save agent's number, indicating they are working with another agent.",
       "count": 6
     },
     {
+      "reason": "pond_nurture::Lead applied elsewhere and was told to save our number, indicating they are working with another agent.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead blocked calls and phone number, indicating a clear request to stop outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly stated calls were unacceptable, indicating a request to stop outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly stated no interest and misunderstood service, indicating no buyer intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead clearly stated no interest in a home, indicating they are no longer a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly stated no interest in buying, indicating they are no longer a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly stated they are not interested and misunderstood service, indicating no buyer intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly states 'not interested', indicating no longer available as a buyer or seller.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead clearly states 'not interested', indicating they are no longer available as a buyer or seller.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly states 'this is my referral, dont reach out,' indicating they are served by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead clearly states no move for 8 years, indicating not currently available as buyer.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead closed on another home, indicating no longer active in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead closed on another home, indicating they are no longer active in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead confirmed not moving to San Antonio and remains in Puerto Rico, indicating relocation away from Texas market.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead confirmed purchasing a home in November 2025, indicating no longer an active buyer.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead considering renting, confused, slow to decide, and not actively pursuing buying now.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead currently in Georgia, retiring from military in 2 years, indicating relocation away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead currently lives in Mexico City and is relocating back to Austin, indicating out-of-market status for now.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead currently lives in Mexico City and is relocating back to Austin, indicating out-of-market status.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead currently lives in Mexico City and is relocating back to Austin, indicating temporary out-of-market status.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead ended up finding a home, indicating no longer in the market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly asked to be taken off the list; outreach was previously skipped for this reason.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly decided not to move to Texas, indicating relocation away from target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly decided not to move to Texas, indicating relocation away from the target market.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly requested removal and stated they were never interested multiple times.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly requested removal multiple times and stated they were never interested.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly requested to only receive emails, indicating a preference to limit outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly requested to stop outreach and found calls unacceptable multiple times across many notes.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly requested to stop outreach and stated calls were unacceptable multiple times.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly responded 'Not interested,' indicating a clear request to stop outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly said they are putting the search on hold due to unresolved issues, indicating no current buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated 'Not interested \u201cmade a mistake\u201d', indicating they want outreach stopped.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated 'Not interested, staying put,' indicating no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated 'Not interested, staying put,' indicating they are no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated 'Not looking', indicating they are no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated calls were unacceptable, clearly requesting to stop outreach.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated she is not looking anymore, indicating she is no longer a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated they decided not to move to Texas, indicating relocation away from target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly stated they decided not to move to Texas, indicating relocation away from the target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly states not moving to Texas, relocating to Tennessee for a job offer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly states they are a referral and not to be contacted, indicating they are served by another agent.",
+      "count": 8
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly states they are a referral and requests no contact, indicating they are served by another agent.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly unsubscribed and opted out of all automated outreach, confirmed by compliance actions.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly unsubscribed and opted out of all communications per automated compliance action.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead explicitly unsubscribed and opted out; automated actions confirm no further outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead found a home, indicating they are no longer in the market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead found a place without agent but will keep in touch, indicating they are currently working with someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead found a place without this agent and is currently working with someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead found a place without this agent but will keep in touch, indicating current engagement with another party.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead found an apartment, indicating they are no longer in the market to buy a home.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead has a wrong number, making communication impossible and indicating unavailability.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead has a wrong number, making outreach impossible and effectively unavailable as a potential buyer.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead has about 3 real estate agents involved, indicating they are being served by others.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead has invalid phone number, likely a bad lead; no clear buyer/seller intent but contact info invalid.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead has moved into a rental property, indicating they are no longer actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead has signed with another realtor and is being served by someone else.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead inactive for 173 days, moved to Lead Pond due to no active buying intent or conversion.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead inactive for 173 days, moved to Lead Pond due to no conversion, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead inactive for 490 days with no conversion, indicating no current buying intent or engagement.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead inactive for 490 days without conversion, moved to pond; indicates no current buying intent or engagement.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead inactive over a year and not currently looking, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is a builder focused on Laredo, not the Austin market, indicating relocation outside target area.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is a builder focused on Laredo, outside Austin market, indicating permanent relocation outside target area.",
+      "count": 7
+    },
+    {
+      "reason": "pond_nurture::Lead is a builder focused on Laredo, outside Austin, indicating permanent relocation outside target market.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead is a builder focused on Laredo, outside the Austin market, indicating relocation outside target area.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is a builder focused on building in Laredo, outside the Austin market, indicating relocation outside target area.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to Tiffany, indicating committed agent service and removal from automation.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to Tiffany, removed from automation, indicating dedicated agent service.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to Tiffany, who is removed from automation, indicating dedicated agent service.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to agent Tiffany Proske and removed from automation, indicating they are being served by someone else.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to agent Tiffany Proske and removed from automation, indicating they are served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to agent Tiffany and removed from automation, indicating they are being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to agent Tiffany and removed from automation, indicating they are served by someone else.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is actively assigned to agent Tiffany, who is removed from automation, indicating agent is serving lead.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead is actively moving forward with a purchase and starting paperwork to close by July.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively moving forward with purchase and starting paperwork to close by July.",
+      "count": 13
+    },
+    {
+      "reason": "pond_nurture::Lead is actively seeking a rental, indicating no current interest in buying or selling a home.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively seeking a rental, showing no current interest in buying or selling a home.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Lead is actively under contract to buy contingent on selling current home, indicating ongoing transaction.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Lead is actively working with about 3 real estate agents, indicating they are being served by others.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively working with another agent and aware of it, as confirmed by multiple notes.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively working with another agent and aware of it; multiple notes confirm this clearly.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is actively working with another agent and aware of our company not being a builder.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is already working with a realtor in Belton, indicating committed representation by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is already working with another realtor, indicating they are being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is being served by another agent (Olympia) via referral from Arizona agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is clearly working with another agent (Olympia) referred by their Arizona agent, indicating they are being served elsewhere.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is clearly working with another agent (Olympia) referred by their Arizona agent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is clearly working with another agent, Olympia, referred by their Arizona agent.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is confirmed working with a realtor in Belton, showing committed representation by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is currently in Colorado and planning to relocate to Texas, indicating permanent relocation intent.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is currently seeking a rental, indicating no active interest in buying or selling a home.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is currently working with another realtor, indicating they have representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is fake and number does not work, indicating they are not available as a potential buyer or seller.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is focused on renting a property, indicating no current buyer intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is focused on renting, indicating no current buyer intent, matching intent A criteria.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is inactive, moved to Lead Pond, and reassigned to agent; automation paused for direct agent follow-up.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is located in Chicago, outside San Antonio, indicating permanent relocation away from target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is located in Chicago, outside Texas market, indicating permanent relocation away from target area.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is moving in September, indicating relocation likely outside the target Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is moving next month, indicating likely relocation outside the target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is moving next month, indicating relocation likely out of the target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is moving next month, indicating relocation likely outside the target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is moving out of town and currently out of state, indicating relocation outside target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is moving out of town and currently out of state, indicating relocation outside the target market.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Lead is moving to Spain and leasing out Texas property, indicating permanent relocation from the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is not currently looking and has been inactive for over a year, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is not currently looking and inactive over a year, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is pending a high-value rental lease, indicating no current buying intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is pending a high-value rental lease, indicating no current buying or selling intent.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead is pending a lease at The Asher, indicating they are renting and not currently buying.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is pending a lease for a rental property, indicating they are not currently buying or selling.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Lead is pending a lease for a rental, indicating they are not currently buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is permanently relocating to Spain and leasing out Texas property, indicating no longer in local market.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Lead is permanently relocating to Spain and leasing out Texas property, no longer in local market.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Lead is relocating from California, indicating permanent move away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is relocating from Hawaii to Texas, indicating permanent move into target market, not away; however, intent to move out of current location is clear.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is renewing current lease, indicating not actively buying or selling now.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is renting a 12-14 month lease, indicating not currently buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is renting in Cedar Heights, indicating they are no longer actively buying or selling.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is repeatedly noted as located in Chicago, outside Texas market, indicating permanent relocation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is seeking a rental, indicating no current interest in buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract contingent on selling current home, actively transacting, not a cold lead.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract contingent on selling current home, actively transacting, not a cold or inactive lead.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract contingent on selling current home, indicating active transaction and not a cold lead.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract for a lease, indicating no longer actively searching to buy a home.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract for a lease, indicating no longer actively searching to buy.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract on a new build, indicating they are no longer actively searching.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is under contract to buy contingent on selling current home, actively transacting, not a cold or inactive lead.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead is working with another agent and loan officer, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead likely a realtor herself, indicating she is served by another professional, so skip nurture emails.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and is permanently relocating near VA hospitals in Virginia, leaving Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and is relocating permanently near VA hospitals in Virginia, leaving Texas market.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and plans to move near VA hospitals in Virginia, relocating away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and plans to move near VA hospitals, indicating relocation away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and plans to move, indicating relocation away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead listed home in Hawaii and plans to relocate near VA hospitals in Virginia, leaving Texas market.",
+      "count": 10
+    },
+    {
+      "reason": "pond_nurture::Lead lives in Florida with no plans to move to Texas, indicating permanent relocation outside target market.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead lives in Maryland and is not moving to Texas, indicating permanent relocation outside target market.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead moved into a rental property, indicating no longer actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead moved into a rental property, indicating they are no longer actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead owns a home, renting it out, indicating no current buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead owns and rents out home, buying search on hold, no current buying intent indicated in multiple notes.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead owns and rents out home, buying search on hold, no current buying intent indicated.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead owns and rents out home; buying search is explicitly on hold with no current buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead plans to rent a house, indicating no longer actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead purchased a property recently and requested removal from outreach list.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned back to Tiffany per owner request, removed from automation, indicating active agent servicing.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned back to Tiffany per owner request; Tiffany removed from automation, indicating active agent service.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned multiple times to agent Peter Allen, indicating active representation by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany Proske per owner request, indicating active representation by another agent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany Proske per owner request, removed from automation, indicating active agent representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany Proske, removed from automation, indicating active agent servicing.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany and removed from automation indicates active agent representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany and removed from automation indicates active representation by another agent.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany per owner request, indicating active agent servicing and removal from automation.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany per owner request, removed from automation, indicating active agent servicing.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is actively serving; automation removed indicating committed agent service.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active agent representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active agent service and no further automated emails.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active agent service and no further nurture needed.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active agent service and no need for automated nurture.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active agent servicing.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who is removed from automation, indicating active representation by another agent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who was removed from automation, indicating active agent involvement.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany who was removed from automation, indicating active agent service and no further automated emails.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany, an active agent removed from automation, indicating they are being served by someone else.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany, removed from automation, indicating active agent service and no need for automated nurture.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to Tiffany, who is removed from automation, indicating active agent servicing by another professional.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to agent Peter Allen, indicating active representation by another agent.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead reassigned to agent Peter Allen, indicating active service by another agent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead referred to another agent with agreed split, indicating committed representation by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead relocated to New Braunfels and plans to restart search in May, indicating temporary geographic irrelevance to San Antonio market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead renewed lease and is no longer looking to buy a home, indicating they are off the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead renewed lease and is no longer looking to buy, clearly off the market.",
+      "count": 8
+    },
+    {
+      "reason": "pond_nurture::Lead renewed lease and is no longer looking to buy, indicating they are off the market.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Lead rented a property, indicating no longer in the market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly reassigned to agent Peter Allen, indicating active representation by another agent.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly states 'not interested' and explicitly asks to stop outreach, indicating no further contact desired.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly states 'not interested' and explicitly asks to stop outreach, showing clear no-contact intent.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly states 'not interested', clearly asking to stop outreach and no further contact.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly states 'not interested', indicating they are no longer available as a buyer or seller.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead repeatedly states 'not interested', indicating they are no longer available as buyer or seller.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead stated calls were unacceptable, indicating a request to stop outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead stated they decided not to move to Texas, indicating relocation away from target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead stated they may live with parents for now and will reach out if anything changes, indicating indefinite hold.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead stated they may live with parents for now and will reach out if anything changes, indicating pause or indefinite hold.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead states 'this is my referral, dont reach out,' indicating they are served by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead states no move for 8 years, indicating not currently available as buyer.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead unreachable with wrong number and no engagement over a year, indicating no active buying intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Lead unreachable, wrong number, no engagement for over a year, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead unreachable, wrong number, no engagement over a year, indicating no active buying intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead's phone number is invalid/out of service, preventing contact; no clear disqualifying intent but outreach is ineffective.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Lead's social profile shows they are in California, indicating relocation away from Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly confirm lead is actively working with another agent and aware of it.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state 'Agent. Not interested,' indicating lead is no longer available as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Amanda has a Realtor and is being served by someone else.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Mallory is focused on renting, indicating no current buyer intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Mallory is focused on renting, showing no current buyer intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Megan purchased a home in November 2025, so she is no longer an active buyer.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Ruthann is working with another realtor, indicating she is served by someone else.",
+      "count": 12
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Tina found a place and is no longer in the market.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Xavier is working with another Realtor, indicating he is served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state Zuriel is working with another agent, indicating existing representation.",
+      "count": 10
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead closed on another home, indicating no longer active in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead explicitly requested to stop outreach and calls were unacceptable.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead found a home and is no longer in the market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead found a home, indicating they are no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead has signed with another realtor and is being served by someone else.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is 'Not interested, staying put,' indicating no longer in the market.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is no longer looking and not an active buyer.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is no longer looking, indicating she is not an active buyer.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is working with and committed to another realtor.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is working with another realtor and committed elsewhere.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is working with another realtor, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead is working with another realtor, indicating existing representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes clearly state lead requested to stop outreach and calls were unacceptable.",
+      "count": 7
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm Kimberly is working with a realtor in Belton, indicating committed representation by another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm Kimberly is working with a realtor in Belton, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm Megan purchased a home in November 2025, indicating she is no longer an active buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm Megan purchased a home in November 2025, so she is no longer an active buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm lead found a home and is no longer in the market to buy or sell.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm lead found a home, so no longer in the market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm lead is actively working with another agent and aware of it.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm wrong number and no contact for over 419 days, indicating lead is no longer available.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm wrong number and no contact for over 419 days, indicating no potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes confirm wrong number, making contact impossible and lead unavailable.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes consistently confirm Ruthann is working with another realtor, indicating she is served by someone else.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Multiple notes consistently state Zuriel is working with another agent, indicating existing representation.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Multiple notes explicitly state 'Not looking', indicating lead is no longer in the market.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes explicitly state Xavier is working with another Realtor, indicating he is served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes explicitly state Zuriel is working with another agent, indicating existing representation.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Multiple notes indicate wrong number and no contact for over 419 days, effectively no longer a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes indicate wrong number; lead unreachable and inactive over 419 days, effectively no longer a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Multiple notes state 'Agent. Not interested,' indicating lead is no longer available as a buyer.",
+      "count": 8
+    },
+    {
+      "reason": "pond_nurture::Multiple notes state lead is 'Not interested, staying put,' clearly indicating no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note 'No longer interested in' clearly indicates lead is no longer available as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note 'No longer interested in' clearly shows lead is no longer available as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note clearly states Zuriel is working with another agent, indicating they have representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note explicitly states she is no longer looking to buy a home.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note states 'Agent. Not interested,' indicating lead is no longer available as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note states 'Agent. Not interested,' indicating lead is no longer available as a potential buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Note states lead is moving in September, indicating relocation likely out of target market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly indicate lead is already working with another agent, fulfilling intent B criteria.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly indicate lead is not looking to buy and likely unavailable as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly indicate lead is working with another agent, fulfilling intent B criteria.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly show Arnold is working with another agent, Olympia, referred by his Arizona agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly show Mallory is focused on renting, indicating no current buyer intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly show Miriam is working with another agent and loan officer, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly show lead moved into a rental, indicating no longer actively buying or selling.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes clearly show lead owns and rents out home; buying search is explicitly on hold with no current intent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state Alyssa already has a realtor and is being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state Amanda has a Realtor and is being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead found a place and is no longer in the market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead found a place without this agent and is working with someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead has signed with another realtor and is being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is already working with another agent, indicating intent B.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is moving next month, indicating relocation outside the Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is not in market and not looking, indicating no current buying intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is working with another agent and aware of it; multiple confirmations present.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is working with another realtor, indicating committed representation.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead is working with another realtor, indicating they have representation.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead purchased a property and requested removal from outreach.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state lead purchased property and requested removal from outreach list.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state she is no longer looking to buy a home.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes clearly state she is working with a realtor, indicating another agent is serving her.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently indicate Cecy is a realtor herself, meaning she is served by another professional.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently indicate Juana permanently relocated to Chicago, outside Texas market.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes consistently indicate Mary is working with another agent, fulfilling intent B criteria.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently indicate lead purchased property and requested removal from outreach list.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show Arnold is working with another agent, Olympia, referred by his Arizona agent.",
+      "count": 10
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show Miriam is working with another agent and loan officer, indicating committed representation.",
+      "count": 16
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show Viviana is renting, indicating she is no longer actively buying or selling.",
+      "count": 10
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead is actively seeking a rental, not interested in buying or selling a home.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead is actively seeking a rental, not interested in buying or selling.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead is seeking a rental, not interested in buying or selling a home.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead moved into a rental, indicating no longer actively buying or selling.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead moved into a rental, indicating they are no longer actively buying or selling.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently show lead owns and rents out home; buying search is explicitly on hold with no current intent.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state Juana is permanently located in Chicago, outside Texas market, indicating relocation.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state Juana permanently relocated to Chicago, outside Texas market.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state Mary is working with another agent, fulfilling intent B criteria.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state lead is not in market and not looking to buy, indicating no current buying intent.",
+      "count": 11
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state lead purchased a property and requested removal from outreach list.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes consistently state lead purchased property and requested removal from outreach list.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes indicate Amanda has a Realtor and is being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes indicate lead has a realtor, showing they are being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes indicate lead is not looking to buy and likely unavailable as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly and explicitly state Dan is working with another realtor, indicating existing representation.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly confirm Alyssa is already working with another realtor and being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state Alyssa already has a realtor and is being served by someone else.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state Dan is working with another realtor, indicating existing representation.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state Juana is located in Chicago, indicating permanent relocation outside Texas market.",
+      "count": 3
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead found a place without this agent and is working with someone else.",
+      "count": 6
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead is in Chicago, indicating permanent relocation outside Texas market.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead is moving next month, indicating relocation outside the Texas market.",
+      "count": 4
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead rented a property and is no longer in the market to buy or sell.",
+      "count": 5
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead rented a property, indicating they are no longer in the market to buy or sell.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead rented property, indicating no longer in market to buy or sell.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes repeatedly state lead rented property, indicating they are no longer in the market to buy or sell.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Notes state 'Agent. Not interested,' indicating lead is no longer available as a buyer.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes strongly suggest Cecy is a realtor herself, indicating she is served by another professional.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Notes strongly suggest Krystal is a realtor, indicating she is likely served by herself or another agent.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Number not in service likely indicates no contact possible, suggesting opt-out or unreachable status.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Number not in service suggests unreachable or opted out, indicating lead cannot be contacted.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Number not in service suggests unreachable or opted out, indicating no contact possible.",
+      "count": 1
+    },
+    {
+      "reason": "pond_nurture::Rep agreement signed indicates lead is committed to an agent, so skip nurture emails.",
+      "count": 2
+    },
+    {
+      "reason": "pond_nurture::Repeated 'number not in service' notes indicate lead is unreachable or effectively opted out of contact.",
+      "count": 12
+    },
+    {
+      "reason": "pond_nurture::Repeated 'number not in service' notes strongly indicate lead is unreachable or effectively opted out of contact.",
+      "count": 1
+    },
+    {
       "reason": "pond_nurture::excluded stage/tag or manual suppression tag",
-      "count": 596
+      "count": 2434
     },
     {
       "reason": "pond_nurture::no eligible email channel or email outreach disabled",
-      "count": 1804
+      "count": 4991
     },
     {
       "reason": "stale_agent_pond_reassignment::excluded/manual suppression/already in pond",
-      "count": 1194
+      "count": 1539
     },
     {
       "reason": "stale_agent_pond_reassignment::protected stage",
-      "count": 828
+      "count": 1138
     }
   ],
   "cities": [
     {
       "city": "San Antonio",
-      "count": 704
+      "count": 1712
     },
     {
       "city": "Austin",
-      "count": 551
+      "count": 1046
     },
     {
       "city": "Dallas",
-      "count": 6
+      "count": 20
     },
     {
       "city": "Fort Worth",
-      "count": 2
+      "count": 7
     },
     {
       "city": "New Braunfels",
-      "count": 25
+      "count": 52
     },
     {
       "city": "Leander",
@@ -970,33 +3159,49 @@
     },
     {
       "city": "Other",
-      "count": 6
+      "count": 11
     },
     {
       "city": "Georgetown",
-      "count": 2
+      "count": 3
     },
     {
       "city": "Pflugerville",
-      "count": 1
+      "count": 2
     },
     {
       "city": "Houston",
-      "count": 3
+      "count": 6
+    },
+    {
+      "city": "Helotes",
+      "count": 1
+    },
+    {
+      "city": "Buda",
+      "count": 1
+    },
+    {
+      "city": "Texas Fallback",
+      "count": 1
     }
   ],
   "city_sources": [
     {
       "source": "lead_fields",
-      "count": 1021
+      "count": 1701
     },
     {
       "source": "fub_notes",
-      "count": 280
+      "count": 1161
+    },
+    {
+      "source": "Fallback",
+      "count": 1
     }
   ],
   "conversions": {
-    "total_nurtured": 1301,
+    "total_nurtured": 1887,
     "conversions_count": 1,
     "conversion_rate": 0.1,
     "stages_breakdown": [
@@ -1028,1054 +3233,661 @@
       "phone": "551-786-0893",
       "stage": "Hot Prospect",
       "city": "Texas",
-      "days_stale": 58,
+      "days_stale": 84,
       "sms_body": "Hey Mark, are you still looking to purchase a home? \ud83c\udfe1",
       "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15517860893&body=Hey%20Mark%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=5871",
       "assigned_agent": "Peter",
       "assigned_agent_id": 2,
       "notes": "Wells Fargo Employer, relocating from New York. under 400k with high ceilings would be ideal. 1 year old child so good school district will be good. Not a veteran. 30-40k down payment. Send 4 bedroom ",
       "last_inbound_text": ""
-    },
-    {
-      "id": 5843,
-      "name": "Eugene Ransom",
-      "phone": "509-237-2838",
-      "stage": "Unresponsive",
-      "city": "Texas",
-      "days_stale": 63,
-      "sms_body": "Hey Eugene, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15092372838&body=Hey%20Eugene%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Peter&lead_id=5843",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "follow up complete",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4874,
-      "name": "Ermelinda De La Garza",
-      "phone": "2182153035",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 158,
-      "sms_body": "Hey Ermelinda, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B12182153035&body=Hey%20Ermelinda%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Peter&lead_id=4874",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4842,
-      "name": "Ahmad Aldreini",
-      "phone": "9496789531",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 166,
-      "sms_body": "Hey Ahmad, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B19496789531&body=Hey%20Ahmad%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Peter&lead_id=4842",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "Saw Video of the house near the Rim for 950k. Wants to put 30-50k down and be 4000 per month budget only in the Rim or La Cantera 3-4 bedrooms. Did not seem very serious and when asked what other area",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4706,
-      "name": "Veronica Martinez",
-      "phone": "7134999684",
-      "stage": "Unresponsive",
-      "city": "Texas",
-      "days_stale": 232,
-      "sms_body": "Hey Veronica, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B17134999684&body=Hey%20Veronica%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=4706",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4697,
-      "name": "Drew Kennett",
-      "phone": "615-785-4161",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 242,
-      "sms_body": "Hey Drew, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B16157854161&body=Hey%20Drew%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Steven&lead_id=4697",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "CLOSED | CLosed client",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4631,
-      "name": "Eduardo Samaniego",
-      "phone": "3235940375",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 274,
-      "sms_body": "Hey Eduardo, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B13235940375&body=Hey%20Eduardo%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Tiffany&lead_id=4631",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4587,
-      "name": "Elijah Chapa Elijah Chapa",
-      "phone": "3616609622",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 284,
-      "sms_body": "Hey Elijah, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B13616609622&body=Hey%20Elijah%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Luke&lead_id=4587",
-      "assigned_agent": "Luke",
-      "assigned_agent_id": 16,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4561,
-      "name": "Busybee Busybee",
-      "phone": "(719) 251-4402",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 288,
-      "sms_body": "Hey Busybee, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B17192514402&body=Hey%20Busybee%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Luke&lead_id=4561",
-      "assigned_agent": "Luke",
-      "assigned_agent_id": 16,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4532,
-      "name": "Monique McElveen",
-      "phone": "(512) 589-2932",
-      "stage": "Nurture",
-      "city": "Texas",
-      "days_stale": 293,
-      "sms_body": "Hey Monique, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15125892932&body=Hey%20Monique%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Tiffany&lead_id=4532",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4481,
-      "name": "Babette Bocage-Shelton",
-      "phone": "5107147482",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 306,
-      "sms_body": "Hey Babette, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15107147482&body=Hey%20Babette%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Tiffany&lead_id=4481",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4368,
-      "name": "Kiran Telukutla",
-      "phone": "4698657929",
-      "stage": "Nurture",
-      "city": "Texas",
-      "days_stale": 357,
-      "sms_body": "Hey Kiran, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B14698657929&body=Hey%20Kiran%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=4368",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4287,
-      "name": "Tine Abraham",
-      "phone": "8622022113",
-      "stage": "Hot Prospect",
-      "city": "Texas",
-      "days_stale": 370,
-      "sms_body": "Hey Tine, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B18622022113&body=Hey%20Tine%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Tiffany&lead_id=4287",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "Text follow-up",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4144,
-      "name": "Shane Porche",
-      "phone": "8308327109",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 380,
-      "sms_body": "Hey Shane, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B18308327109&body=Hey%20Shane%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Steven&lead_id=4144",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Called 1836 management company. No answer, left voicemail. Will call again and bother them until I get an answer. Number: 512-788-9115 | Scheduled 395 Mauna Loa Ln for 2pm, will show Mauna Loa and our Mamalu listing and close one of them. | 830-832-7109 is the number lead has been texting me from.",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4123,
-      "name": "Ivan De La Garza",
-      "phone": "528181614207",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 385,
-      "sms_body": "Hey Ivan, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=528181614207&body=Hey%20Ivan%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Steven&lead_id=4123",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Monterrey MX. Him and wife San Antonio. Wife is american, planning to finance purchase down payment 125K max down payment. School districts important, maybe Northside ISD. 2000k 350 preference to 2 st",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4118,
-      "name": "Austin Breen",
-      "phone": "9285808038",
-      "stage": "Nurture",
-      "city": "Texas",
-      "days_stale": 387,
-      "sms_body": "Hey Austin, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B19285808038&body=Hey%20Austin%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Tiffany&lead_id=4118",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4108,
-      "name": "Dime Hndz",
-      "phone": "(210) 929-9417",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 389,
-      "sms_body": "Hey Dime, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B12109299417&body=Hey%20Dime%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Peter&lead_id=4108",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4102,
-      "name": "Jane Doe",
-      "phone": "8001000000",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 391,
-      "sms_body": "Hey Jane, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B18001000000&body=Hey%20Jane%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Peter&lead_id=4102",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4075,
-      "name": "Christina Lozano",
-      "phone": "(512) 701-2833",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 397,
-      "sms_body": "Hey Christina, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15127012833&body=Hey%20Christina%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Laila&lead_id=4075",
-      "assigned_agent": "Laila",
-      "assigned_agent_id": 35,
-      "notes": "Called, left v/m, text",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4052,
-      "name": "Krysthimar Hopkins",
-      "phone": "(805) 972-9692",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 400,
-      "sms_body": "Hey Krysthimar, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B18059729692&body=Hey%20Krysthimar%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=4052",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 4008,
-      "name": "Chris Justlookiing",
-      "phone": "(210) 671-6666",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 409,
-      "sms_body": "Hey Chris, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B12106716666&body=Hey%20Chris%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Luke&lead_id=4008",
-      "assigned_agent": "Luke",
-      "assigned_agent_id": 16,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3972,
-      "name": "Diane Washington",
-      "phone": "9142993663",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 415,
-      "sms_body": "Hey Diane, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B19142993663&body=Hey%20Diane%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Tiffany&lead_id=3972",
-      "assigned_agent": "Tiffany",
-      "assigned_agent_id": 20,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3860,
-      "name": "Stephanie Venuto",
-      "phone": "7747660518",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 426,
-      "sms_body": "Hey Stephanie, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B17747660518&body=Hey%20Stephanie%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=3860",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "Left voicemail and text message",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3821,
-      "name": "Mzmary",
-      "phone": "+2348128507887",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 429,
-      "sms_body": "Hey Mzmary, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B2348128507887&body=Hey%20Mzmary%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Steven&lead_id=3821",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Spam",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3808,
-      "name": "Martin Baez",
-      "phone": "7377428540",
-      "stage": "Nurture",
-      "city": "Texas",
-      "days_stale": 430,
-      "sms_body": "Hey Martin, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B17377428540&body=Hey%20Martin%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Steven&lead_id=3808",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "\u2705 Day 1: Intro & First Listings\nText:\nHey Martin, it\u2019s Richard Roecker with Lifestyle Design Realty. Excited to help you find a 1-bedroom in South Austin under $1,200! Just sent you an email with a fe",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3714,
-      "name": "Tony Verdin",
-      "phone": "5129562248",
-      "stage": "Unresponsive",
-      "city": "Texas",
-      "days_stale": 438,
-      "sms_body": "Hey Tony, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15129562248&body=Hey%20Tony%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Steven&lead_id=3714",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Day 1\nHey Tony! It\u2019s Richard Roecker with Lifestyle Design Realty. I\u2019m working on 2-bed options under $1,800 for you. I just sent you an email\u2014check your spam/junk folder just in case it landed there.",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3651,
-      "name": "Josie Cruz",
-      "phone": "3202600558",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 443,
-      "sms_body": "Hey Josie, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B13202600558&body=Hey%20Josie%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Luke&lead_id=3651",
-      "assigned_agent": "Luke",
-      "assigned_agent_id": 16,
-      "notes": "",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3612,
-      "name": "Maia Beard",
-      "phone": "7262140034",
-      "stage": "Unresponsive",
-      "city": "Texas",
-      "days_stale": 446,
-      "sms_body": "Hey Maia, are you still looking to purchase a home? \ud83c\udfe1",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B17262140034&body=Hey%20Maia%2C%20are%20you%20still%20looking%20to%20purchase%20a%20home%3F%20%F0%9F%8F%A1&agent=Peter&lead_id=3612",
-      "assigned_agent": "Peter",
-      "assigned_agent_id": 2,
-      "notes": "Sent email from MLS. \nHi Maia,\nThanks for the quick reply! I'm glad you liked the layout\u2014though I'm not sure why that builder popped up so far out in Elmendorf. That definitely wasn't the goal.\nI'll t | Sent new homes for KB and Castle Rock through MLS since they are not apart of Home Buddy. Also sent follow-up text message. | Maia reached back out and informed that she would like to see some different new construction builds. Wanted to know about Century and KB Homes",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3601,
-      "name": "Zack Klunick",
-      "phone": "(432) 413-6034",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 446,
-      "sms_body": "Hey Zack, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B14324136034&body=Hey%20Zack%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Steven&lead_id=3601",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Hey Zack, this is Richard Roecker with Lifestyle Design Realty! I saw you're looking for a 1-bedroom apartment in East Austin under $1,200. I just sent you some listings\u2014be sure to check your spam/jun",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3557,
-      "name": "Deep Gill",
-      "phone": "2093664362",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 450,
-      "sms_body": "Hey Deep, hope your week is going awesome! Are you still thinking about finding a home in Texas or has your timeline changed? \u2728",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B12093664362&body=Hey%20Deep%2C%20hope%20your%20week%20is%20going%20awesome%21%20Are%20you%20still%20thinking%20about%20finding%20a%20home%20in%20Texas%20or%20has%20your%20timeline%20changed%3F%20%E2%9C%A8&agent=Luke&lead_id=3557",
-      "assigned_agent": "Luke",
-      "assigned_agent_id": 16,
-      "notes": "<p>Phone number and email do not work <span data-user-id=\"1\">Steven Van Orden</span> </p> | Follow-up email scheduled for tomorrow",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3556,
-      "name": "Juliet Robb",
-      "phone": "5129832529",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 450,
-      "sms_body": "Hey Juliet, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B15129832529&body=Hey%20Juliet%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Steven&lead_id=3556",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "Texted at 9:52am 3/24",
-      "last_inbound_text": ""
-    },
-    {
-      "id": 3522,
-      "name": "Karifa",
-      "phone": "6093176040",
-      "stage": "Lead",
-      "city": "Texas",
-      "days_stale": 452,
-      "sms_body": "Hey Karifa, happy Wednesday! Just checking in to see if you got a chance to look over those homes in Texas lately? \ud83c\udfe1\u2615",
-      "sms_link": "https://fub-nurture-phfprjui.manus.space/sms-redirect?phone=%2B16093176040&body=Hey%20Karifa%2C%20happy%20Wednesday%21%20Just%20checking%20in%20to%20see%20if%20you%20got%20a%20chance%20to%20look%20over%20those%20homes%20in%20Texas%20lately%3F%20%F0%9F%8F%A1%E2%98%95&agent=Steven&lead_id=3522",
-      "assigned_agent": "Steven",
-      "assigned_agent_id": 1,
-      "notes": "",
-      "last_inbound_text": ""
     }
   ],
   "recent_activity": [
     {
-      "id": 17882,
-      "created_at": "2026-06-17T13:32:46.727168+00:00",
+      "id": 40625,
+      "created_at": "2026-07-13T15:09:05.862823+00:00",
       "action": "phase2_daily_summary",
       "status": "sent",
       "person_id": null,
       "details": {
-        "row_count": 1523,
+        "row_count": 1273,
         "to": "pe***@lifestyledesignrealty.com"
       }
     },
     {
-      "id": 17881,
-      "created_at": "2026-06-17T13:31:15.276713+00:00",
-      "action": "closed_drip",
-      "status": "launch_cap_reached",
-      "person_id": null,
-      "details": {
-        "cap": 20
-      }
-    },
-    {
-      "id": 17880,
-      "created_at": "2026-06-17T13:31:15.275902+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 4511,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Sphere",
-        "subject": "Hey Taylor, how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17879,
-      "created_at": "2026-06-17T13:31:07.872579+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 144,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "How\u2019s the home feeling these days, Carolina? \ud83c\udfe1\u2728"
-      }
-    },
-    {
-      "id": 17878,
-      "created_at": "2026-06-17T13:30:59.684774+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2675,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Cecelia how\u2019s the home treating you? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17877,
-      "created_at": "2026-06-17T13:30:51.807686+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2679,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "How\u2019s the home treating you, Mariangelica? \ud83c\udfe1\u2728"
-      }
-    },
-    {
-      "id": 17876,
-      "created_at": "2026-06-17T13:30:44.158289+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2708,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Ashleen, how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17875,
-      "created_at": "2026-06-17T13:30:35.688007+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2709,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Kevin how\u2019s the home treating you? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17874,
-      "created_at": "2026-06-17T13:30:28.634756+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2710,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Joshua, how's the home treating you? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17873,
-      "created_at": "2026-06-17T13:30:19.325656+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2712,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Bo, how\u2019s the home feeling these days? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17872,
-      "created_at": "2026-06-17T13:30:11.662945+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2713,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Just checking in\u2014how\u2019s the home feeling these days?"
-      }
-    },
-    {
-      "id": 17871,
-      "created_at": "2026-06-17T13:30:00.239468+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2715,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Just checking in on your home, Joel \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17870,
-      "created_at": "2026-06-17T13:29:51.320302+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2716,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Sarah, how\u2019s the home feeling these days? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17869,
-      "created_at": "2026-06-17T13:29:44.631116+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2717,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Balaji, how\u2019s the home treating you these days?"
-      }
-    },
-    {
-      "id": 17868,
-      "created_at": "2026-06-17T13:29:36.066745+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2718,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Cristiane how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17867,
-      "created_at": "2026-06-17T13:29:30.168147+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2719,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Kasey, how\u2019s the home feeling these days?"
-      }
-    },
-    {
-      "id": 17866,
-      "created_at": "2026-06-17T13:29:21.982810+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2720,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Alex, how\u2019s the home treating you these days?"
-      }
-    },
-    {
-      "id": 17865,
-      "created_at": "2026-06-17T13:29:14.524072+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2721,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Landon, how\u2019s the home treating you? \ud83c\udfe1"
-      }
-    },
-    {
-      "id": 17864,
-      "created_at": "2026-06-17T13:29:06.605024+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2722,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Angelica, how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17863,
-      "created_at": "2026-06-17T13:28:58.691897+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2723,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Vincent how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17862,
-      "created_at": "2026-06-17T13:28:50.576179+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2725,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "How\u2019s the home treating you, Abygail? \ud83c\udfe1\u2728"
-      }
-    },
-    {
-      "id": 17861,
-      "created_at": "2026-06-17T13:28:43.228677+00:00",
-      "action": "closed_drip",
-      "status": "sent",
-      "person_id": 2726,
-      "details": {
-        "deal_address": "",
-        "local_spots_count": 0,
-        "stage": "Past Client",
-        "subject": "Hey Amanda how\u2019s the home treating you?"
-      }
-    },
-    {
-      "id": 17860,
-      "created_at": "2026-06-17T13:28:37.594448+00:00",
+      "id": 40624,
+      "created_at": "2026-07-13T14:09:54.667197+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 2727,
+      "person_id": 3449,
       "details": {
-        "reason": "cadence cap (1d < 90d)"
+        "reason": "cadence cap (24d < 90d)"
       }
     },
     {
-      "id": 17859,
-      "created_at": "2026-06-17T13:28:37.593718+00:00",
+      "id": 40623,
+      "created_at": "2026-07-13T14:09:54.666435+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 2728,
+      "person_id": 3547,
       "details": {
-        "reason": "cadence cap (1d < 90d)"
+        "reason": "cadence cap (24d < 90d)"
       }
     },
     {
-      "id": 17858,
-      "created_at": "2026-06-17T13:28:37.593037+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2729,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17857,
-      "created_at": "2026-06-17T13:28:37.592345+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2730,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17856,
-      "created_at": "2026-06-17T13:28:37.591663+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2731,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17855,
-      "created_at": "2026-06-17T13:28:37.590985+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2732,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17854,
-      "created_at": "2026-06-17T13:28:37.590247+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2733,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17853,
-      "created_at": "2026-06-17T13:28:37.589555+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2735,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17852,
-      "created_at": "2026-06-17T13:28:37.588812+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2736,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17851,
-      "created_at": "2026-06-17T13:28:37.588115+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2766,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17850,
-      "created_at": "2026-06-17T13:28:37.587414+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2853,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17849,
-      "created_at": "2026-06-17T13:28:37.586698+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 2854,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17848,
-      "created_at": "2026-06-17T13:28:37.585913+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 3665,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17847,
-      "created_at": "2026-06-17T13:28:37.585208+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 3943,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17846,
-      "created_at": "2026-06-17T13:28:37.584516+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 4032,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17845,
-      "created_at": "2026-06-17T13:28:37.583805+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 4059,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17844,
-      "created_at": "2026-06-17T13:28:37.582996+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 18,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17843,
-      "created_at": "2026-06-17T13:28:37.582132+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 111,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17842,
-      "created_at": "2026-06-17T13:28:37.578985+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 174,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17841,
-      "created_at": "2026-06-17T13:28:37.578267+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 206,
-      "details": {
-        "reason": "cadence cap (1d < 90d)"
-      }
-    },
-    {
-      "id": 17840,
-      "created_at": "2026-06-17T13:28:37.577500+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 323,
-      "details": {
-        "reason": "cadence cap (2d < 90d)"
-      }
-    },
-    {
-      "id": 17839,
-      "created_at": "2026-06-17T13:28:37.576813+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 1083,
-      "details": {
-        "reason": "cadence cap (2d < 90d)"
-      }
-    },
-    {
-      "id": 17838,
-      "created_at": "2026-06-17T13:28:37.576114+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 1321,
-      "details": {
-        "reason": "cadence cap (2d < 90d)"
-      }
-    },
-    {
-      "id": 17837,
-      "created_at": "2026-06-17T13:28:37.575403+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 1549,
-      "details": {
-        "reason": "cadence cap (2d < 90d)"
-      }
-    },
-    {
-      "id": 17836,
-      "created_at": "2026-06-17T13:28:37.574725+00:00",
-      "action": "closed_drip",
-      "status": "skipped",
-      "person_id": 1597,
-      "details": {
-        "reason": "cadence cap (2d < 90d)"
-      }
-    },
-    {
-      "id": 17835,
-      "created_at": "2026-06-17T13:28:37.573921+00:00",
+      "id": 40622,
+      "created_at": "2026-07-13T14:09:54.665718+00:00",
       "action": "closed_drip",
       "status": "suppressed",
-      "person_id": 1665,
+      "person_id": 3548,
       "details": {
         "reason": "no email or email outreach disabled"
       }
     },
     {
-      "id": 17834,
-      "created_at": "2026-06-17T13:28:37.573231+00:00",
+      "id": 40621,
+      "created_at": "2026-07-13T14:09:54.665045+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3558,
+      "details": {
+        "reason": "cadence cap (24d < 90d)"
+      }
+    },
+    {
+      "id": 40620,
+      "created_at": "2026-07-13T14:09:54.664312+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3573,
+      "details": {
+        "reason": "cadence cap (24d < 90d)"
+      }
+    },
+    {
+      "id": 40619,
+      "created_at": "2026-07-13T14:09:54.663620+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3608,
+      "details": {
+        "reason": "cadence cap (24d < 90d)"
+      }
+    },
+    {
+      "id": 40618,
+      "created_at": "2026-07-13T14:09:54.662895+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3658,
+      "details": {
+        "reason": "cadence cap (24d < 90d)"
+      }
+    },
+    {
+      "id": 40617,
+      "created_at": "2026-07-13T14:09:54.662133+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3667,
+      "details": {
+        "reason": "cadence cap (24d < 90d)"
+      }
+    },
+    {
+      "id": 40616,
+      "created_at": "2026-07-13T14:09:54.661413+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4511,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40615,
+      "created_at": "2026-07-13T14:09:54.660707+00:00",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "person_id": 4724,
+      "details": {
+        "reason": "no email or email outreach disabled"
+      }
+    },
+    {
+      "id": 40614,
+      "created_at": "2026-07-13T14:09:54.660012+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 6118,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40613,
+      "created_at": "2026-07-13T14:09:54.659287+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 144,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40612,
+      "created_at": "2026-07-13T14:09:54.658515+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2670,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40611,
+      "created_at": "2026-07-13T14:09:54.657780+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2672,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40610,
+      "created_at": "2026-07-13T14:09:54.657076+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2675,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40609,
+      "created_at": "2026-07-13T14:09:54.656209+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2679,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40608,
+      "created_at": "2026-07-13T14:09:54.655352+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2708,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40607,
+      "created_at": "2026-07-13T14:09:54.654534+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2709,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40606,
+      "created_at": "2026-07-13T14:09:54.653642+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2710,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40605,
+      "created_at": "2026-07-13T14:09:54.650402+00:00",
+      "action": "closed_drip",
+      "status": "suppressed",
+      "person_id": 2712,
+      "details": {
+        "reason": "manual suppression tag",
+        "stage": "Past Client"
+      }
+    },
+    {
+      "id": 40604,
+      "created_at": "2026-07-13T14:09:54.649798+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2713,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40603,
+      "created_at": "2026-07-13T14:09:54.649079+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2715,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40602,
+      "created_at": "2026-07-13T14:09:54.648329+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2716,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40601,
+      "created_at": "2026-07-13T14:09:54.647583+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2717,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40600,
+      "created_at": "2026-07-13T14:09:54.646840+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2718,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40599,
+      "created_at": "2026-07-13T14:09:54.646064+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2719,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40598,
+      "created_at": "2026-07-13T14:09:54.645309+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2722,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40597,
+      "created_at": "2026-07-13T14:09:54.644567+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2723,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40596,
+      "created_at": "2026-07-13T14:09:54.643842+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2725,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40595,
+      "created_at": "2026-07-13T14:09:54.643120+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2726,
+      "details": {
+        "reason": "cadence cap (26d < 90d)"
+      }
+    },
+    {
+      "id": 40594,
+      "created_at": "2026-07-13T14:09:54.642265+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2727,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40593,
+      "created_at": "2026-07-13T14:09:54.641528+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2728,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40592,
+      "created_at": "2026-07-13T14:09:54.640752+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2729,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40591,
+      "created_at": "2026-07-13T14:09:54.640053+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2730,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40590,
+      "created_at": "2026-07-13T14:09:54.639342+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2731,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40589,
+      "created_at": "2026-07-13T14:09:54.638568+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2732,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40588,
+      "created_at": "2026-07-13T14:09:54.637804+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2735,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40587,
+      "created_at": "2026-07-13T14:09:54.637058+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2736,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40586,
+      "created_at": "2026-07-13T14:09:54.636319+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2766,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40585,
+      "created_at": "2026-07-13T14:09:54.635565+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2853,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40584,
+      "created_at": "2026-07-13T14:09:54.634798+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 2854,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40583,
+      "created_at": "2026-07-13T14:09:54.634054+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3665,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40582,
+      "created_at": "2026-07-13T14:09:54.633327+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3943,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40581,
+      "created_at": "2026-07-13T14:09:54.632619+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4032,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40580,
+      "created_at": "2026-07-13T14:09:54.631908+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4059,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40579,
+      "created_at": "2026-07-13T14:09:54.631170+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4735,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40578,
+      "created_at": "2026-07-13T14:09:54.630396+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 18,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40577,
+      "created_at": "2026-07-13T14:09:54.629660+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 111,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40576,
+      "created_at": "2026-07-13T14:09:54.628961+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 174,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40575,
+      "created_at": "2026-07-13T14:09:54.628214+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 206,
+      "details": {
+        "reason": "cadence cap (28d < 90d)"
+      }
+    },
+    {
+      "id": 40574,
+      "created_at": "2026-07-13T14:09:54.627509+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 323,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40573,
+      "created_at": "2026-07-13T14:09:54.626724+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1083,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40572,
+      "created_at": "2026-07-13T14:09:54.625779+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1321,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40571,
+      "created_at": "2026-07-13T14:09:54.625063+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1549,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40570,
+      "created_at": "2026-07-13T14:09:54.624214+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1557,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40569,
+      "created_at": "2026-07-13T14:09:54.623480+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1597,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40568,
+      "created_at": "2026-07-13T14:09:54.622669+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 1668,
       "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40567,
+      "created_at": "2026-07-13T14:09:54.621895+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 1696,
+      "details": {
         "reason": "cadence cap (2d < 90d)"
       }
     },
     {
-      "id": 17833,
-      "created_at": "2026-06-17T13:28:37.572562+00:00",
+      "id": 40566,
+      "created_at": "2026-07-13T14:09:54.620984+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 1858,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17832,
-      "created_at": "2026-06-17T13:28:37.571882+00:00",
+      "id": 40565,
+      "created_at": "2026-07-13T14:09:54.617999+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 1877,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17831,
-      "created_at": "2026-06-17T13:28:37.571165+00:00",
+      "id": 40564,
+      "created_at": "2026-07-13T14:09:54.617240+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 1985,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17830,
-      "created_at": "2026-06-17T13:28:37.570465+00:00",
+      "id": 40563,
+      "created_at": "2026-07-13T14:09:54.616466+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2095,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17829,
-      "created_at": "2026-06-17T13:28:37.569769+00:00",
+      "id": 40562,
+      "created_at": "2026-07-13T14:09:54.615752+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2156,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17828,
-      "created_at": "2026-06-17T13:28:37.569073+00:00",
+      "id": 40561,
+      "created_at": "2026-07-13T14:09:54.614962+00:00",
       "action": "closed_drip",
       "status": "suppressed",
       "person_id": 2261,
@@ -2085,88 +3897,98 @@
       }
     },
     {
-      "id": 17827,
-      "created_at": "2026-06-17T13:28:37.568516+00:00",
+      "id": 40560,
+      "created_at": "2026-07-13T14:09:54.614259+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2544,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17826,
-      "created_at": "2026-06-17T13:28:37.567776+00:00",
+      "id": 40559,
+      "created_at": "2026-07-13T14:09:54.613525+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2687,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17825,
-      "created_at": "2026-06-17T13:28:37.566964+00:00",
+      "id": 40558,
+      "created_at": "2026-07-13T14:09:54.612630+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2711,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17824,
-      "created_at": "2026-06-17T13:28:37.566236+00:00",
+      "id": 40557,
+      "created_at": "2026-07-13T14:09:54.611598+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2734,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17823,
-      "created_at": "2026-06-17T13:28:37.565544+00:00",
+      "id": 40556,
+      "created_at": "2026-07-13T14:09:54.610781+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2804,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17822,
-      "created_at": "2026-06-17T13:28:37.564850+00:00",
+      "id": 40555,
+      "created_at": "2026-07-13T14:09:54.610018+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 2807,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17821,
-      "created_at": "2026-06-17T13:28:37.564000+00:00",
+      "id": 40554,
+      "created_at": "2026-07-13T14:09:54.609250+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3090,
       "details": {
-        "reason": "cadence cap (2d < 90d)"
+        "reason": "cadence cap (29d < 90d)"
       }
     },
     {
-      "id": 17820,
-      "created_at": "2026-06-17T13:28:37.563303+00:00",
+      "id": 40553,
+      "created_at": "2026-07-13T14:09:54.608507+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 3102,
+      "person_id": 3100,
       "details": {
         "reason": "cadence cap (2d < 90d)"
       }
     },
     {
-      "id": 17819,
-      "created_at": "2026-06-17T13:28:37.562599+00:00",
+      "id": 40552,
+      "created_at": "2026-07-13T14:09:54.607788+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 3102,
+      "details": {
+        "reason": "cadence cap (29d < 90d)"
+      }
+    },
+    {
+      "id": 40551,
+      "created_at": "2026-07-13T14:09:54.607084+00:00",
       "action": "closed_drip",
       "status": "suppressed",
       "person_id": 3109,
@@ -2175,392 +3997,253 @@
       }
     },
     {
-      "id": 17818,
-      "created_at": "2026-06-17T13:28:37.561904+00:00",
+      "id": 40550,
+      "created_at": "2026-07-13T14:09:54.606320+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3159,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17817,
-      "created_at": "2026-06-17T13:28:37.561200+00:00",
+      "id": 40549,
+      "created_at": "2026-07-13T14:09:54.605536+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3184,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17816,
-      "created_at": "2026-06-17T13:28:37.560500+00:00",
+      "id": 40548,
+      "created_at": "2026-07-13T14:09:54.604793+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3247,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17815,
-      "created_at": "2026-06-17T13:28:37.559616+00:00",
+      "id": 40547,
+      "created_at": "2026-07-13T14:09:54.604063+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3394,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17814,
-      "created_at": "2026-06-17T13:28:37.558742+00:00",
+      "id": 40546,
+      "created_at": "2026-07-13T14:09:54.603337+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3593,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17813,
-      "created_at": "2026-06-17T13:28:37.558053+00:00",
+      "id": 40545,
+      "created_at": "2026-07-13T14:09:54.602537+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3636,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17812,
-      "created_at": "2026-06-17T13:28:37.557353+00:00",
+      "id": 40544,
+      "created_at": "2026-07-13T14:09:54.601753+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3729,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17811,
-      "created_at": "2026-06-17T13:28:37.556665+00:00",
+      "id": 40543,
+      "created_at": "2026-07-13T14:09:54.601037+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3825,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17810,
-      "created_at": "2026-06-17T13:28:37.555976+00:00",
+      "id": 40542,
+      "created_at": "2026-07-13T14:09:54.600301+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3885,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17809,
-      "created_at": "2026-06-17T13:28:37.555272+00:00",
+      "id": 40541,
+      "created_at": "2026-07-13T14:09:54.599574+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3887,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17808,
-      "created_at": "2026-06-17T13:28:37.554545+00:00",
+      "id": 40540,
+      "created_at": "2026-07-13T14:09:54.598844+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 3928,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17807,
-      "created_at": "2026-06-17T13:28:37.552994+00:00",
+      "id": 40539,
+      "created_at": "2026-07-13T14:09:54.598055+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4000,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17806,
-      "created_at": "2026-06-17T13:28:37.552270+00:00",
+      "id": 40538,
+      "created_at": "2026-07-13T14:09:54.597283+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4042,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17805,
-      "created_at": "2026-06-17T13:28:37.551554+00:00",
+      "id": 40537,
+      "created_at": "2026-07-13T14:09:54.596548+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4071,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17804,
-      "created_at": "2026-06-17T13:28:37.550848+00:00",
+      "id": 40536,
+      "created_at": "2026-07-13T14:09:54.595785+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4077,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17803,
-      "created_at": "2026-06-17T13:28:37.550107+00:00",
+      "id": 40535,
+      "created_at": "2026-07-13T14:09:54.595033+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4309,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17802,
-      "created_at": "2026-06-17T13:28:37.549365+00:00",
+      "id": 40534,
+      "created_at": "2026-07-13T14:09:54.594237+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4361,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40533,
+      "created_at": "2026-07-13T14:09:54.593453+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4431,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40532,
+      "created_at": "2026-07-13T14:09:54.592562+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4454,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40531,
+      "created_at": "2026-07-13T14:09:54.591666+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4648,
+      "details": {
+        "reason": "cadence cap (2d < 90d)"
+      }
+    },
+    {
+      "id": 40530,
+      "created_at": "2026-07-13T14:09:54.590923+00:00",
       "action": "closed_drip",
       "status": "skipped",
       "person_id": 4666,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (30d < 90d)"
       }
     },
     {
-      "id": 17801,
-      "created_at": "2026-06-17T13:28:37.548593+00:00",
+      "id": 40529,
+      "created_at": "2026-07-13T14:09:54.590134+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 4978,
+      "person_id": 4672,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (2d < 90d)"
       }
     },
     {
-      "id": 17800,
-      "created_at": "2026-06-17T13:28:37.547756+00:00",
+      "id": 40528,
+      "created_at": "2026-07-13T14:09:54.589291+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 5034,
+      "person_id": 4673,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (2d < 90d)"
       }
     },
     {
-      "id": 17799,
-      "created_at": "2026-06-17T13:28:37.546511+00:00",
+      "id": 40527,
+      "created_at": "2026-07-13T14:09:54.588453+00:00",
       "action": "closed_drip",
       "status": "skipped",
-      "person_id": 5128,
+      "person_id": 4707,
       "details": {
-        "reason": "cadence cap (4d < 90d)"
+        "reason": "cadence cap (2d < 90d)"
       }
     },
     {
-      "id": 17798,
-      "created_at": "2026-06-17T13:28:27.032972+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 5058,
+      "id": 40526,
+      "created_at": "2026-07-13T14:09:54.585167+00:00",
+      "action": "closed_drip",
+      "status": "skipped",
+      "person_id": 4768,
       "details": {
-        "assignedUserId": 1,
-        "to": "st***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17797,
-      "created_at": "2026-06-17T13:28:27.031667+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 6014,
-      "details": {
-        "assignedUserId": 1,
-        "to": "st***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17796,
-      "created_at": "2026-06-17T13:28:17.183006+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 0,
-      "details": {
-        "assignedUserId": 2,
-        "note": "broadcast_mode_no_leads",
-        "to": "pe***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17795,
-      "created_at": "2026-06-17T13:28:16.229559+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 4586,
-      "details": {
-        "assignedUserId": 20,
-        "to": "Ti***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17794,
-      "created_at": "2026-06-17T13:28:16.228526+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 4655,
-      "details": {
-        "assignedUserId": 20,
-        "to": "Ti***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17793,
-      "created_at": "2026-06-17T13:28:05.319487+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 0,
-      "details": {
-        "assignedUserId": 28,
-        "note": "broadcast_mode_no_leads",
-        "to": "ab***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17792,
-      "created_at": "2026-06-17T13:28:04.307653+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 0,
-      "details": {
-        "assignedUserId": 31,
-        "note": "broadcast_mode_no_leads",
-        "to": "st***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17791,
-      "created_at": "2026-06-17T13:28:03.101697+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 0,
-      "details": {
-        "assignedUserId": 33,
-        "note": "broadcast_mode_no_leads",
-        "to": "Ir***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17790,
-      "created_at": "2026-06-17T13:28:01.895203+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 5911,
-      "details": {
-        "assignedUserId": 35,
-        "to": "la***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17789,
-      "created_at": "2026-06-17T13:28:01.894591+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 5937,
-      "details": {
-        "assignedUserId": 35,
-        "to": "la***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17788,
-      "created_at": "2026-06-17T13:28:01.893938+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 6003,
-      "details": {
-        "assignedUserId": 35,
-        "to": "la***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17787,
-      "created_at": "2026-06-17T13:28:01.893219+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 6012,
-      "details": {
-        "assignedUserId": 35,
-        "to": "la***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17786,
-      "created_at": "2026-06-17T13:28:01.892133+00:00",
-      "action": "agent_followup_reminder",
-      "status": "email_digest_sent",
-      "person_id": 6016,
-      "details": {
-        "assignedUserId": 35,
-        "to": "la***@lifestyledesignrealty.com"
-      }
-    },
-    {
-      "id": 17785,
-      "created_at": "2026-06-17T13:26:39.033131+00:00",
-      "action": "pond_nurture",
-      "status": "launch_cap_reached",
-      "person_id": null,
-      "details": {
-        "cap": 100
-      }
-    },
-    {
-      "id": 17784,
-      "created_at": "2026-06-17T13:26:39.032499+00:00",
-      "action": "pond_nurture",
-      "status": "sent",
-      "person_id": 2192,
-      "details": {
-        "channels": [
-          "email"
-        ],
-        "city": "San Antonio",
-        "city_source": "lead_fields",
-        "freshness_angle": "new construction, concessions, and timing question",
-        "subject": "Thinking about new builds in San Antonio? \ud83c\udfe1\u2728"
-      }
-    },
-    {
-      "id": 17783,
-      "created_at": "2026-06-17T13:26:31.268455+00:00",
-      "action": "pond_nurture",
-      "status": "sent",
-      "person_id": 2193,
-      "details": {
-        "channels": [
-          "email"
-        ],
-        "city": "Austin",
-        "city_source": "lead_fields",
-        "freshness_angle": "restaurants, bars, weekend lifestyle, and area-fit question",
-        "subject": "Austin spots and weekend vibes you\u2019ll love \u2600\ufe0f\ud83c\udf7d\ufe0f"
+        "reason": "cadence cap (2d < 90d)"
       }
     }
   ]

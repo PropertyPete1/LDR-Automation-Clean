@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -145,23 +145,34 @@ export default function LifestyleBotPanel() {
     triggeredBy: string;
   }>(null);
 
-  const { data: dashStats } = trpc.fub.getDashboardStats.useQuery(undefined, {
+  // Admin token from URL — this panel is admin-only
+  const adminToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("admin") ?? "";
+  }, []);
+  const adminAccess = useMemo(() => ({ adminToken }), [adminToken]);
+
+  const { data: dashStats } = trpc.fub.getDashboardStats.useQuery(adminAccess, {
     staleTime: 30 * 1000,
     refetchInterval: 60 * 1000,
+    enabled: !!adminToken,
   });
 
-  const { data, isLoading, refetch, isRefetching } = trpc.bot.getStatus.useQuery(undefined, {
+  const { data, isLoading, refetch, isRefetching } = trpc.bot.getStatus.useQuery(adminAccess, {
     staleTime: 60 * 1000,
     refetchInterval: 2 * 60 * 1000,
+    enabled: !!adminToken,
   });
 
-  const { data: runHistory, refetch: refetchHistory } = trpc.bot.getRunHistory.useQuery(undefined, {
+  const { data: runHistory, refetch: refetchHistory } = trpc.bot.getRunHistory.useQuery(adminAccess, {
     staleTime: 60 * 1000,
+    enabled: !!adminToken,
   });
 
-  const { data: monitorHistory, refetch: refetchMonitor } = trpc.bot.getMonitorStatus.useQuery(undefined, {
+  const { data: monitorHistory, refetch: refetchMonitor } = trpc.bot.getMonitorStatus.useQuery(adminAccess, {
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    enabled: !!adminToken,
   });
 
   const runMonitorMutation = trpc.bot.runMonitorNow.useMutation({
@@ -181,8 +192,8 @@ export default function LifestyleBotPanel() {
   const lastMonitorRun = monitorHistory && monitorHistory.length > 0 ? monitorHistory[0] : null;
 
   const { data: observations, refetch: refetchObs } = trpc.bot.getObservations.useQuery(
-    { limit: 60, hoursBack: 25 },
-    { staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000 }
+    { limit: 60, hoursBack: 25, ...adminAccess },
+    { staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000, enabled: !!adminToken }
   );
 
   const markObsFixedMutation = trpc.bot.markObsFixed.useMutation({
@@ -194,8 +205,9 @@ export default function LifestyleBotPanel() {
   const [showPondHistory, setShowPondHistory] = useState(false);
   const [pondResult, setPondResult] = useState<null | { promoted: number; skipped: number; errors: number; durationMs: number; summary: string }>(null);
 
-  const { data: pondHistory, refetch: refetchPondHistory } = trpc.bot.getPondPromotionHistory.useQuery(undefined, {
+  const { data: pondHistory, refetch: refetchPondHistory } = trpc.bot.getPondPromotionHistory.useQuery(adminAccess, {
     staleTime: 5 * 60 * 1000,
+    enabled: !!adminToken,
   });
 
   const runAutoPondMutation = trpc.bot.runAutoPondNow.useMutation({
@@ -276,7 +288,7 @@ export default function LifestyleBotPanel() {
               </Button>
               <Button
                 size="sm"
-                onClick={() => runBotMutation.mutate()}
+                onClick={() => runBotMutation.mutate(adminAccess)}
                 disabled={runBotMutation.isPending}
                 className="bg-purple-600 hover:bg-purple-700 text-white text-xs h-8 gap-1.5"
               >
@@ -507,7 +519,7 @@ export default function LifestyleBotPanel() {
                 size="sm"
                 variant="outline"
                 className="h-6 text-[10px] px-2 border-indigo-500/25 text-indigo-400 hover:bg-indigo-500/10 bg-card"
-                onClick={() => runMonitorMutation.mutate()}
+                onClick={() => runMonitorMutation.mutate(adminAccess)}
                 disabled={runMonitorMutation.isPending}
               >
                 {runMonitorMutation.isPending
@@ -679,7 +691,7 @@ export default function LifestyleBotPanel() {
                 size="sm"
                 variant="outline"
                 className="h-6 text-[10px] px-2 border-teal-500/25 text-teal-400 hover:bg-teal-500/10 bg-card"
-                onClick={() => runAutoPondMutation.mutate()}
+                onClick={() => runAutoPondMutation.mutate(adminAccess)}
                 disabled={runAutoPondMutation.isPending}
               >
                 {runAutoPondMutation.isPending

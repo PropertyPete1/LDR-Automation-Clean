@@ -37,7 +37,7 @@ import { invokeLLM } from "./_core/llm";
 import { writeObservation } from "./db";
 import { getDb } from "./db";
 import { suppressLead } from "./compliance";
-import { replyIntentProcessed } from "../drizzle/schema";
+import { replyIntentProcessed, annualNurtureLeads } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 const FUB_BASE = "https://api.followupboss.com/v1";
@@ -211,6 +211,7 @@ async function recordProcessed(params: {
 interface IntentClassification {
   highIntent: boolean;
   isOptOut: boolean;
+  isNoLongerLooking: boolean; // moved away / stopped searching / not moving to Texas
   confidence: number; // 0.0 – 1.0
   reason: string;     // short human-readable explanation
 }
@@ -230,18 +231,26 @@ async function classifyReplyIntent(
 
   const systemPrompt = `You are an AI assistant that classifies real estate email replies for Lifestyle Design Realty.
 Your job is to determine:
-1. Whether the sender wants to opt out of communications
+1. Whether the sender wants to opt out of communications (hostile/firm)
 2. Whether the sender shows strong buying/selling intent that needs immediate agent attention
+3. Whether the sender is no longer looking to move to Texas (friendly, non-hostile — they moved away, stopped their search, or are no longer in the market)
 
-Opt-out signals (isOptOut: true):
-- Already working with another agent or broker
-- Already under contract or already bought a home
-- Already building a home with a builder
-- Not interested in buying or selling anymore
+Opt-out signals (isOptOut: true) — HOSTILE or FIRM stop requests:
 - Wants to be removed from the mailing list / unsubscribe
 - Explicitly says "stop emailing" or "stop contacting"
-- Already moved / already closed on a property
-- Decided not to buy / not looking anymore
+- Already working with another agent or broker (competitive)
+- Angry or frustrated about being contacted
+- Firm "do not contact" language
+
+No-longer-looking signals (isNoLongerLooking: true) — FRIENDLY disengagement:
+- No longer living in Texas / moved out of state
+- Stopped their home search / not looking anymore
+- Already bought a home (not hostile, just done)
+- Already under contract or closed on a property
+- Decided not to move to Texas after all
+- "I'm no longer in the market" (without hostility)
+- Life circumstances changed (job change, family, etc.)
+IMPORTANT: If the tone is friendly/neutral and they simply aren't looking anymore, use isNoLongerLooking=true (NOT isOptOut). Reserve isOptOut for hostile/firm stop requests only.
 
 High-intent signals (highIntent: true) — these need immediate agent follow-up:
 - Asking to schedule a showing or tour
@@ -251,13 +260,14 @@ High-intent signals (highIntent: true) — these need immediate agent follow-up:
 - Mentioning a specific timeline ("we want to buy in the next 30 days")
 - Asking about financing or mortgage pre-approval
 
-NOT opt-out and NOT high-intent:
+NOT any of the above:
 - Out-of-office auto-replies
 - Vacation responders
 - General questions or chitchat
 - Asking for more general information
+- Future timeline mentions ("maybe next year") — these are NOT no-longer-looking
 
-Be conservative on both: only flag when there is clear, unambiguous evidence.
+Be conservative: only flag when there is clear, unambiguous evidence.
 Confidence should reflect how certain you are (0.0 = no idea, 1.0 = absolutely certain).`;
 
   const userPrompt = `Classify this email reply from ${senderEmail}:
@@ -267,10 +277,13 @@ ${truncatedBody}
 ---
 
 Return JSON with:
-- isOptOut (boolean): true if they want to stop communications
+- isOptOut (boolean): true if they want to STOP communications (hostile/firm)
+- isNoLongerLooking (boolean): true if they are no longer looking to move to Texas (friendly disengagement)
 - highIntent (boolean): true if they show strong buying/selling intent needing immediate follow-up
 - confidence (0.0-1.0): how certain you are
-- reason (string): short explanation under 200 chars`;
+- reason (string): short explanation under 200 chars
+
+NOTE: isOptOut and isNoLongerLooking are MUTUALLY EXCLUSIVE. If the person is friendly but done searching, use isNoLongerLooking. If they are hostile or demand removal, use isOptOut.`;
 
   try {
     const result = await invokeLLM({
@@ -286,12 +299,13 @@ Return JSON with:
           schema: {
             type: "object",
             properties: {
-              isOptOut: { type: "boolean", description: "True if the email indicates opt-out intent" },
+              isOptOut: { type: "boolean", description: "True if the email indicates hostile opt-out intent" },
+              isNoLongerLooking: { type: "boolean", description: "True if the lead is no longer looking to move to Texas (friendly)" },
               highIntent: { type: "boolean", description: "True if the email shows strong buying/selling intent" },
               confidence: { type: "number", description: "Confidence score 0.0 to 1.0" },
               reason: { type: "string", description: "Short explanation under 200 characters" },
             },
-            required: ["isOptOut", "highIntent", "confidence", "reason"],
+            required: ["isOptOut", "isNoLongerLooking", "highIntent", "confidence", "reason"],
             additionalProperties: false,
           },
         },
@@ -305,14 +319,15 @@ Return JSON with:
     const parsed = JSON.parse(content) as IntentClassification;
     return {
       isOptOut: Boolean(parsed.isOptOut),
+      isNoLongerLooking: Boolean(parsed.isNoLongerLooking),
       highIntent: Boolean(parsed.highIntent),
       confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0)),
       reason: String(parsed.reason || "").slice(0, 499),
     };
   } catch (e) {
     console.warn("[replyIntent] LLM classification failed:", e);
-    // Safe fallback: treat as no opt-out intent if LLM fails
-    return { isOptOut: false, highIntent: false, confidence: 0, reason: "LLM classification failed" };
+    // Safe fallback: treat as no intent if LLM fails
+    return { isOptOut: false, isNoLongerLooking: false, highIntent: false, confidence: 0, reason: "LLM classification failed" };
   }
 }
 
@@ -327,6 +342,75 @@ async function applyOptOutTag(person: FubPerson, reason: string): Promise<void> 
     leadName: person.name,
     extraContext: `LLM detected opt-out intent in reply email. Reason: ${reason}`,
   });
+}
+
+// ── Annual Nurture enrollment ────────────────────────────────────────────────
+
+/**
+ * Enroll a lead in annual nurture instead of full suppression.
+ * - Adds "Annual Nurture Only" tag in FUB
+ * - Moves to Nurture stage
+ * - Posts a FUB note documenting the transition
+ * - Records in the annual_nurture_leads DB table
+ */
+async function enrollAnnualNurture(
+  person: FubPerson,
+  reason: string,
+  confidence: number,
+  emailSnippet: string
+): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const email = person.emails?.[0]?.value ?? "";
+
+  // 1. Add "Annual Nurture Only" tag in FUB (preserve existing tags)
+  const existingTags = person.tags ?? [];
+  const newTag = "Annual Nurture Only";
+  if (!existingTags.includes(newTag)) {
+    await fubPut(`/people/${person.id}`, {
+      tags: [...existingTags, newTag],
+      stage: "Nurture",
+    });
+  }
+
+  // 2. Post a FUB note documenting the transition
+  const noteBody = [
+    `\ud83d\udcc5 ANNUAL NURTURE ENROLLED (Auto-Detected)`,
+    ``,
+    `AI detected this lead is no longer actively looking to move to Texas.`,
+    `Reason: ${reason}`,
+    `Confidence: ${(confidence * 100).toFixed(0)}%`,
+    ``,
+    `Action taken:`,
+    `\u2022 Removed from active email nurture`,
+    `\u2022 Tagged "Annual Nurture Only"`,
+    `\u2022 Will receive ONE friendly check-in email per year`,
+    ``,
+    `Trigger email snippet:`,
+    `"${emailSnippet.slice(0, 300)}"`,
+    ``,
+    `\u2014 Lifestyle Bot (Reply Intent Handler)`,
+  ].join("\n");
+
+  await fubPost("/notes", {
+    personId: person.id,
+    body: noteBody,
+    subject: "Annual Nurture Enrolled",
+    isHtml: false,
+  });
+
+  // 3. Record in the annual_nurture_leads table
+  await db.insert(annualNurtureLeads).values({
+    personId: person.id,
+    email,
+    leadName: person.name,
+    triggerSnippet: emailSnippet.slice(0, 500),
+    confidence: confidence.toFixed(3),
+    reason: reason.slice(0, 500),
+    source: "reply_intent",
+  });
+
+  console.log(`[replyIntent] Annual nurture enrolled: ${person.name} (${email})`);
 }
 
 // ── IMAP scanner ──────────────────────────────────────────────────────────────
@@ -483,6 +567,8 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
   };
 
   const runId = `reply-intent-${Date.now()}`;
+  // Person-level dedup: only send ONE high-intent alert per person per run
+  const highIntentAlertedPersonIds = new Set<number>();
 
   try {
     console.log("[replyIntent] Starting reply intent scan...");
@@ -572,6 +658,7 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
 
         console.log(
           `[replyIntent] ${lead.name}: isOptOut=${classification.isOptOut}, ` +
+          `isNoLongerLooking=${classification.isNoLongerLooking}, ` +
           `confidence=${classification.confidence.toFixed(2)}, reason="${classification.reason}"`
         );
 
@@ -602,9 +689,37 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
             confidence: classification.confidence.toFixed(3),
             reason: classification.reason,
           });
+        } else if (classification.isNoLongerLooking && classification.confidence >= CONFIDENCE_THRESHOLD) {
+          // Lead is no longer looking — enroll in annual nurture (NOT full suppression)
+          await enrollAnnualNurture(lead, classification.reason, classification.confidence, candidate.bodyText);
+          (result as any).annualNurtureApplied = ((result as any).annualNurtureApplied || 0) + 1;
+          result.details.push(
+            `ANNUAL NURTURE: ${lead.name} (${candidate.fromEmail}) — "${classification.reason}" (confidence: ${(classification.confidence * 100).toFixed(0)}%)`
+          );
+
+          await writeObservation({
+            source: "reply_intent",
+            severity: "info",
+            category: "annual_nurture_enrolled",
+            message: `Annual nurture enrolled — ${lead.name} no longer looking to move to Texas`,
+            detail: `Email: ${candidate.fromEmail} | Reason: ${classification.reason} | Confidence: ${(classification.confidence * 100).toFixed(0)}% | Subject: "${candidate.subject}"`,
+            autoFixable: 0,
+            runId,
+          });
+
+          await recordProcessed({
+            gmailMessageId: candidate.uid,
+            senderEmail: candidate.fromEmail,
+            fubPersonId: lead.id,
+            action: "annual_nurture",
+            confidence: classification.confidence.toFixed(3),
+            reason: classification.reason,
+          });
         } else {
           // Check for high-intent buying signals — notify Peter immediately
-          if (classification.highIntent && classification.confidence >= 0.70) {
+          // DEDUP: only one alert per person per run (multiple emails from same lead = 1 alert)
+          if (classification.highIntent && classification.confidence >= 0.70 && !highIntentAlertedPersonIds.has(lead.id)) {
+            highIntentAlertedPersonIds.add(lead.id);
             const { notifyOwner } = await import("./_core/notification");
             await notifyOwner({
               title: `🔥 High-Intent Reply Detected — ${lead.name}`,
@@ -632,6 +747,8 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
               autoFixable: 0,
               runId,
             });
+          } else if (classification.highIntent && classification.confidence >= 0.70) {
+            console.log(`[replyIntent] Skipping duplicate high-intent alert for ${lead.name} (ID ${lead.id}) — already alerted this run`);
           }
 
           // No opt-out intent (or low confidence) — record as no_intent

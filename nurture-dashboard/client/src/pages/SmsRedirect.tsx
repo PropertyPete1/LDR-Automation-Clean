@@ -55,6 +55,7 @@ export default function SmsRedirect() {
         personId: parsedLeadId,
         agentName: agentParam,
         messageBody: bodyParam || undefined,
+        agent: agentParam,
       });
     }
 
@@ -100,6 +101,7 @@ export default function SmsRedirect() {
         personId: leadId,
         agentName: agent,
         messageBody: body || undefined,
+        agent: agent,
       });
     }
 

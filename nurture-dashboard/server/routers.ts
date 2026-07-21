@@ -20,7 +20,8 @@ import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance
 import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "./memoryLayer";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
-import { getActiveAgents, normalizeAgentName, getBotStatusRoster, resolveQueueAccess, isAdminToken } from "./agentRegistry";
+import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
+import { requireAdmin, requireAdminOrAgent, accessFields } from "./queueAccess";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -139,7 +140,10 @@ const auditRouter = router({
   /**
    * Get the latest audit result from disk. Public so the dashboard can poll it.
    */
-  getStatus: publicProcedure.query(async () => {
+  getStatus: publicProcedure
+    .input(z.object({ ...accessFields }).optional())
+    .query(async ({ input }) => {
+    await requireAdmin(input ?? {});
     try {
       const raw = await fsPromises.readFile(AUDIT_RESULT_PATH, "utf-8");
       return JSON.parse(raw);
@@ -152,7 +156,10 @@ const auditRouter = router({
    * Run the system audit script. Public — no login required for the dashboard owner.
    * Returns the fresh audit result when done.
    */
-  run: publicProcedure.mutation(async () => {
+  run: publicProcedure
+    .input(z.object({ ...accessFields }))
+    .mutation(async ({ input }) => {
+    await requireAdmin(input);
     try {
       // -W ignore suppresses DeprecationWarning from stderr so it doesn't throw
       await execAsync(`python3 -W ignore ${AUDIT_SCRIPT_PATH}`, { timeout: 120_000 });
@@ -186,8 +193,9 @@ export const appRouter = router({
      * Cached for 60 seconds per lead to avoid rate limit issues.
      */
     getLatestInboundSms: publicProcedure
-      .input(z.object({ personId: z.number() }))
+      .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const res = await fubRequest("GET", `/textMessages?personId=${input.personId}&limit=20`);
         const msgs: any[] = res.textMessages || [];
         const inbound = msgs.find((m: any) => m.isIncoming === true || m.direction === "inbound");
@@ -203,7 +211,10 @@ export const appRouter = router({
      * Returns the full dashboard stats object built from the SQLite audit_log
      * and supplemented with FUB API data (conversions, agent clicks).
      */
-    getDashboardStats: publicProcedure.query(async () => {
+    getDashboardStats: publicProcedure
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+      await requireAdmin(input ?? {});
       return getDashboardStats(ENV.fubApiKey);
     }),
 
@@ -219,17 +230,33 @@ export const appRouter = router({
       .query(async ({ input }) => {
         // ── URL-param-based access control (no login required) ─────────────
         // Each agent gets their own link with ?agent=Name. The server scopes
-        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all.
-        // Decision logic lives in resolveQueueAccess() (shared + unit-tested).
-        const agents = await getActiveAgents(undefined, ENV.fubApiKey);
-        const access = resolveQueueAccess(input, ENV.powerQueueAdminToken, agents);
-        // Sentinel filters ("__empty__" / "__no_such_agent__") never match a
-        // real agent, so getPendingQueue returns nothing for them.
-        if (access.effectiveFilter === "__empty__") {
-          return { leads: [], isAdmin: access.isAdmin, agentName: null };
+        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all
+        // to see the full queue.
+        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
+          input.adminToken === ENV.powerQueueAdminToken);
+
+        if (isAdmin) {
+          // Admin token valid — return full queue or filtered to requested agent
+          const filter = input.agentFilter === "all" ? undefined : input.agentFilter;
+          const leads = await getPendingQueue(ENV.fubApiKey, filter);
+          return { leads, isAdmin: true, agentName: null };
         }
-        const leads = await getPendingQueue(ENV.fubApiKey, access.effectiveFilter);
-        return { leads, isAdmin: access.isAdmin, agentName: access.agentName };
+
+        // Non-admin: agent param is REQUIRED and scopes the result
+        if (!input.agentFilter || input.agentFilter === "all") {
+          // No agent specified and no admin token → empty result
+          return { leads: [], isAdmin: false, agentName: null };
+        }
+
+        // Validate agent name against the live roster
+        const agents = await getActiveAgents(undefined, ENV.fubApiKey);
+        const matched = agents.find(a =>
+          a.slug === input.agentFilter!.toLowerCase() ||
+          a.name.toLowerCase() === input.agentFilter!.toLowerCase()
+        );
+        const effectiveFilter = matched ? matched.name : "__no_such_agent__";
+        const leads = await getPendingQueue(ENV.fubApiKey, effectiveFilter);
+        return { leads, isAdmin: false, agentName: matched?.name ?? null };
       }),
 
     /**
@@ -242,8 +269,10 @@ export const appRouter = router({
     getPondSmsLeads: publicProcedure
       .input(z.object({ adminToken: z.string().optional() }))
       .query(async ({ input }) => {
-        // Only admin token holders can see pond SMS leads (pond = Peter's).
-        if (!isAdminToken(input.adminToken, ENV.powerQueueAdminToken)) return [];
+        // Only admin token holders can see pond SMS leads
+        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
+          input.adminToken === ENV.powerQueueAdminToken);
+        if (!isAdmin) return [];
         return getPondSmsOnlyLeads(ENV.fubApiKey);
       }),
   }),
@@ -275,9 +304,11 @@ export const appRouter = router({
           agentName: z.string().min(1).max(100),
           messageBody: z.string().max(500).optional(),
           channel: z.enum(["sms", "email", "call"]).optional().default("sms"),
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const { personId, messageBody, channel } = input;
 
         // Dynamic: normalize agentName via agentRegistry (Golden Rule — no hardcoded names)
@@ -355,8 +386,9 @@ export const appRouter = router({
 
     // Fetch the last inbound text message for a lead from FUB
     getLastInbound: publicProcedure
-      .input(z.object({ personId: z.number() }))
+      .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const data = (await fubRequest("GET", `/textMessages?personId=${input.personId}&limit=20`)) as {
           textMessages?: Array<{
             message?: string;
@@ -380,8 +412,9 @@ export const appRouter = router({
 
     // Fetch recent notes for a lead from FUB
     getNotes: publicProcedure
-      .input(z.object({ personId: z.number() }))
+      .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const data = (await fubRequest("GET", `/notes?personId=${input.personId}&limit=5`)) as {
           notes?: Array<{ body?: string; subject?: string; createdAt?: string }>;
         };
@@ -403,8 +436,10 @@ export const appRouter = router({
         reason: z.string().max(200).optional(),
         leadName: z.string().max(200).optional(),
         daysStale: z.number().optional().default(0),
+        ...accessFields,
       }))
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const { personId, agentName, snoozeUntil, reason, leadName, daysStale } = input;
 
         // Write FUB note for audit trail
@@ -439,8 +474,10 @@ export const appRouter = router({
       .input(z.object({
         personId: z.number().int().positive(),
         agentName: z.string().min(1).max(100),
+        ...accessFields,
       }))
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         await unsnoozeLeadDb(input.personId, input.agentName);
         clearQueueCache();
         return { success: true };
@@ -463,16 +500,19 @@ export const appRouter = router({
         actionType: z.enum(['texted', 'called', 'snoozed', 'hot_lead_responded', 'completed']),
         daysStale: z.number().optional().default(0),
         isHotLead: z.boolean().optional().default(false),
+        ...accessFields,
       }))
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         await recordQueueActionDb(input.personId, input.agentName, input.actionType, input.daysStale, input.isHotLead);
         return { success: true };
       }),
 
     // ── Power Queue 2.0: Weekly Stats (for Python digest) ────────────────────
     getWeeklyStats: publicProcedure
-      .input(z.object({ weekKey: z.string().optional() }))
+      .input(z.object({ weekKey: z.string().optional(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdmin(input);
         return getWeeklyQueueStatsDb(input.weekKey);
       }),
   }),
@@ -501,9 +541,11 @@ export const appRouter = router({
               last_inbound_text: z.string().optional(),
             })
             .optional(),
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const { messages, leadContext } = input;
         const agentName = leadContext?.assigned_agent || "";
 
@@ -558,9 +600,11 @@ export const appRouter = router({
           prefillMessage: z.string().optional(),
           personId: z.number().optional(), // for memory layer + cache key
           forceRefresh: z.boolean().optional().default(false), // bypass cache
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const { leadName, leadCity, daysStale, assignedAgent, notes, prefillMessage, personId, forceRefresh } = input;
 
         // ── Power Queue 2.0: Check cache first (per lead per day) ──────────────
@@ -676,9 +720,11 @@ Reference something SPECIFIC from the notes. Make it feel like the agent remembe
           inboundMessage: z.string(),
           notes: z.string().optional(),
           personId: z.number().optional(), // for memory layer
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const { leadName, leadCity, assignedAgent, inboundMessage, notes, personId } = input;
 
         // Inject memory context if we have a personId
@@ -729,7 +775,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Cached for 10 minutes to avoid excessive LLM calls.
      */
     dailyBriefing: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         // Gather system stats for the briefing
         const fubApiKey = ENV.fubApiKey;
         let rosterSummary = "";
@@ -796,8 +844,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Tier: do_now (14-20 days stale), hot_prospect (stage = Hot Prospect), your_leads (everything else)
      */
     getLeads: publicProcedure
-      .input(z.object({ agentName: z.string().min(1) }))
+      .input(z.object({ agentName: z.string().min(1), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const fubApiKey = ENV.fubApiKey;
         if (!fubApiKey) throw new Error("FUB_API_KEY not configured");
         const leads = await getAgentLeads(fubApiKey, input.agentName);
@@ -810,7 +859,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Reuses per-agent cache so subsequent calls are instant.
      */
     getRoster: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdminOrAgent(input ?? {});
         const fubApiKey = ENV.fubApiKey;
         if (!fubApiKey) throw new Error("FUB_API_KEY not configured");
         const roster = await getAgentRoster(fubApiKey);
@@ -822,7 +873,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * all 7 agents from FUB live. Use the refresh button on the dashboard.
      */
     refreshRoster: publicProcedure
-      .mutation(async () => {
+      .input(z.object({ ...accessFields }))
+      .mutation(async ({ input }) => {
+        await requireAdmin(input);
         const fubApiKey = ENV.fubApiKey;
         if (!fubApiKey) throw new Error("FUB_API_KEY not configured");
         clearRosterCache();
@@ -843,9 +896,11 @@ Write a natural reply that addresses their message and keeps the conversation go
           memoryText: z.string().min(1).max(500),
           category: z.enum(["agent_style", "lead_insight", "market_knowledge", "general"]).default("general"),
           importanceScore: z.number().min(1).max(5).default(1),
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         await saveMemory(input);
         return { success: true };
       }),
@@ -854,8 +909,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Get memories for an agent to display in the Copilot UI.
      */
     getMemories: publicProcedure
-      .input(z.object({ agentName: z.string() }))
+      .input(z.object({ agentName: z.string(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const memories = await getMemories(input.agentName, 10);
         return { memories };
       }),
@@ -872,9 +928,11 @@ Write a natural reply that addresses their message and keeps the conversation go
           leadStage: z.string().optional(),
           draftType: z.enum(["outbound", "reply"]).default("outbound"),
           action: z.enum(["sent", "ignored", "regenerated", "edited"]),
+          ...accessFields,
         })
       )
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         await logFeedback(input);
         return { success: true };
       }),
@@ -883,8 +941,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Get winning draft patterns for an agent (most-sent drafts).
      */
     getWinningPatterns: publicProcedure
-      .input(z.object({ agentName: z.string() }))
+      .input(z.object({ agentName: z.string(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const patterns = await getWinningPatterns(input.agentName, 5);
         return { patterns };
       }),
@@ -916,7 +975,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Shows the owner how many errors occurred and what categories.
      */
     getDaySummary: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         const { getUnresolvedErrors } = await import('./db');
         const errors = await getUnresolvedErrors(25);
         const byCategory: Record<string, number> = {};
@@ -944,7 +1005,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * (Power Queue texts for agents, FUB note posts for the bot)
      */
     getStatus: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         // Dynamic: build ROSTER from FUB users via agentRegistry (Golden Rule)
         const ROSTER = getBotStatusRoster(await getActiveAgents());
         // Agent goal is a soft target for Power Queue texts (not a hard cap).
@@ -980,7 +1043,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Returns the N most recent bot run records for the dashboard history panel.
      */
     getRunHistory: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         return getRecentBotRuns(10);
       }),
 
@@ -989,7 +1054,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Returns the full LifestyleBotResult so the dashboard can show what happened.
      */
     runNow: publicProcedure
-      .mutation(async () => {
+      .input(z.object({ ...accessFields }))
+      .mutation(async ({ input }) => {
+        await requireAdmin(input);
         const result = await runLifestyleBot("manual");
         return result;
       }),
@@ -999,7 +1066,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Parses the JSON findings field so the UI gets typed objects.
      */
     getMonitorStatus: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         const runs = await getRecentMonitorRuns(5);
         return runs.map(r => ({
           ...r,
@@ -1015,7 +1084,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Returns the full MonitorResult so the dashboard can show what was checked.
      */
     runMonitorNow: publicProcedure
-      .mutation(async () => {
+      .input(z.object({ ...accessFields }))
+      .mutation(async ({ input }) => {
+        await requireAdmin(input);
         const result = await runBotMonitor("manual");
         // Persist to DB (non-blocking)
         insertMonitorLog({
@@ -1040,8 +1111,10 @@ Write a natural reply that addresses their message and keeps the conversation go
       .input(z.object({
         limit: z.number().min(1).max(200).optional(),
         hoursBack: z.number().min(1).max(72).optional(),
+        ...accessFields,
       }).optional())
       .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         const limit = input?.limit ?? 50;
         const hoursBack = input?.hoursBack ?? 25;
         return getRecentObservations(limit, hoursBack);
@@ -1051,8 +1124,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Mark a specific observation as manually fixed.
      */
     markObsFixed: publicProcedure
-      .input(z.object({ id: z.number(), note: z.string().optional() }))
+      .input(z.object({ id: z.number(), note: z.string().optional(), ...accessFields }))
       .mutation(async ({ input }) => {
+        await requireAdmin(input);
         await markObservationFixed(input.id, input.note ?? "Manually marked fixed");
         return { ok: true };
       }),
@@ -1062,7 +1136,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Moves all agent leads created 20+ days ago to the pond.
      */
     runAutoPondNow: publicProcedure
-      .mutation(async () => {
+      .input(z.object({ ...accessFields }))
+      .mutation(async ({ input }) => {
+        await requireAdmin(input);
         const result = await runAutoPondPromotion("manual");
         return result;
       }),
@@ -1071,7 +1147,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Returns the N most recent auto-pond promotion run records.
      */
     getPondPromotionHistory: publicProcedure
-      .query(async () => {
+      .input(z.object({ ...accessFields }).optional())
+      .query(async ({ input }) => {
+        await requireAdmin(input ?? {});
         return getRecentPondPromotionRuns(10);
       }),
 
@@ -1080,7 +1158,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Scans Gmail for permanent delivery failures and processes each bounced lead.
      */
     runBounceNow: publicProcedure
-      .mutation(async () => {
+      .input(z.object({ ...accessFields }))
+      .mutation(async ({ input }) => {
+        await requireAdmin(input);
         const result = await runBounceHandler();
         return result;
       }),
@@ -1117,8 +1197,10 @@ Write a natural reply that addresses their message and keeps the conversation go
         leadName: z.string().optional(),
         agentName: z.string().optional(),
         reason: z.enum(["unsubscribe", "bounce_no_phone", "opt_out_reply", "agent_marked", "manual"]).default("agent_marked"),
+        ...accessFields,
       }))
       .mutation(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const result = await suppressLead({
           personId: input.personId,
           reason: input.reason,
@@ -1133,8 +1215,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Check if a single lead is suppressed.
      */
     isLeadSuppressed: publicProcedure
-      .input(z.object({ personId: z.number() }))
+      .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdminOrAgent(input);
         const suppressed = await isLeadSuppressed(input.personId);
         return { suppressed };
       }),
@@ -1143,8 +1226,9 @@ Write a natural reply that addresses their message and keeps the conversation go
      * Get the full suppression list for the dashboard.
      */
     getSuppressionList: publicProcedure
-      .input(z.object({ limit: z.number().optional() }))
+      .input(z.object({ limit: z.number().optional(), ...accessFields }))
       .query(async ({ input }) => {
+        await requireAdmin(input);
         return getSuppressionList(input.limit ?? 200);
       }),
   }),

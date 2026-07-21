@@ -43,6 +43,7 @@ vi.mock("./_core/env", () => ({
     oAuthServerUrl: "https://oauth.test.com",
     ownerOpenId: "test_owner",
     isProduction: false,
+    powerQueueAdminToken: "test_admin_token",
   },
 }));
 
@@ -80,6 +81,7 @@ describe("leads.logSentNote", () => {
       personId: 42,
       agentName: "Steven",
       messageBody: "Hey John, hope you're doing well!",
+      agent: "Steven",
     });
 
     expect(result.success).toBe(true);
@@ -114,6 +116,7 @@ describe("leads.logSentNote", () => {
       personId: 99,
       agentName: "Irma",
       messageBody: "Hey, just checking in!",
+      agent: "Irma",
     });
     expect(result).toEqual({ success: true });
     // Confirm FUB was called
@@ -141,6 +144,7 @@ describe("leads.logSentNote", () => {
     const result = await caller.leads.logSentNote({
       personId: 42,
       agentName: "Laila",
+      agent: "Laila",
     });
 
     expect(result.success).toBe(true);
@@ -169,6 +173,7 @@ describe("leads.logSentNote", () => {
     const result = await caller.leads.logSentNote({
       personId: 43,
       agentName: "laila",
+      agent: "laila",
     });
 
     expect(result.success).toBe(true);
@@ -197,6 +202,7 @@ describe("ai.draftReply", () => {
       leadCity: "Austin",
       assignedAgent: "Steven",
       inboundMessage: "Hey I'm interested in seeing that house on Oak Street",
+      agent: "Steven",
     });
 
     expect(result.draft).toBeTruthy();
@@ -220,6 +226,7 @@ describe("ai.draftReply", () => {
     const result = await caller.ai.draftReply({
       leadName: "Mike",
       inboundMessage: "I want to buy a house",
+      adminToken: "test_admin_token",
     });
 
     expect(result.draft).toBe("Hey Mike, sounds great!");
@@ -252,6 +259,7 @@ describe("leads.logSentNote email channel", () => {
       agentName: "Peter",
       messageBody: "Still looking for a home in Austin?",
       channel: "email",
+      agent: "Peter",
     });
 
     expect(result.success).toBe(true);

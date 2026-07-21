@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -34,6 +34,19 @@ export function CopilotSmsDraft({
   phone,
   onSendWithDraft,
 }: CopilotSmsDraftProps) {
+  // URL-param access context
+  const urlAdminToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("admin") ?? "";
+  }, []);
+  const urlAgent = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("agent") ?? "";
+  }, []);
+  const accessParams = useMemo(() => ({
+    ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
+    ...(urlAgent ? { agent: urlAgent } : {}),
+  }), [urlAdminToken, urlAgent]);
   const openGlobalCopilot = () => {
     window.dispatchEvent(
       new CustomEvent("copilot:open-with-lead", {
@@ -67,9 +80,9 @@ export function CopilotSmsDraft({
   // Fetch last inbound text from FUB — auto-loads on expand (not just reply mode)
   // This powers Reply Mode auto-detection: if an inbound message exists, we auto-switch
   const lastInboundQuery = trpc.leads.getLastInbound.useQuery(
-    { personId: leadId },
+    { personId: leadId, ...accessParams },
     {
-      enabled: isExpanded, // fetch as soon as panel opens
+      enabled: isExpanded && !!(urlAdminToken || urlAgent), // fetch as soon as panel opens
       retry: false,
       staleTime: 60 * 1000, // 60s cache to protect FUB rate limits
     }
@@ -100,6 +113,7 @@ export function CopilotSmsDraft({
       leadCity: leadCity || undefined,
       draftType: mode === "reply" ? "reply" : "outbound",
       action,
+      ...accessParams,
     });
   };
 
@@ -162,6 +176,7 @@ export function CopilotSmsDraft({
       notes: notes || undefined,
       prefillMessage: prefillMessage || undefined,
       personId: leadId, // memory layer context
+      ...accessParams,
     });
   };
 
@@ -173,6 +188,7 @@ export function CopilotSmsDraft({
       inboundMessage,
       notes: notes || undefined,
       personId: leadId, // memory layer context + auto-extract memories from inbound
+      ...accessParams,
     });
   };
 

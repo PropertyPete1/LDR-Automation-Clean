@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -10,7 +10,21 @@ import { trpc } from "@/lib/trpc";
 import { getAgentAvatarGradient } from "@shared/agentColors";
 
 export default function AgentDirectory() {
-  const { data: rosterData } = trpc.agent.getRoster.useQuery(undefined, { staleTime: 10 * 60_000 });
+  // URL-param access context
+  const urlAdminToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("admin") ?? "";
+  }, []);
+  const urlAgent = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("agent") ?? "";
+  }, []);
+  const accessParams = useMemo(() => ({
+    ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
+    ...(urlAgent ? { agent: urlAgent } : {}),
+  }), [urlAdminToken, urlAgent]);
+
+  const { data: rosterData } = trpc.agent.getRoster.useQuery(accessParams, { staleTime: 10 * 60_000 });
   const AGENTS = (rosterData?.roster ?? []).map(a => ({
     name: a.name,
     initial: a.name.charAt(0).toUpperCase(),

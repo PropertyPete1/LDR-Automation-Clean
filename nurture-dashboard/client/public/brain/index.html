@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LDR // COMPANY BRAIN — GRAPH MIND</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#04060A;
+  --panel:#0D1017;
+  --panel-2:#121620;
+  --line:#1D2330;
+  --gold:#D4B36A;
+  --teal:#4FD1C5;
+  --coral:#E8705F;
+  --violet:#8B7CF6;
+  --blue:#5EA8F0;
+  --green:#7CD67C;
+  --text:#E8EAEE;
+  --muted:#8B919E;
+  --faint:#4E5564;
+  --display:'Chakra Petch',sans-serif;
+  --body:'Inter',sans-serif;
+  --mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:14px;overflow:hidden}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:3;opacity:.28;
+  background:repeating-linear-gradient(0deg, transparent 0 2px, rgba(255,255,255,.008) 2px 4px)}
+.vignette{position:fixed;inset:0;pointer-events:none;z-index:3;
+  background:radial-gradient(120% 120% at 50% 50%, transparent 52%, rgba(0,0,0,.6) 100%)}
+
+/* BOOT */
+#boot{position:fixed;inset:0;z-index:100;background:#03050A;display:flex;align-items:center;justify-content:center;
+  transition:opacity .8s ease, visibility .8s}
+#boot.done{opacity:0;visibility:hidden}
+.boot-inner{width:min(560px,90vw);font-family:var(--mono);font-size:12px;color:var(--teal)}
+.boot-logo{font-family:var(--display);letter-spacing:6px;font-size:20px;color:var(--gold);margin-bottom:4px;text-align:center}
+.boot-sub{text-align:center;color:var(--faint);font-size:10px;letter-spacing:3px;margin-bottom:22px}
+#bootLines{min-height:190px;line-height:1.9;white-space:pre-wrap}
+#bootLines .ok{color:var(--green)} #bootLines .warn{color:var(--gold)} #bootLines .dim{color:var(--faint)}
+.boot-bar{height:3px;background:#12161F;border-radius:2px;margin-top:16px;overflow:hidden}
+.boot-bar i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--teal),var(--gold));transition:width .3s}
+
+.app{display:grid;grid-template-rows:54px auto 1fr;height:100vh;position:relative;z-index:2}
+.topbar{display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(18,22,32,.92), rgba(13,16,23,.92))}
+.monogram{width:32px;height:32px;border:1px solid var(--gold);border-radius:8px;display:grid;place-items:center;
+  font-family:var(--display);font-weight:700;color:var(--gold);font-size:11px;
+  animation:mono-pulse 4s infinite}
+@keyframes mono-pulse{0%,100%{box-shadow:0 0 14px rgba(212,179,106,.25), inset 0 0 10px rgba(212,179,106,.08)}50%{box-shadow:0 0 26px rgba(212,179,106,.5), inset 0 0 16px rgba(212,179,106,.16)}}
+.brand-name{font-family:var(--display);font-weight:600;letter-spacing:2.5px;font-size:12.5px}
+.brand-name span{color:var(--gold)}
+.brand-name.glitch{animation:glitch .35s steps(2) 3}
+@keyframes glitch{0%{transform:translate(0)}25%{transform:translate(-2px,1px);text-shadow:2px 0 var(--coral),-2px 0 var(--teal)}
+  50%{transform:translate(2px,-1px);text-shadow:-2px 0 var(--violet)}100%{transform:translate(0);text-shadow:none}}
+.top-status{display:flex;align-items:center;gap:20px;margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.sys-item{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 8px var(--teal);animation:pulse 2.4s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+#clock{color:var(--gold)} #cogload{color:var(--violet)} #ghstat{color:var(--blue)}
+#neuronCt{color:var(--teal)}
+
+.stage{display:grid;grid-template-columns:1fr 318px;min-height:0}
+.core-zone{position:relative;display:flex;flex-direction:column;min-width:0}
+#graphWrap{flex:1;min-height:0;position:relative}
+#graph{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+
+.hemi-tag{position:absolute;top:12px;font-family:var(--mono);font-size:9.5px;letter-spacing:2.5px;z-index:5;pointer-events:none}
+.hemi-tag.left{left:16px;color:var(--teal);opacity:.7}
+.hemi-tag.right{right:16px;color:var(--coral);opacity:.7;text-align:right}
+
+.repo-hud{position:absolute;bottom:10px;width:246px;border:1px solid var(--line);border-radius:11px;
+  background:rgba(13,16,23,.88);backdrop-filter:blur(6px);padding:10px 12px;z-index:5}
+.repo-hud.left{left:12px;border-left:2px solid var(--teal)}
+.repo-hud.right{right:12px;border-left:2px solid var(--coral)}
+.rh-name{font-family:var(--mono);font-size:10px;color:var(--text);display:flex;align-items:center;gap:7px}
+.rh-name i{width:7px;height:7px;border-radius:50%;flex:none}
+.rh-desc{font-family:var(--mono);font-size:8.5px;color:var(--faint);margin:4px 0 6px;line-height:1.5}
+.rh-stats{display:flex;gap:11px;font-family:var(--mono);font-size:9px;color:var(--muted)}
+.rh-stats b{color:var(--gold);font-weight:500}
+
+.rail{border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0;background:rgba(13,16,23,.6)}
+.rail-h{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line);
+  font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:1.6px;text-transform:uppercase;flex:none}
+.tag{font-family:var(--mono);font-size:9px;color:var(--teal);border:1px solid rgba(79,209,197,.35);border-radius:4px;padding:2px 7px}
+.blink{animation:pulse 1.6s infinite}
+.feed{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent;padding:3px 0}
+.ev{display:flex;gap:10px;padding:8px 15px;border-bottom:1px solid rgba(29,35,48,.5);animation:slidein .35s ease}
+@keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.ev .nd{width:8px;height:8px;border-radius:50%;flex:none;margin-top:4px}
+.ev .msg{font-size:11.5px;color:var(--text);line-height:1.4}
+.ev .msg b{color:var(--gold)}
+.ev .meta{font-family:var(--mono);font-size:9px;color:var(--faint);margin-top:2px}
+
+.eeg-box{border-top:1px solid var(--line);flex:none;padding:9px 13px 11px}
+.eeg-t{font-family:var(--mono);font-size:9px;letter-spacing:1.8px;color:var(--faint);margin-bottom:5px;display:flex;justify-content:space-between}
+.eeg-t span:last-child{color:var(--teal)}
+#eeg{width:100%;height:44px;display:block}
+#spectrum{width:100%;height:32px;display:block;margin-top:6px}
+
+.strip{flex:none;display:flex;gap:9px;padding:8px 16px 12px;overflow-x:auto;scrollbar-width:none}
+.chip{border:1px solid var(--line);border-radius:9px;background:rgba(18,22,32,.85);padding:7px 11px;min-width:136px;flex:none;
+  cursor:pointer;transition:all .18s;text-align:left}
+.chip:hover{border-color:var(--faint);transform:translateY(-1px)}
+.chip:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.chip.firing{border-color:var(--c);box-shadow:0 0 20px color-mix(in srgb, var(--c) 40%, transparent)}
+.chip .c-name{font-family:var(--display);font-size:10px;font-weight:600;letter-spacing:.7px;display:flex;align-items:center;gap:6px;color:var(--text)}
+.chip .c-name i{width:6px;height:6px;border-radius:50%;background:var(--c);box-shadow:0 0 6px var(--c);flex:none}
+.chip .c-sub{font-family:var(--mono);font-size:8.5px;color:var(--faint);margin-top:3px}
+.chip .c-load{height:2.5px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden}
+.chip .c-load i{display:block;height:100%;width:0%;background:var(--c);border-radius:2px;transition:width .6s ease}
+
+#toast{position:fixed;bottom:18px;left:50%;transform:translate(-50%,12px);background:var(--panel-2);
+  border:1px solid rgba(212,179,106,.5);border-radius:10px;padding:10px 16px;font-family:var(--mono);
+  font-size:10.5px;color:var(--gold);opacity:0;transition:all .3s;pointer-events:none;z-index:50}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ---- live systems launcher ---- */
+.launcher{
+  flex:none;display:flex;align-items:center;gap:8px;padding:7px 16px;border-bottom:1px solid var(--line);
+  background:rgba(13,16,23,.7);overflow-x:auto;scrollbar-width:none;
+}
+.launch-label{font-family:var(--mono);font-size:9px;letter-spacing:2px;color:var(--faint);white-space:nowrap;margin-right:4px}
+.launch-btn{
+  display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10px;letter-spacing:.6px;
+  color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:6px 12px;
+  background:rgba(18,22,32,.8);white-space:nowrap;transition:all .18s;
+}
+.launch-btn i{width:6px;height:6px;border-radius:50%;background:var(--lc,var(--gold));box-shadow:0 0 6px var(--lc,var(--gold));flex:none}
+.launch-btn:hover{color:var(--text);border-color:var(--lc,var(--gold));box-shadow:0 0 14px color-mix(in srgb, var(--lc,var(--gold)) 25%, transparent)}
+.launch-btn:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+.launch-btn b{color:var(--lc,var(--gold));font-weight:500}
+
+/* chip open-in-app button */
+.chip{position:relative;padding-right:30px}
+.c-open{
+  position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+  border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--faint);font-size:10px;line-height:1;
+  cursor:pointer;transition:all .15s;text-decoration:none;font-family:var(--mono);
+}
+.c-open:hover{color:var(--c);border-color:var(--c);box-shadow:0 0 10px color-mix(in srgb, var(--c) 35%, transparent)}
+.c-open:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:.001s!important;transition-duration:.001s!important}}
+
+/* ================= VOICE ASSISTANT ================= */
+#micBtn{
+  position:fixed;right:18px;bottom:86px;z-index:60;width:54px;height:54px;border-radius:50%;
+  border:1px solid rgba(212,179,106,.6);background:radial-gradient(circle at 35% 30%, #1A1F2B, #0D1017);
+  color:var(--gold);display:grid;place-items:center;cursor:pointer;
+  box-shadow:0 0 22px rgba(212,179,106,.25), inset 0 0 14px rgba(212,179,106,.08);
+  transition:transform .15s, box-shadow .2s;
+}
+#micBtn:hover{transform:scale(1.06)}
+#micBtn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+#micBtn svg{width:22px;height:22px}
+#micBtn.listening{animation:micpulse 1.2s infinite;border-color:var(--teal);color:var(--teal)}
+@keyframes micpulse{
+  0%,100%{box-shadow:0 0 18px rgba(79,209,197,.35), 0 0 0 0 rgba(79,209,197,.35)}
+  50%{box-shadow:0 0 30px rgba(79,209,197,.6), 0 0 0 14px rgba(79,209,197,0)}
+}
+#micHint{
+  position:fixed;right:80px;bottom:100px;z-index:60;font-family:var(--mono);font-size:9.5px;color:var(--faint);
+  letter-spacing:1px;pointer-events:none;transition:opacity .4s;
+}
+/* chat panel */
+#brainChat{
+  position:fixed;right:14px;bottom:150px;z-index:59;width:min(360px, calc(100vw - 28px));
+  max-height:min(54vh,480px);display:flex;flex-direction:column;
+  background:rgba(13,16,23,.96);border:1px solid var(--line);border-radius:14px;
+  backdrop-filter:blur(10px);box-shadow:0 12px 44px rgba(0,0,0,.6);
+  transform:translateY(14px);opacity:0;visibility:hidden;transition:all .28s ease;
+}
+#brainChat.open{transform:none;opacity:1;visibility:visible}
+.bc-h{display:flex;align-items:center;gap:9px;padding:11px 14px;border-bottom:1px solid var(--line);flex:none;
+  font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:1.6px}
+.bc-h .st{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--teal);letter-spacing:1px}
+.bc-h .x{background:none;border:none;color:var(--faint);font-size:15px;cursor:pointer;margin-left:10px;line-height:1}
+.bc-h .x:hover{color:var(--text)}
+.bc-log{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:9px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.bub{max-width:88%;padding:9px 12px;border-radius:12px;font-size:12.5px;line-height:1.5;animation:slidein .3s ease}
+.bub.user{align-self:flex-end;background:rgba(212,179,106,.12);border:1px solid rgba(212,179,106,.3);color:var(--text);border-bottom-right-radius:4px}
+.bub.brain{align-self:flex-start;background:rgba(79,209,197,.07);border:1px solid rgba(79,209,197,.22);color:var(--text);border-bottom-left-radius:4px}
+.bub.brain b{color:var(--gold)}
+.bub .src{display:block;font-family:var(--mono);font-size:8.5px;color:var(--faint);margin-top:5px;letter-spacing:.5px}
+.bc-live{padding:0 14px 6px;font-family:var(--mono);font-size:10.5px;color:var(--teal);min-height:16px;flex:none}
+.bc-in{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);flex:none}
+.bc-in input{
+  flex:1;background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:9px;color:var(--text);
+  font-family:var(--body);font-size:12.5px;padding:9px 12px;outline:none;
+}
+.bc-in input:focus{border-color:rgba(212,179,106,.5)}
+.bc-in button{
+  border:1px solid rgba(212,179,106,.5);background:rgba(212,179,106,.1);color:var(--gold);border-radius:9px;
+  font-family:var(--mono);font-size:11px;padding:0 14px;cursor:pointer;letter-spacing:1px;
+}
+.bc-in button:hover{background:rgba(212,179,106,.2)}
+
+/* ================= MOBILE ================= */
+@media (max-width:980px){
+  .stage{grid-template-columns:1fr}
+  .rail{display:none}
+  .repo-hud{display:none}
+}
+@media (max-width:700px){
+  body{font-size:13px}
+  .topbar{padding:0 12px;gap:10px}
+  .brand-name{font-size:10px;letter-spacing:1.5px}
+  .top-status{gap:10px;font-size:9px}
+  .top-status .sys-item:nth-child(2),.top-status .sys-item:nth-child(4){display:none}
+  .launcher{padding:6px 10px}
+  .launch-btn{font-size:9px;padding:6px 10px}
+  .launch-label{display:none}
+  .hemi-tag{font-size:8px;letter-spacing:1.5px;top:8px}
+  .hemi-tag.left{left:10px}.hemi-tag.right{right:10px}
+  .strip{padding:6px 10px 10px;gap:7px}
+  .chip{min-width:124px;padding:6px 26px 6px 9px}
+  #micBtn{right:14px;bottom:78px;width:50px;height:50px}
+  #micHint{display:none}
+  #brainChat{right:8px;left:8px;width:auto;bottom:138px;max-height:52vh}
+  #toast{width:max-content;max-width:92vw;font-size:9.5px}
+}
+</style>
+</head>
+<body>
+<div class="vignette"></div>
+
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-logo">◈ COMPANY BRAIN</div>
+    <div class="boot-sub">LIFESTYLE DESIGN REALTY · GRAPH MIND v4.0</div>
+    <div id="bootLines"></div>
+    <div class="boot-bar"><i id="bootBar"></i></div>
+  </div>
+</div>
+
+<div class="app">
+  <header class="topbar">
+    <div class="monogram">LDR</div>
+    <div class="brand-name" id="brandName">COMPANY <span>BRAIN</span> // GRAPH MIND</div>
+    <div class="top-status">
+      <div class="sys-item"><span class="dot"></span>ONLINE</div>
+      <div class="sys-item">NEURONS <span id="neuronCt">0</span></div>
+      <div class="sys-item">GH <span id="ghstat">LINKING…</span></div>
+      <div class="sys-item">COG <span id="cogload">--%</span></div>
+      <div class="sys-item">SYN <span style="color:var(--gold)" id="synCount">0</span></div>
+      <div class="sys-item" id="clock">--:--:--</div>
+    </div>
+  </header>
+
+  <nav class="launcher" aria-label="Live systems">
+    <span class="launch-label">LIVE SYSTEMS //</span>
+    <a class="launch-btn" style="--lc:var(--teal)" href="https://github.com/PropertyPete1/lifestyle-design-studio" target="_blank" rel="noopener" id="lb-ig"><i></i>IG REELS APP <b>↗</b></a>
+    <a class="launch-btn" style="--lc:var(--coral)" href="https://fub-nurture-phfprjui.manus.space" target="_blank" rel="noopener"><i></i>FUB NURTURE DASH <b>↗</b></a>
+    <a class="launch-btn" style="--lc:var(--gold)" href="https://lifestyledash-wpnl8v84.manus.space" target="_blank" rel="noopener"><i></i>BOT DASHBOARD <b>↗</b></a>
+    <a class="launch-btn" style="--lc:var(--blue)" href="https://github.com/PropertyPete1/lifestyle-design-studio" target="_blank" rel="noopener"><i></i>REPO · STUDIO <b>↗</b></a>
+    <a class="launch-btn" style="--lc:var(--violet)" href="https://github.com/PropertyPete1/LDR-Automation-Clean" target="_blank" rel="noopener"><i></i>REPO · FUB <b>↗</b></a>
+  </nav>
+
+  <div class="stage">
+    <div class="core-zone">
+      <div class="hemi-tag left">◄ CONTENT DIVISION<br>lifestyle-design-studio</div>
+      <div class="hemi-tag right">SALES DIVISION ►<br>FUB-Automations</div>
+
+      <div id="graphWrap">
+        <canvas id="graph"></canvas>
+      </div>
+
+      <div class="repo-hud left">
+        <div class="rh-name"><i style="background:var(--teal);box-shadow:0 0 6px var(--teal)"></i>PropertyPete1/lifestyle-design-studio</div>
+        <div class="rh-desc">IG Daily Reels · AI selection · captions · scheduled posting</div>
+        <div class="rh-stats"><span>LANG <b>TS</b></span><span>PUSH <b id="push1">—</b></span><span>ISSUES <b id="iss1">—</b></span></div>
+      </div>
+      <div class="repo-hud right">
+        <div class="rh-name"><i style="background:var(--coral);box-shadow:0 0 6px var(--coral)"></i>PropertyPete1/LDR-Automation-Clean</div>
+        <div class="rh-desc">Power Queue · 7 bots · nurture 14d · hygiene · 4am healer</div>
+        <div class="rh-stats"><span>LANG <b>TS</b></span><span>PUSH <b id="push2">—</b></span><span>ISSUES <b id="iss2">—</b></span></div>
+      </div>
+
+      <div class="strip" id="strip"></div>
+    </div>
+
+    <aside class="rail">
+      <div class="rail-h">Team Activity Feed <span class="tag blink">LIVE</span></div>
+      <div class="feed" id="feed"></div>
+      <div class="eeg-box">
+        <div class="eeg-t"><span>BRAIN ACTIVITY</span><span id="eegHz">8.4 Hz</span></div>
+        <canvas id="eeg" width="600" height="88"></canvas>
+        <canvas id="spectrum" width="600" height="64"></canvas>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<button id="micBtn" aria-label="Talk to the brain (press V)" title="Talk to the brain (V)">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+    <rect x="9" y="3" width="6" height="11" rx="3"/>
+    <path d="M5 11a7 7 0 0 0 14 0"/>
+    <line x1="12" y1="18" x2="12" y2="21"/><line x1="9" y1="21" x2="15" y2="21"/>
+  </svg>
+</button>
+<div id="micHint">TALK TO THE BRAIN · V</div>
+
+<div id="brainChat" role="dialog" aria-label="Brain assistant">
+  <div class="bc-h">◈ ASK THE BRAIN <span class="st" id="bcState">READY</span><button class="x" id="bcClose" aria-label="Close">✕</button></div>
+  <div class="bc-log" id="bcLog"></div>
+  <div class="bc-live" id="bcLive"></div>
+  <div class="bc-in">
+    <input id="bcInput" type="text" placeholder="Ask anything… or say: fire marketing" autocomplete="off">
+    <button id="bcSend">ASK</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* =========================================================
+   LDR COMPANY BRAIN v4 — GRAPH MIND
+   Obsidian-style particle knowledge graph.
+   ~2,000 neurons in 10 team clusters + HQ core + dust shell.
+========================================================= */
+
+/* ---- LIVE SYSTEM URLS — edit these in one place ---- */
+const LIVE_URLS={
+  igApp:      'https://github.com/PropertyPete1/lifestyle-design-studio', /* ← replace with your live IG Reels app URL when deployed */
+  fubDash:    'https://fub-nurture-phfprjui.manus.space',
+  botDash:    'https://lifestyledash-wpnl8v84.manus.space',
+  repoStudio: 'https://github.com/PropertyPete1/lifestyle-design-studio',
+  repoFub:    'https://github.com/PropertyPete1/LDR-Automation-Clean',
+};
+/* Optional LLM upgrade: if Manus deploys a backend, set this to '/api/brain/ask'
+   (POST {question} → {answer}). Voice falls back to the built-in knowledge base if unset/unreachable. */
+const ASK_ENDPOINT='/api/brain/ask';
+
+const TEAMS=[
+ /* CONTENT DIVISION (left) */
+ {id:'vault', url:LIVE_URLS.igApp,   name:'ASSET LIBRARY',   sub:'drive vault archivists',  color:'#5EA8F0', ang:200, dist:.72, n:150,
+  events:[['Asset Library pulled the 4K original — no compressed copies','driveMatcher.ts'],
+          ['File prepped: normalized + safe-zone verified','drivePreprocess.ts'],
+          ['New footage checked into the vault + fingerprinted','driveIndex.ts']]},
+ {id:'select', url:LIVE_URLS.igApp,  name:'STRATEGY TEAM',   sub:'decides what gets posted',color:'#D4B36A', ang:170, dist:.85, n:130,
+  events:[['Strategy scored tonight\'s candidates — winner picked','selection.ts'],
+          ['Clip cleared cooldown — back in rotation','sourceCooldown.ts'],
+          ['Last week\'s numbers folded into the picks','performanceAnalyst.ts']]},
+ {id:'caption', url:LIVE_URLS.igApp, name:'COPYWRITING',     sub:'captions · hooks',        color:'#4FD1C5', ang:145, dist:.66, n:140,
+  events:[['Copy team rewrote the caption — dedup passed','captionRefresh.ts'],
+          ['First-3-seconds hook punched up','hookOptimizer.ts'],
+          ['Near-duplicate caption caught and blocked','captionDedup.ts']]},
+ {id:'geo', url:LIVE_URLS.igApp,     name:'MARKET RESEARCH', sub:'ATX · SA · DFW routing',  color:'#8B7CF6', ang:118, dist:.82, n:120,
+  events:[['Clip tagged SAN ANTONIO — routed to SA calendar','geoClassify.ts'],
+          ['Dallas posting window validated','dallasSchedule.ts'],
+          ['Austin candidate routed to ATX calendar','geoClassify.ts']]},
+ {id:'publish', url:LIVE_URLS.igApp, name:'MARKETING TEAM',  sub:'social posting crew',     color:'#4FD1C5', ang:232, dist:.86, n:150,
+  events:[['Marketing shipped tonight\'s reel to Metricool — slot locked','scheduledPublish.ts'],
+          ['IG history synced — fresh view counts in','igHistorySync.ts'],
+          ['LinkedIn variant drafted + scheduled','linkedinAuthor.ts'],
+          ['Reach + saves pulled for last 5 posts','metricoolAnalytics.ts']]},
+ /* SALES DIVISION (right) */
+ {id:'queue', url:LIVE_URLS.fubDash,   name:'SALES FLOOR',     sub:'power queue · texting',   color:'#E8705F', ang:-20, dist:.72, n:150,
+  events:[['🔥 day-18 priority lead pushed to top of queue','dashboardData.ts'],
+          ['Click-to-Text fired — lead marked done','routers.ts'],
+          ['Full FUB sweep — queue rebuilt','dashboardData.ts']]},
+ {id:'bots', url:LIVE_URLS.botDash,    name:'OUTREACH TEAM',   sub:'7 bots · 15 emails/day',  color:'#D4B36A', ang:10,  dist:.86, n:150,
+  events:[['Tiffany Bot finished her shift — 15/15 sent','bot_observations'],
+          ['Rue Bot skipped a lead — already represented (91%)','llm gate'],
+          ['Abby Bot deferred 4 leads — 3-day gap respected','cadence'],
+          ['Laila Bot clocked in — run_start logged','bot_observations']]},
+ {id:'pond', url:LIVE_URLS.fubDash,    name:'NURTURE TEAM',    sub:'pond · every 14 days',    color:'#4FD1C5', ang:35,  dist:.68, n:130,
+  events:[['Personalized email sent — references last FUB note','main.py'],
+          ['Skipped a lead who bought elsewhere (87%) — note filed','skip check'],
+          ['Fresh subject written — never "Checking in"','email gen']]},
+ {id:'reassign', url:LIVE_URLS.fubDash,name:'DATABASE HYGIENE',sub:'day-21 sweep · cleanup',  color:'#8B7CF6', ang:62,  dist:.84, n:120,
+  events:[['Day-21 lead moved to the pond — agent released','reassignment'],
+          ['Morning sweep: 6 stale leads cleaned, under cap','8am CT run'],
+          ['Opt-outs and bounces scrubbed from send list','tag rules']]},
+ {id:'healer', url:LIVE_URLS.botDash,  name:'IT & MAINTENANCE',sub:'4am check · auto-fix',    color:'#7CD67C', ang:-48, dist:.82, n:110,
+  events:[['4am check: ALL SYSTEMS GREEN ✅ — report emailed','nightly_health.py'],
+          ['Missing package auto-fixed before anyone noticed','auto-fix'],
+          ['Morning heartbeat posted — monitor cleared','/api/healer/write']]},
+];
+const CHAINS=[
+ ['vault','select','caption','geo','publish'],
+ ['reassign','pond'],
+ ['bots','healer'],
+ ['queue','bots'],
+ ['publish','queue'],
+];
+
+/* ---------- canvas setup ---------- */
+const cv=document.getElementById('graph'),cx=cv.getContext('2d');
+let W=0,H=0,CX=0,CY=0,R=0,DPR=Math.min(devicePixelRatio||1, (matchMedia('(max-width:700px)').matches?1.25:1.5));
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect();
+  W=r.width;H=r.height;
+  cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0);
+  CX=W/2;CY=H/2;R=Math.min(W,H)*.44;
+  buildGraph();
+}
+/* ---------- glow sprite cache (replaces shadowBlur — huge perf win) ---------- */
+const SPRITES={};
+function glowSprite(color){
+  if(SPRITES[color])return SPRITES[color];
+  const S=64,c=document.createElement('canvas');c.width=S;c.height=S;
+  const g=c.getContext('2d');
+  const grad=g.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+  grad.addColorStop(0,color);
+  grad.addColorStop(.25,color);
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grad;g.fillRect(0,0,S,S);
+  SPRITES[color]=c;return c;
+}
+
+/* ---------- graph data ---------- */
+let nodes=[],edges=[],clusterIdx={},coreNodes=[],spines={};
+function rnd(a,b){return a+Math.random()*(b-a)}
+function gauss(){return (Math.random()+Math.random()+Math.random()-1.5)/1.5}
+
+function buildGraph(){
+  nodes=[];edges=[];clusterIdx={};coreNodes=[];spines={};
+  /* scale neuron density down on small screens for smooth mobile FPS */
+  const SCALE=Math.max(.45,Math.min(1.15,Math.sqrt(W*H)/820));
+  /* team clusters */
+  TEAMS.forEach(t=>{
+    const a=t.ang*Math.PI/180;
+    const cxp=CX+Math.cos(a)*R*t.dist, cyp=CY+Math.sin(a)*R*t.dist*.86;
+    const spread=R*.19*(0.8+t.n/150*.4);
+    const start=nodes.length;
+    const count=Math.max(40,Math.round(t.n*SCALE));
+    /* a few hub nodes (bigger) then satellites */
+    for(let i=0;i<count;i++){
+      const hub=i<4;
+      const rr=hub?spread*.25*Math.random():spread*Math.pow(Math.random(),.6);
+      const an=Math.random()*Math.PI*2;
+      nodes.push({
+        x:cxp+Math.cos(an)*rr+gauss()*spread*.16,
+        y:cyp+Math.sin(an)*rr*.88+gauss()*spread*.16,
+        z:gauss(), /* depth: -1 back … +1 front */
+        r:hub?rnd(2.4,3.4):rnd(.7,1.7),
+        team:t.id,color:t.color,heat:0,
+        tw:Math.random()*Math.PI*2, tws:rnd(.008,.03),
+        jx:rnd(.08,.3),jy:rnd(.08,.3),ph:Math.random()*Math.PI*2
+      });
+    }
+    clusterIdx[t.id]={start,end:nodes.length,cx:cxp,cy:cyp};
+    /* intra-cluster edges: connect to 2 nearest earlier nodes */
+    for(let i=start+1;i<nodes.length;i++){
+      let best=[-1,-1],bd=[1e9,1e9];
+      for(let j=start;j<i;j++){
+        const d=(nodes[i].x-nodes[j].x)**2+(nodes[i].y-nodes[j].y)**2;
+        if(d<bd[0]){bd[1]=bd[0];best[1]=best[0];bd[0]=d;best[0]=j}
+        else if(d<bd[1]){bd[1]=d;best[1]=j}
+      }
+      if(best[0]>=0)edges.push([i,best[0],t.id]);
+      if(best[1]>=0&&Math.random()<.55)edges.push([i,best[1],t.id]);
+    }
+  });
+  /* HQ core cluster */
+  const coreStart=nodes.length;
+  const coreCount=Math.max(60,Math.round(110*SCALE));
+  for(let i=0;i<coreCount;i++){
+    const rr=R*.11*Math.pow(Math.random(),.7),an=Math.random()*Math.PI*2;
+    nodes.push({x:CX+Math.cos(an)*rr,y:CY+Math.sin(an)*rr*.9,z:gauss(),
+      r:i<5?rnd(2.6,3.8):rnd(.8,1.8),team:'core',color:'#D4B36A',heat:0,
+      tw:Math.random()*7,tws:rnd(.01,.04),jx:rnd(.05,.2),jy:rnd(.05,.2),ph:Math.random()*7});
+  }
+  clusterIdx['core']={start:coreStart,end:nodes.length,cx:CX,cy:CY};
+  for(let i=coreStart+1;i<nodes.length;i++){
+    let best=-1,bd=1e9;
+    for(let j=coreStart;j<i;j++){const d=(nodes[i].x-nodes[j].x)**2+(nodes[i].y-nodes[j].y)**2;if(d<bd){bd=d;best=j}}
+    if(best>=0)edges.push([i,best,'core']);
+  }
+  /* spines: each cluster → core (through 3 relay nodes) */
+  TEAMS.forEach(t=>{
+    const c=clusterIdx[t.id];
+    for(let s=0;s<3;s++){
+      let prev=c.start+Math.floor(Math.random()*4); /* a hub */
+      for(let k=1;k<=3;k++){
+        const tt=k/4;
+        nodes.push({x:c.cx+(CX-c.cx)*tt+gauss()*14,y:c.cy+(CY-c.cy)*tt+gauss()*14,z:gauss()*.6,
+          r:rnd(.7,1.4),team:t.id,color:t.color,heat:0,
+          tw:Math.random()*7,tws:rnd(.008,.03),jx:.15,jy:.15,ph:Math.random()*7});
+        edges.push([nodes.length-1,prev,t.id]);
+        prev=nodes.length-1;
+        (spines[t.id]=spines[t.id]||[]).push(prev);
+      }
+      const coreN=clusterIdx.core.start+Math.floor(Math.random()*20);
+      edges.push([prev,coreN,t.id]);
+    }
+  });
+  /* neighbor bridges between adjacent clusters */
+  for(let i=0;i<TEAMS.length;i++){
+    for(let j=i+1;j<TEAMS.length;j++){
+      const A=clusterIdx[TEAMS[i].id],B=clusterIdx[TEAMS[j].id];
+      const d=Math.hypot(A.cx-B.cx,A.cy-B.cy);
+      if(d<R*.62){
+        for(let k=0;k<3;k++)
+          edges.push([A.start+Math.floor(Math.random()*(A.end-A.start)),
+                      B.start+Math.floor(Math.random()*(B.end-B.start)),'bridge']);
+      }
+    }
+  }
+  /* dust shell + outer dotted ring */
+  const dustCount=Math.round(260*SCALE);
+  for(let i=0;i<dustCount;i++){
+    const an=Math.random()*Math.PI*2, rr=R*(1.0+Math.random()*.14);
+    nodes.push({x:CX+Math.cos(an)*rr,y:CY+Math.sin(an)*rr*.92,z:gauss(),r:rnd(.5,1.2),
+      team:'dust',color:Math.random()<.12?'#D4B36A':'#8B919E',heat:0,
+      tw:Math.random()*7,tws:rnd(.005,.02),jx:.1,jy:.1,ph:Math.random()*7});
+  }
+  document.getElementById('neuronCt').textContent=nodes.length.toLocaleString();
+}
+
+/* ---------- firing engine ---------- */
+let synTotal=0,activity=0,waves=[],pulses=[],flashes=[];
+function fire(id,manual=false,depth=0){
+  const t=TEAMS.find(x=>x.id===id);if(!t)return;
+  const c=clusterIdx[id];if(!c)return;
+  synTotal++;activity=Math.min(1,activity+.3);
+  document.getElementById('synCount').textContent=synTotal.toLocaleString();
+
+  /* heat the cluster */
+  for(let i=c.start;i<c.end;i++)nodes[i].heat=1;
+  /* activation wave ring from cluster center */
+  waves.push({x:c.cx,y:c.cy,r:6,max:R*.34,color:t.color,a:1});
+  /* pulse traveling cluster → core */
+  pulses.push({x:c.cx,y:c.cy,tx:CX,ty:CY,t:0,color:t.color,back:false,id});
+  /* core flash later */
+  setTimeout(()=>{flashes.push({x:CX,y:CY,r:8,max:R*.22,color:t.color,a:1});
+    const cc=clusterIdx.core;for(let i=cc.start;i<cc.end;i++)nodes[i].heat=Math.max(nodes[i].heat,.9);
+  },620);
+
+  /* chip */
+  const chip=document.getElementById('chip-'+id);
+  if(chip){chip.classList.add('firing');
+    const bar=chip.querySelector('.c-load i');bar.style.width=(45+Math.random()*50)+'%';
+    setTimeout(()=>{chip.classList.remove('firing');bar.style.width=(6+Math.random()*18)+'%'},1300)}
+
+  /* feed */
+  const evt=t.events[Math.floor(Math.random()*t.events.length)];
+  const row=document.createElement('div');row.className='ev';
+  row.innerHTML=`<div class="nd" style="background:${t.color};box-shadow:0 0 7px ${t.color}"></div>
+    <div><div class="msg">${evt[0]}</div>
+    <div class="meta">${t.name} · ${evt[1]} · ${new Date().toLocaleTimeString('en-US',{hour12:false})}</div></div>`;
+  const feed=document.getElementById('feed');feed.prepend(row);
+  while(feed.children.length>16)feed.lastChild.remove();
+
+  /* cascades */
+  if(depth===0){
+    const chain=CHAINS.find(ch=>ch[0]===id);
+    if(chain&&Math.random()<.75){
+      chain.slice(1).forEach((next,i)=>setTimeout(()=>fire(next,false,depth+1),(i+1)*1000));
+    }else if(Math.random()<.22){
+      const others=TEAMS.filter(x=>x.id!==id);
+      setTimeout(()=>fire(others[Math.floor(Math.random()*others.length)].id,false,depth+1),950);
+    }
+  }
+  if(manual)toast('HQ dispatched a task → '+t.name);
+}
+
+/* autonomous loop */
+(function loop(){
+  const w=['vault','select','publish','publish','queue','bots','bots','pond','reassign','healer','caption','geo'];
+  fire(w[Math.floor(Math.random()*w.length)]);
+  setTimeout(loop,2600+Math.random()*3400);
+})();
+
+/* click near a cluster to fire it */
+cv.addEventListener('click',e=>{
+  const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  let best=null,bd=1e9;
+  TEAMS.forEach(t=>{const c=clusterIdx[t.id];const d=Math.hypot(mx-c.cx,my-c.cy);if(d<bd){bd=d;best=t.id}});
+  if(best&&bd<R*.32)fire(best,true);
+});
+
+/* ---------- render ---------- */
+let rot=0,tGlobal=0;
+let voiceMode=null,voiceT=0,lastRing=0;   /* 'listening' | 'speaking' | null */
+let haloCache=null,haloKey='';
+let parX=0,parY=0,parTX=0,parTY=0;        /* parallax */
+addEventListener('pointermove',e=>{
+  parTX=(e.clientX/innerWidth-.5)*2;parTY=(e.clientY/innerHeight-.5)*2;
+},{passive:true});
+
+const VOICE_COLORS={listening:'#4FD1C5',speaking:'#D4B36A'};
+function hexA(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`}
+
+function draw(){
+  tGlobal+=.016;rot+=.00035;
+  activity=Math.max(.07,activity*.987);
+  parX+=(parTX-parX)*.04;parY+=(parTY-parY)*.04;
+  if(voiceMode)voiceT+=.016;
+
+  cx.clearRect(0,0,W,H);
+
+  /* nebula halo — cached gradient, rebuilt only when mode/size changes */
+  const vc=voiceMode?VOICE_COLORS[voiceMode]:null;
+  const hkey=(voiceMode||'idle')+'|'+W+'x'+H;
+  if(hkey!==haloKey){
+    haloKey=hkey;
+    haloCache=cx.createRadialGradient(CX,CY,R*.08,CX,CY,R*1.18);
+    if(vc){
+      haloCache.addColorStop(0,hexA(vc,.14));
+      haloCache.addColorStop(.45,hexA(vc,.05));
+      haloCache.addColorStop(1,'rgba(0,0,0,0)');
+    }else{
+      haloCache.addColorStop(0,'rgba(212,179,106,.05)');
+      haloCache.addColorStop(.6,'rgba(79,209,197,.02)');
+      haloCache.addColorStop(1,'rgba(0,0,0,0)');
+    }
+  }
+  cx.globalAlpha=vc?(.6+Math.sin(voiceT*5)*.35):1;  /* pulse via alpha, not new gradients */
+  cx.fillStyle=haloCache;cx.fillRect(0,0,W,H);
+  cx.globalAlpha=1;
+
+  /* voice: emit rings + keep core hot + shimmer clusters */
+  if(voiceMode){
+    if(tGlobal-lastRing>(voiceMode==='listening'?.55:.34)){
+      lastRing=tGlobal;
+      waves.push({x:CX,y:CY,r:10,max:R*(voiceMode==='speaking'?1.05:.7),color:vc,a:.9,voice:true});
+    }
+    const cc=clusterIdx.core;
+    for(let i=cc.start;i<cc.end;i+=2)nodes[i].heat=Math.max(nodes[i].heat,.5+Math.sin(voiceT*6+i)*.3);
+    if(voiceMode==='speaking'){
+      /* clusters shimmer in sequence while the brain talks */
+      const idx=Math.floor(voiceT*3)%TEAMS.length;
+      const c=clusterIdx[TEAMS[idx].id];
+      for(let i=c.start;i<c.end;i+=3)nodes[i].heat=Math.max(nodes[i].heat,.45);
+    }
+    activity=Math.min(1,activity+.012);
+  }
+
+  /* world transform: rotation + jitter + depth parallax */
+  const cosR=Math.cos(rot),sinR=Math.sin(rot);
+  function tx(n){
+    const jx=Math.sin(tGlobal*1.3+n.ph)*n.jx*3, jy=Math.cos(tGlobal*1.1+n.ph)*n.jy*3;
+    const dx=n.x-CX+jx, dy=n.y-CY+jy;
+    const z=n.z||0;
+    return [CX+dx*cosR-dy*sinR + z*parX*16, CY+dx*sinR+dy*cosR + z*parY*12];
+  }
+
+  /* edges — batched: one path for cold edges, grouped paths for hot */
+  cx.lineWidth=.55;
+  const hotBatches={};
+  cx.strokeStyle='#5A6478';cx.globalAlpha=.09;
+  cx.beginPath();
+  for(const [a,b] of edges){
+    const A=nodes[a],B=nodes[b];
+    const heat=Math.max(A.heat,B.heat);
+    if(heat>.05){
+      (hotBatches[A.color]=hotBatches[A.color]||[]).push(a,b,heat);
+      continue;
+    }
+    const [ax,ay]=tx(A),[bx,by]=tx(B);
+    cx.moveTo(ax,ay);cx.lineTo(bx,by);
+  }
+  cx.stroke();
+  for(const col in hotBatches){
+    const arr=hotBatches[col];
+    cx.strokeStyle=col;cx.globalAlpha=.35;
+    cx.beginPath();
+    for(let i=0;i<arr.length;i+=3){
+      const [ax,ay]=tx(nodes[arr[i]]),[bx,by]=tx(nodes[arr[i+1]]);
+      cx.moveTo(ax,ay);cx.lineTo(bx,by);
+    }
+    cx.stroke();
+  }
+  cx.globalAlpha=1;
+
+  /* nodes — sprite glow for hot ones (no shadowBlur), depth-scaled */
+  for(const n of nodes){
+    const [x,y]=tx(n);
+    n.tw+=n.tws;
+    const twk=.6+Math.sin(n.tw)*.4;
+    const dsc=1+(n.z||0)*.14;          /* depth scale */
+    const dal=.72+(n.z||0)*.28;        /* depth alpha */
+    if(n.heat>.02){
+      const spr=glowSprite(n.color);
+      const gs=n.r*dsc*(4+n.heat*8);
+      cx.globalCompositeOperation='lighter';
+      cx.globalAlpha=Math.min(1,(.3+n.heat*.7)*twk)*dal;
+      cx.drawImage(spr,x-gs/2,y-gs/2,gs,gs);
+      cx.globalAlpha=Math.min(1,.5+n.heat*.5)*dal;
+      cx.fillStyle=n.color;
+      cx.beginPath();cx.arc(x,y,n.r*dsc*(1+n.heat*.7),0,7);cx.fill();
+      cx.globalCompositeOperation='source-over';
+      n.heat*=.965;
+    }else{
+      /* hub halo for big neurons — sprite, not gradient */
+      if(n.r>2.2){
+        const spr=glowSprite(n.color),hs=n.r*7*dsc;
+        cx.globalAlpha=.10*twk*dal;
+        cx.drawImage(spr,x-hs/2,y-hs/2,hs,hs);
+      }
+      cx.fillStyle=n.team==='dust'?'#96A0B4':'#C7CDD8';
+      cx.globalAlpha=(n.team==='dust'?.3:.5)*twk*dal;
+      cx.beginPath();cx.arc(x,y,n.r*dsc,0,7);cx.fill();
+    }
+  }
+  cx.globalAlpha=1;
+
+  /* waves (additive) */
+  cx.globalCompositeOperation='lighter';
+  waves=waves.filter(w=>w.a>0.03);
+  for(const w of waves){
+    w.r+=(w.max-w.r)*(w.voice?.055:.09);w.a*=(w.voice?.965:.94);
+    cx.strokeStyle=w.color;cx.globalAlpha=w.a*.7;cx.lineWidth=w.voice?1.8:1.4;
+    cx.beginPath();cx.arc(w.x,w.y,w.r,0,7);cx.stroke();
+    if(w.a>.12){ /* only heat nodes while the wave is strong, and only nearby clusters */
+      for(const t of TEAMS){
+        const c=clusterIdx[t.id];
+        const cd=Math.hypot(c.cx-w.x,c.cy-w.y);
+        if(Math.abs(cd-w.r)>R*.28)continue;   /* cluster nowhere near the ring — skip */
+        for(let i=c.start;i<c.end;i+=6){
+          const n=nodes[i],d=Math.hypot(n.x-w.x,n.y-w.y);
+          if(Math.abs(d-w.r)<14)n.heat=Math.max(n.heat,w.a*(w.voice?.55:.9));
+        }
+      }
+    }
+  }
+  /* signal trace cluster→core — a light line that draws itself toward HQ,
+     igniting the spine neurons it passes through (no flying dots) */
+  cx.lineCap='round';
+  pulses=pulses.filter(p=>p.t<1.25);
+  for(const p of pulses){
+    p.t+=.017;
+    const e=Math.min(Math.max(p.t,0),1), ease=e*e*(3-2*e);
+    const tail=Math.max(0,ease-.30);           /* fading tail behind the head */
+    const hx=p.x+(p.tx-p.x)*ease, hy=p.y+(p.ty-p.y)*ease;
+    const bx=p.x+(p.tx-p.x)*tail, by=p.y+(p.ty-p.y)*tail;
+    const fade=p.t>1?Math.max(0,1-(p.t-1)*4):1; /* soften out at the end */
+    const grad=cx.createLinearGradient(bx,by,hx,hy);
+    grad.addColorStop(0,hexA(p.color,0));
+    grad.addColorStop(.65,hexA(p.color,.5*fade));
+    grad.addColorStop(1,hexA(p.color,.95*fade));
+    cx.strokeStyle=grad;cx.lineWidth=1.7;cx.globalAlpha=1;
+    cx.beginPath();cx.moveTo(bx,by);cx.lineTo(hx,hy);cx.stroke();
+    /* ignite spine neurons as the signal reaches them */
+    const sp=spines[p.id];
+    if(sp){
+      const total=Math.hypot(p.tx-p.x,p.ty-p.y)||1;
+      for(const i of sp){
+        const n=nodes[i];
+        const prog=1-Math.hypot(n.x-p.tx,n.y-p.ty)/total;
+        if(prog<=ease&&prog>ease-.34)n.heat=Math.max(n.heat,.95*fade);
+      }
+    }
+  }
+  /* core flashes */
+  flashes=flashes.filter(f=>f.a>.03);
+  for(const f of flashes){
+    f.r+=(f.max-f.r)*.12;f.a*=.9;
+    cx.strokeStyle=f.color;cx.globalAlpha=f.a;cx.lineWidth=1.7;
+    cx.beginPath();cx.arc(f.x,f.y,f.r,0,7);cx.stroke();
+  }
+  cx.globalCompositeOperation='source-over';
+  cx.globalAlpha=1;
+
+  /* voice aura ring around core */
+  if(voiceMode){
+    const pr=R*.16+Math.sin(voiceT*7)*5;
+    cx.strokeStyle=vc;cx.globalAlpha=.45+Math.sin(voiceT*7)*.2;cx.lineWidth=1.4;
+    cx.setLineDash([3,7]);
+    cx.beginPath();cx.arc(CX,CY,pr,voiceT*1.6,voiceT*1.6+Math.PI*1.7);cx.stroke();
+    cx.setLineDash([]);cx.globalAlpha=1;
+  }
+
+  /* cluster labels */
+  cx.font='9px JetBrains Mono';cx.textAlign='center';
+  for(const t of TEAMS){
+    const c=clusterIdx[t.id];
+    const dx=c.cx-CX,dy=c.cy-CY;
+    const lx=CX+(dx)*(1.28),ly=CY+(dy)*(1.3);
+    const heat=nodes[c.start].heat;
+    cx.fillStyle=heat>.15?t.color:'#7A8296';
+    cx.globalAlpha=heat>.15?.95:.6;
+    cx.fillText(t.name,lx,ly);
+    cx.globalAlpha=.4;cx.fillStyle='#565E70';
+    cx.font='7.5px JetBrains Mono';
+    cx.fillText(t.sub.toUpperCase(),lx,ly+11);
+    cx.font='9px JetBrains Mono';
+  }
+  /* HQ label — glows with voice */
+  cx.globalAlpha=voiceMode?.95:.9;
+  cx.fillStyle=voiceMode?vc:'#D4B36A';cx.font='600 11px Chakra Petch';
+  cx.fillText(voiceMode==='listening'?'LISTENING…':voiceMode==='speaking'?'SPEAKING':'HEADQUARTERS',CX,CY+R*.24);
+  cx.globalAlpha=.5;cx.fillStyle='#565E70';cx.font='7.5px JetBrains Mono';
+  cx.fillText('PETER · BROKER/OWNER',CX,CY+R*.24+12);
+  cx.globalAlpha=1;
+
+  requestAnimationFrame(draw);
+}
+
+/* ---------- chips ---------- */
+const strip=document.getElementById('strip');
+TEAMS.forEach(t=>{
+  const c=document.createElement('div');
+  c.className='chip';c.id='chip-'+t.id;c.style.setProperty('--c',t.color);
+  c.setAttribute('role','button');c.tabIndex=0;
+  c.innerHTML=`<div class="c-name"><i></i>${t.name}</div><div class="c-sub">${t.sub}</div>
+    <div class="c-load"><i style="width:${6+Math.random()*18}%"></i></div>
+    <a class="c-open" href="${t.url}" target="_blank" rel="noopener" title="Open ${t.name} live system" aria-label="Open ${t.name} live system">↗</a>`;
+  c.addEventListener('click',e=>{
+    if(e.target.closest('.c-open')){toast('Opening live system → '+t.name);return}
+    fire(t.id,true);
+  });
+  c.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fire(t.id,true)}});
+  strip.appendChild(c);
+});
+/* keep IG launcher in sync with LIVE_URLS config */
+document.getElementById('lb-ig').href=LIVE_URLS.igApp;
+
+/* double-click a cluster on the canvas → open its live system */
+cv.addEventListener('dblclick',e=>{
+  const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  let best=null,bd=1e9;
+  TEAMS.forEach(t=>{const c=clusterIdx[t.id];const d=Math.hypot(mx-c.cx,my-c.cy);if(d<bd){bd=d;best=t}});
+  if(best&&bd<R*.32){toast('Opening live system → '+best.name);window.open(best.url,'_blank','noopener')}
+});
+
+/* ---------- EEG + spectrum ---------- */
+const eeg=document.getElementById('eeg'),ex2=eeg.getContext('2d');
+const spec=document.getElementById('spectrum'),sp=spec.getContext('2d');
+const N=240,buf=new Array(N).fill(0);let ph=0;const bars=new Array(26).fill(.1);
+/* cached gradients — building these per frame was expensive */
+const eegGrad=ex2.createLinearGradient(0,0,eeg.width,0);
+eegGrad.addColorStop(0,'rgba(79,209,197,0)');eegGrad.addColorStop(.25,'rgba(79,209,197,.9)');eegGrad.addColorStop(1,'#D4B36A');
+const specGrad=sp.createLinearGradient(0,0,0,spec.height);
+specGrad.addColorStop(0,'#D4B36A');specGrad.addColorStop(1,'rgba(79,209,197,.25)');
+let eegFrame=0;
+(function eegLoop(){
+  if((eegFrame++%2)===1){requestAnimationFrame(eegLoop);return} /* 30fps is plenty for meters */
+  ph+=.56;
+  const v=Math.sin(ph)*.3+Math.sin(ph*2.7)*.22+Math.sin(ph*.53)*.18+(Math.random()-.5)*.55;
+  buf.push(v*(.25+activity));buf.shift();
+  ex2.clearRect(0,0,eeg.width,eeg.height);
+  ex2.strokeStyle='rgba(255,255,255,.04)';ex2.beginPath();
+  for(let x=0;x<eeg.width;x+=40){ex2.moveTo(x,0);ex2.lineTo(x,eeg.height)}ex2.stroke();
+  ex2.strokeStyle=eegGrad;ex2.lineWidth=1.6;ex2.beginPath();
+  buf.forEach((y,i)=>{const px=i/(N-1)*eeg.width,py=eeg.height/2-y*eeg.height*.42;i?ex2.lineTo(px,py):ex2.moveTo(px,py)});
+  ex2.stroke();
+  sp.clearRect(0,0,spec.width,spec.height);
+  const bw=spec.width/bars.length;
+  bars.forEach((b,i)=>{
+    const target=Math.max(.06,activity*(0.4+Math.random()*.9)*(1-Math.abs(i-8)/26));
+    bars[i]+=(target-b)*.25;
+    const h=bars[i]*spec.height;
+    sp.fillStyle=specGrad;sp.fillRect(i*bw+1,spec.height-h,bw-2,h);
+  });
+  document.getElementById('eegHz').textContent=(6+activity*18).toFixed(1)+' Hz';
+  document.getElementById('cogload').textContent=Math.round(activity*100)+'%';
+  requestAnimationFrame(eegLoop);
+})();
+
+/* ---------- GitHub uplink ---------- */
+function ago(iso){const s=(Date.now()-new Date(iso))/1000;
+  if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d'}
+async function linkGithub(){
+  try{
+    const [r1,r2]=await Promise.all([
+      fetch('https://api.github.com/repos/PropertyPete1/lifestyle-design-studio').then(r=>r.json()),
+      fetch('https://api.github.com/repos/PropertyPete1/LDR-Automation-Clean').then(r=>r.json())]);
+    if(r1.pushed_at){document.getElementById('push1').textContent=ago(r1.pushed_at);document.getElementById('iss1').textContent=r1.open_issues_count}
+    if(r2.pushed_at){document.getElementById('push2').textContent=ago(r2.pushed_at);document.getElementById('iss2').textContent=r2.open_issues_count}
+    document.getElementById('ghstat').textContent='LINKED';
+    toast('GitHub uplink established — 2 repos synced');
+  }catch(e){document.getElementById('ghstat').textContent='OFFLINE'}
+}
+
+/* ---------- misc ---------- */
+function tick(){document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-US',{hour12:false})+' CT'}
+tick();setInterval(tick,1000);
+let toastT;
+function toast(m){const t=document.getElementById('toast');t.textContent='» '+m;t.classList.add('show');
+  clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('show'),2600)}
+setInterval(()=>{const b=document.getElementById('brandName');b.classList.add('glitch');setTimeout(()=>b.classList.remove('glitch'),1100)},9000);
+
+/* =========================================================
+   VOICE ASSISTANT — "ASK THE BRAIN"
+   Web Speech API in + speechSynthesis out.
+   Intents control the dashboard; a built-in knowledge base
+   answers company questions offline. If ASK_ENDPOINT is set,
+   questions go to that LLM backend first.
+========================================================= */
+const micBtn=document.getElementById('micBtn'),chat=document.getElementById('brainChat'),
+      bcLog=document.getElementById('bcLog'),bcLive=document.getElementById('bcLive'),
+      bcState=document.getElementById('bcState'),bcInput=document.getElementById('bcInput');
+
+function bubble(text,who,src){
+  const b=document.createElement('div');b.className='bub '+who;
+  b.innerHTML=text+(src?`<span class="src">${src}</span>`:'');
+  bcLog.appendChild(b);bcLog.scrollTop=bcLog.scrollHeight;
+}
+function speak(text){
+  try{
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text.replace(/[◈🔥✅↗»]/g,''));
+    u.rate=1.02;u.pitch=1;
+    const vs=speechSynthesis.getVoices();
+    const v=vs.find(v=>/Samantha|Google US English|Aria|Natural/i.test(v.name))||vs.find(v=>v.lang.startsWith('en'));
+    if(v)u.voice=v;
+    /* light the brain while it talks */
+    u.onstart=()=>{voiceMode='speaking';voiceT=0};
+    u.onboundary=()=>{ /* fires per word — spit a spark from the core */
+      flashes.push({x:CX,y:CY,r:6,max:R*(.14+Math.random()*.12),color:'#D4B36A',a:.8});
+      const t=TEAMS[Math.floor(Math.random()*TEAMS.length)];
+      const c=clusterIdx[t.id];
+      if(c)for(let i=c.start;i<c.start+8;i++)nodes[i].heat=Math.max(nodes[i].heat,.7);
+    };
+    u.onend=()=>{voiceMode=listening?'listening':null};
+    u.onerror=()=>{voiceMode=listening?'listening':null};
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+/* ---- knowledge base (from the real repos + README) ---- */
+const TEAM_WORDS={vault:['asset library','vault','drive','originals','footage'],
+ select:['strategy','selection','scoring','picks','what gets posted'],
+ caption:['copywriting','caption','hook','copy team'],
+ geo:['market research','geo','austin','san antonio','dallas','routing','markets'],
+ publish:['marketing team','marketing','posting','publish','metricool','instagram','reels','linkedin','social'],
+ queue:['sales floor','power queue','queue','texting','click to text','priority'],
+ bots:['outreach','bots','bot team','email bots','tiffany','rue','abby','irma','laila','stefanie','steven bot'],
+ pond:['nurture','pond','14 day','fourteen'],
+ reassign:['hygiene','database','reassign','stale','day 21','twenty one','cleanup','suppression'],
+ healer:['it','maintenance','healer','health','4am','auto fix','nightly']};
+const KB=[
+ {k:['lead','lifecycle','journey','funnel','day 0','new lead'],a:'A new lead lands in FUB and belongs to its agent for days 1 through 20 — they get a morning digest and work the Power Queue. Days 14 to 20 are the priority zone. If nothing happens by day 21, Database Hygiene moves the lead into the Pond, and the Nurture Team emails it every 14 days forever.'},
+ {k:['pond','nurture team','14 day','fourteen day'],a:'The Nurture Team handles Pond leads — anything with 21 plus days of no activity. Every 14 days it sends an AI-written email that references the lead\'s most recent FUB note, with a dynamic subject line, never just "Checking in". Before sending it runs five checks, including the LLM skip gate at 80 percent confidence and a 3-day contact gap.'},
+ {k:['skip','llm gate','80','confidence','suppress'],a:'The LLM skip gate reads all of a lead\'s FUB notes and skips them if it\'s at least 80 percent confident of one of four intents: no longer a buyer, working with another agent, asked not to be contacted, or relocated permanently. If it skips, it writes a note in FUB explaining why.'},
+ {k:['hygiene','day 21','reassign','stale','cleanup'],a:'Database Hygiene runs the day-21 sweep: any lead with 20 plus days of no activity gets moved to the Lead Pond — Pond ID 2 — and reassigned to Peter, capped at 100 per run. It also scrubs opt-outs, bounces, do-not-contact tags, and trash-stage leads from every send list.'},
+ {k:['power queue','sales floor','priority','texting','click to text'],a:'The Sales Floor runs on the Power Queue. Agents see their day 1 to 20 leads sorted most urgent first. Days 14 to 20 are the priority tier with the fire badge — those get texted first. Tapping a lead opens a pre-written iMessage, and once an agent acts, the lead drops off the queue instantly.'},
+ {k:['bots','outreach','7','seven','emails per day','15'],a:'The Outreach Team is 7 AI bots — one per agent: Peter, Steven, Tiffany, Stefanie, Abby, Irma, and Laila. Each bot sends up to 15 personalized lifestyle emails a day, respecting the 3-day contact gap and the same skip rules as pond nurture, and logs run start and run complete to the observations table.'},
+ {k:['healer','health','4am','four am','auto fix','maintenance','it team'],a:'IT and Maintenance is the 4am nightly healer. It reads the SQLite error log and the bot observations, auto-fixes known issues like missing packages, flags bot crashes, then emails Peter and Steven either "all systems green" or a full breakdown — and posts a heartbeat so the dashboard monitor clears.'},
+ {k:['marketing','posting','metricool','instagram','reel','schedule','linkedin'],a:'The Marketing Team is the posting crew. It ships the day\'s reel through Metricool on a locked schedule, syncs Instagram history for fresh view counts, drafts LinkedIn variants, and pulls reach and saves on recent posts. It lives in the lifestyle-design-studio repo.'},
+ {k:['asset','library','vault','original','drive','4k'],a:'The Asset Library keeps the originals. It indexes and fingerprints footage in Google Drive, and when a reel is chosen it pulls the true 4K source file instead of a compressed re-download — that\'s what keeps Instagram\'s duplicate detection off your back.'},
+ {k:['strategy','selection','score','pick','cooldown'],a:'The Strategy Team decides what gets posted. It scores candidates, keeps clips on cooldown so sources don\'t repeat too soon, and folds the performance analyst\'s engagement numbers back into future picks.'},
+ {k:['copy','caption','hook'],a:'Copywriting refreshes every caption with a dedup check so nothing repeats, and the hook optimizer punches up the first three seconds — the part that decides whether anyone keeps watching.'},
+ {k:['research','geo','market','austin','san antonio','dallas','routing'],a:'Market Research classifies each clip by market — Austin, San Antonio, or Dallas–Fort Worth — and routes it to the right posting calendar, including validating each market\'s posting windows.'},
+ {k:['markets','cities','where','territory'],a:'Lifestyle Design Realty\'s target markets are San Antonio, New Braunfels, Austin, Dallas, Fort Worth, and Houston.'},
+ {k:['agents','team members','who works','staff'],a:'The human team: Peter Allen is broker and owner, with agents Steven, Tiffany, Stefanie, Abby, Irma, and Laila — each of them also has an outreach bot working their assigned leads.'},
+ {k:['repo','github','code','repository'],a:'Two repos power the brain: lifestyle-design-studio runs the Content Division — the IG Daily Reels app — and FUB-Automations runs the Sales Division: Power Queue, the 7 bots, pond nurture, hygiene, and the healer. Say "open studio repo" or "open FUB repo" to jump to them.'},
+ {k:['cap','limit','how many emails'],a:'Daily caps: 100 pond nurture emails per run, 100 stale reassignments per run, and 15 emails per bot per day. The 3-day contact gap means no lead hears from more than one system within 3 days.'},
+ {k:['what is this','what am i looking at','dashboard','brain','how does this work'],a:'This is the LDR Company Brain — every dot is a neuron, every cluster is one of your 10 teams across the Content and Sales divisions, and the core is you: headquarters. When a team works, its cluster fires and the signal travels to HQ. Tap a cluster to fire it, use the chips\' arrow buttons to open the live systems, or just ask me anything.'},
+];
+
+/* ---- intent + answer engine ---- */
+function norm(s){return s.toLowerCase().replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim()}
+function matchTeam(q){
+  let best=null,score=0;
+  for(const id in TEAM_WORDS)for(const w of TEAM_WORDS[id])
+    if(q.includes(w)&&w.length>score){score=w.length;best=id}
+  return best;
+}
+function handleUtterance(raw){
+  const q=norm(raw);
+  bubble(raw,'user');
+
+  /* -- intent: status report -- */
+  if(/status|report|how are (we|things)|overview/.test(q)){
+    const evs=[...document.querySelectorAll('#feed .msg')].slice(0,3).map(e=>e.textContent);
+    const a=`Cognitive load is at ${document.getElementById('cogload').textContent} with ${document.getElementById('synCount').textContent} synapses fired this session. Latest activity: ${evs.join('. ')}`;
+    bubble(a,'brain','STATUS REPORT');speak(a);return;
+  }
+  /* -- intent: run pipeline -- */
+  if(/run|start|launch/.test(q)&&/pipeline|content/.test(q)){
+    fire('vault',true);
+    const a='Running the content pipeline — Asset Library through Marketing. Watch it cascade.';
+    bubble(a,'brain','COMMAND');speak(a);return;
+  }
+  /* -- intent: open a system -- */
+  if(/open|take me|go to|show me the (dashboard|app|repo)|pull up/.test(q)){
+    let url=null,label=null;
+    if(/fub|nurture dash|power queue dash/.test(q)){url=LIVE_URLS.fubDash;label='the FUB Nurture Dashboard'}
+    else if(/bot dash|lifestyle dash|outreach dash/.test(q)){url=LIVE_URLS.botDash;label='the Bot Dashboard'}
+    else if(/studio repo|content repo/.test(q)){url=LIVE_URLS.repoStudio;label='the studio repo'}
+    else if(/fub repo|automation repo/.test(q)){url=LIVE_URLS.repoFub;label='the FUB repo'}
+    else{const t=matchTeam(q);if(t){const T=TEAMS.find(x=>x.id===t);url=T.url;label=T.name}}
+    if(url){
+      const a='Opening '+label+'.';bubble(a,'brain','NAVIGATE');speak(a);
+      window.open(url,'_blank','noopener');return;
+    }
+  }
+  /* -- intent: fire a team -- */
+  if(/fire|ping|activate|trigger|wake/.test(q)){
+    const t=matchTeam(q);
+    if(t){const T=TEAMS.find(x=>x.id===t);fire(t,true);
+      const a=T.name.replace(/&/g,'and')+' is firing now.';bubble(a,'brain','COMMAND');speak(a);return}
+  }
+  /* -- question → LLM endpoint if configured, else knowledge base -- */
+  answer(raw,q);
+}
+async function answer(raw,q){
+  bcState.textContent='THINKING…';
+  if(ASK_ENDPOINT){
+    try{
+      const r=await fetch(ASK_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:raw})});
+      const d=await r.json();
+      if(d&&d.answer){bubble(d.answer,'brain','LLM');speak(d.answer);bcState.textContent='READY';return}
+    }catch(e){/* fall through to KB */}
+  }
+  let best=null,score=0;
+  for(const e of KB){
+    let s=0;for(const k of e.k)if(q.includes(k))s+=k.length;
+    if(s>score){score=s;best=e}
+  }
+  const a=best?best.a:
+    'I know everything about the ten teams, the lead lifecycle, the pond, the bots, and both repos — try asking "what does database hygiene do", "explain the lead journey", or say "fire marketing" or "open the nurture dashboard".';
+  bubble(a,'brain',best?'KNOWLEDGE BASE':'HINT');speak(a);
+  bcState.textContent='READY';
+}
+
+/* ---- speech recognition ---- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null,listening=false;
+if(SR){
+  rec=new SR();rec.lang='en-US';rec.interimResults=true;rec.continuous=false;
+  rec.onresult=e=>{
+    let interim='',final='';
+    for(const r of e.results)(r.isFinal?final+=r[0].transcript:interim+=r[0].transcript);
+    bcLive.textContent=interim?('» '+interim):'';
+    if(final){bcLive.textContent='';handleUtterance(final.trim())}
+  };
+  rec.onstart=()=>{listening=true;micBtn.classList.add('listening');bcState.textContent='LISTENING…';openChat();
+    voiceMode='listening';voiceT=0};
+  rec.onend=()=>{listening=false;micBtn.classList.remove('listening');if(bcState.textContent==='LISTENING…')bcState.textContent='READY';
+    if(voiceMode==='listening')voiceMode=null};
+  rec.onerror=()=>{listening=false;micBtn.classList.remove('listening');bcState.textContent='MIC ERROR — TYPE INSTEAD'};
+}
+function toggleMic(){
+  if(!rec){openChat();bcState.textContent='VOICE N/A — TYPE INSTEAD';
+    bubble('Voice input isn\'t supported in this browser, but you can type any question below.','brain','FALLBACK');return}
+  if(listening){rec.stop()}else{try{rec.start()}catch(e){}}
+}
+function openChat(){
+  if(!chat.classList.contains('open')){
+    chat.classList.add('open');
+    if(!bcLog.children.length){
+      const hello='Brain online. Ask me anything about the company — or command me: "fire marketing", "run the content pipeline", "open the nurture dashboard", "status report".';
+      bubble(hello,'brain','◈ HQ');
+    }
+  }
+}
+micBtn.addEventListener('click',toggleMic);
+document.getElementById('bcClose').addEventListener('click',()=>{chat.classList.remove('open');speechSynthesis.cancel()});
+document.getElementById('bcSend').addEventListener('click',()=>{const v=bcInput.value.trim();if(v){bcInput.value='';openChat();handleUtterance(v)}});
+bcInput.addEventListener('keydown',e=>{if(e.key==='Enter'){const v=bcInput.value.trim();if(v){bcInput.value='';handleUtterance(v)}}});
+addEventListener('keydown',e=>{
+  if(e.key.toLowerCase()==='v'&&document.activeElement!==bcInput&&!e.metaKey&&!e.ctrlKey)toggleMic();
+});
+/* preload voices (some browsers load async) */
+if('speechSynthesis' in window)speechSynthesis.getVoices();
+
+/* ---- long-press a cluster on touch → open its live app ---- */
+let lpTimer=null;
+cv.addEventListener('touchstart',e=>{
+  const t=e.touches[0],r=cv.getBoundingClientRect(),mx=t.clientX-r.left,my=t.clientY-r.top;
+  lpTimer=setTimeout(()=>{
+    let best=null,bd=1e9;
+    TEAMS.forEach(tm=>{const c=clusterIdx[tm.id];const d=Math.hypot(mx-c.cx,my-c.cy);if(d<bd){bd=d;best=tm}});
+    if(best&&bd<R*.34){toast('Opening live system → '+best.name);window.open(best.url,'_blank','noopener')}
+  },560);
+},{passive:true});
+cv.addEventListener('touchend',()=>clearTimeout(lpTimer),{passive:true});
+cv.addEventListener('touchmove',()=>clearTimeout(lpTimer),{passive:true});
+
+/* ---------- boot ---------- */
+const BOOT=[
+ ['dim','[ 0.000 ] graph mind v4.0 — cold start'],
+ ['ok','[ 0.190 ] growing 2,000+ neurons …'],
+ ['ok','[ 0.410 ] CONTENT DIVISION clusters formed → lifestyle-design-studio'],
+ ['dim','          asset library · strategy · copywriting · research · marketing'],
+ ['ok','[ 0.660 ] SALES DIVISION clusters formed → FUB-Automations'],
+ ['dim','          sales floor · outreach ×7 · nurture · database hygiene · IT'],
+ ['ok','[ 0.900 ] synaptic mesh woven — intra-cluster + spines + bridges'],
+ ['warn','[ 1.120 ] nurture skip gate armed @ 80% confidence'],
+ ['ok','[ 1.360 ] HQ core seeded at center — 110 executive neurons'],
+ ['ok','[ 1.600 ] dust shell + orbital ring stabilized'],
+ ['ok','[ 1.780 ] voice cortex armed — tap the mic or press V'],
+ ['ok','[ 1.900 ] all teams on shift. the brain is awake.'],
+];
+(function boot(){
+  resize();addEventListener('resize',resize);
+  requestAnimationFrame(draw);
+  const lines=document.getElementById('bootLines'),bar=document.getElementById('bootBar');
+  let i=0;
+  (function next(){
+    if(i>=BOOT.length){bar.style.width='100%';
+      setTimeout(()=>{document.getElementById('boot').classList.add('done');linkGithub();
+        setTimeout(()=>fire('vault',false),800)},600);return}
+    const [cls,txt]=BOOT[i];
+    const d=document.createElement('div');d.className=cls;d.textContent=txt;lines.appendChild(d);
+    bar.style.width=Math.round((i+1)/BOOT.length*100)+'%';
+    i++;setTimeout(next,110+Math.random()*200);
+  })();
+})();
+</script>
+</body>
+</html>

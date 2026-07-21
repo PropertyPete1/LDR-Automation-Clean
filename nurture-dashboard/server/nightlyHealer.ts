@@ -13,9 +13,11 @@
  */
 
 import { getUnresolvedErrors, markErrorsResolved, markErrorsUnfixable, pruneOldErrorLogs, getUnfixedObservations, markObservationFixed, pruneOldObservations, writeObservation, getDb, pruneOldBotRunLogs, pruneOldBotMonitorLogs, pruneOldPondNurtureLogs, pruneOldPondPromotionLogs, pruneOldReplyIntentProcessed, pruneOldCopilotFeedback } from "./db";
+import { purchaseWindow } from "../drizzle/schema";
 import { clearRosterCache } from "./dashboardData";
 import { getSuppressionCount, getSuppressionList } from "./compliance";
 import { invokeLLM } from "./_core/llm";
+import { healStalePondNurtureCron, bootstrapHeartbeatJobs } from "./heartbeatBootstrap";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -192,7 +194,7 @@ The platform has these components:
 - Pond Nurture Bot — AI email bot for unassigned pond leads
 - Power Queue — agent text queue for manual SMS follow-ups
 - Bot Monitor — 30-minute health check that writes observations to the database
-- Nightly Healer (you) — runs at 4am CT, reads errors, attempts fixes, sends morning summary
+- Nightly Healer (you) — runs at 7pm CT (end of day), reads errors, attempts fixes, sends daily summary
 
 Available fix actions:
 - clear_cache: Clears the roster/data cache so fresh data is fetched from FUB on next load. Safe for any FUB API, roster, or data-fetch error.
@@ -305,10 +307,10 @@ async function generateAISummary(
       messages: [
         {
           role: "system",
-          content: `You are writing the morning health summary email for Peter Allen, the owner of Lifestyle Design Realty.
-Peter runs an AI-powered real estate lead nurture platform. Every morning at 4am, a nightly healer runs and you write the summary.
+          content: `You are writing the end-of-day health summary email for Peter Allen, the owner of Lifestyle Design Realty.
+Peter runs an AI-powered real estate lead nurture platform. Every evening at 7pm CT, the healer runs after all bots have completed their daily work, and you write the summary.
 
-Write in a clear, confident, professional tone — like a trusted operations manager reporting to the owner.
+Write in a clear, confident, professional tone — like a trusted operations manager reporting to the owner at end of day.
 Be concise. No bullet walls. Use short paragraphs.
 If everything is healthy, say so clearly and positively.
 If there are issues, explain them in plain English (no error codes, no jargon) and say what was done or what needs attention.
@@ -317,7 +319,7 @@ Maximum 150 words.`,
         },
         {
           role: "user",
-          content: `Here is the overnight health data:\n\n${contextJson}\n\nWrite the morning summary paragraph(s) for Peter.`,
+          content: `Here is today's health data:\n\n${contextJson}\n\nWrite the end-of-day summary paragraph(s) for Peter.`,
         },
       ],
     });
@@ -351,6 +353,24 @@ async function sendMorningSummary(
       const allSuppressed = await getSuppressionList(200);
       suppressionTotal = allSuppressed.length;
       recentSuppressions = allSuppressed.slice(0, 5).map(s => ({ name: s.leadName, reason: s.reason }));
+    } catch { /* non-fatal */ }
+
+    // ── Timeline-adjusted lead stats ───────────────────────────────────
+    let timelineCount = 0;
+    let timelineAvgDays = 0;
+    try {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+      const windowRows = await db.select({ windowStart: purchaseWindow.windowStart }).from(purchaseWindow);
+      const today = new Date();
+      const daysOut: number[] = [];
+      for (const row of windowRows) {
+        const ws = new Date(row.windowStart);
+        const delta = Math.round((ws.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (delta > 0) daysOut.push(delta);
+      }
+      timelineCount = daysOut.length;
+      timelineAvgDays = daysOut.length > 0 ? Math.round(daysOut.reduce((a, b) => a + b, 0) / daysOut.length) : 0;
     } catch { /* non-fatal */ }
 
     // ── AI-generated plain-English summary ─────────────────────────────────
@@ -395,22 +415,22 @@ async function sendMorningSummary(
       recentSuppressions.forEach(s => suppressionLines.push(`    • ${s.name || "Unknown"} — ${s.reason || "unsubscribed"}`) );
     }
 
-    const subject = `${statusEmoji} Lifestyle Command Center — Morning Health Report — ${dateStr}`;
+    const subject = `${statusEmoji} Lifestyle Command Center — Daily Health Report — ${dateStr}`;
 
     const body = [
-      `${statusEmoji} LIFESTYLE COMMAND CENTER — MORNING HEALTH REPORT`,
+      `${statusEmoji} LIFESTYLE COMMAND CENTER — DAILY HEALTH REPORT`,
       `${dateStr}`,
       ``,
       // ── AI Summary (top of email — plain English) ──────────────────────────
       ...(aiSummary ? [
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-        `AI OVERNIGHT SUMMARY`,
+        `AI DAILY SUMMARY`,
         `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
         aiSummary,
         ``,
       ] : []),
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-      `OVERNIGHT HEALING DETAIL`,
+      `TODAY'S HEALING DETAIL`,
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
       `  Dashboard UI errors found:    ${errorsFound}`,
       `  Errors auto-fixed overnight:  ${errorsFixed}`,
@@ -433,6 +453,11 @@ async function sendMorningSummary(
       `COMPLIANCE & SUPPRESSION`,
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
       ...suppressionLines,
+      ``,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `TIMELINE-AWARE CADENCE`,
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
+      `  Timeline-adjusted leads: ${timelineCount}${timelineCount > 0 ? ` (avg window ${timelineAvgDays} days out)` : ""}`,
       ``,
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
       (errorsUnfixable > 0 || obsErrors.length > 0)
@@ -559,59 +584,208 @@ export async function runNightlyHealer(): Promise<HealerResult> {
     console.warn("[nightlyHealer] Could not read bot observations:", e);
   }
 
-  // ── Stage 0.5: Check if the unified Lifestyle Bot ran yesterday ────────────
-  // The healer runs at 4am CT. The bot runs at 10am CT via heartbeat.
-  // We check the bot_run_log table (singular) for any run during the previous
-  // calendar day (CT timezone). If no run found, we flag a warning.
+  // ── Stage 0.4: Self-heal stale heartbeat crons ────────────────────────────
+  // If the bot monitor has been warning about stale pond nurture for 24+ hours,
+  // the cron is likely missing or disabled. Attempt to re-register/re-enable.
   try {
-    const db = await getDb();
-    if (db) {
-      // Yesterday in CT: midnight-to-midnight window
-      const ctOffset = -5 * 60 * 60 * 1000; // CT = UTC-5 (close enough for 4am check)
-      const nowUtc = Date.now();
-      const nowCt = nowUtc + ctOffset;
-      const todayCtMidnight = new Date(Math.floor(nowCt / 86400000) * 86400000 - ctOffset);
-      const yesterdayCtStart = new Date(todayCtMidnight.getTime() - 86400000);
-      const yesterdayCtEnd = todayCtMidnight;
+    const stalePondObs = allObservations.filter(
+      o => (o.category === "pond_nurture_heartbeat" || o.category === "automation_last_run") &&
+           o.severity === "warning" && !o.fixedAt
+    );
+    if (stalePondObs.length >= 2) {
+      // Multiple stale warnings = cron is definitely not firing
+      console.log(`[nightlyHealer] Detected ${stalePondObs.length} stale pond nurture warnings — attempting heartbeat self-heal...`);
+      const healResult = await healStalePondNurtureCron();
+      console.log(`[nightlyHealer] Heartbeat heal result: ${healResult.note}`);
 
-      // Query bot_run_log (unified table for the Lifestyle Bot)
-      const { sql } = await import("drizzle-orm");
-      const rows = await db.execute(
-        sql`SELECT COUNT(*) as runCount, SUM(leads_texted) as totalProcessed
-            FROM bot_run_log
-            WHERE run_at >= ${yesterdayCtStart} AND run_at < ${yesterdayCtEnd}`
-      ) as any;
-      const rowArr = Array.isArray(rows) ? (rows[0] ?? []) : [];
-      const runCount = Number(rowArr[0]?.runCount ?? 0);
-      const totalProcessed = Number(rowArr[0]?.totalProcessed ?? 0);
-
-      if (runCount === 0) {
-        const dateStr = yesterdayCtStart.toLocaleDateString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric" });
-        await writeObservation({
-          source: "nightly_healer",
-          severity: "warning",
-          category: "bot_missed_run",
-          message: `Lifestyle Bot did not run on ${dateStr}`,
-          detail: `No entries found in bot_run_log for ${dateStr} (CT). ` +
-            `Check the heartbeat schedule and verify the system is healthy.`,
-          autoFixable: 0,
-          runId: `healer-missed-${Date.now()}`,
-        });
-        console.warn(`[nightlyHealer] Lifestyle Bot missed run on ${dateStr}`);
+      if (healResult.fixed) {
+        // Mark all stale observations as fixed
+        for (const obs of stalePondObs) {
+          await markObservationFixed(obs.id, `Auto-healed: ${healResult.note}`);
+          observationsFixed++;
+        }
         fixSummary.push({
-          category: "bot_missed_run",
-          count: 1,
-          fixApplied: `Lifestyle Bot did not run yesterday. Observation written — check heartbeat schedule.`,
-          ids: [],
+          category: "heartbeat_self_heal",
+          count: stalePondObs.length,
+          fixApplied: healResult.note,
+          ids: stalePondObs.map(o => o.id),
+        });
+        errorsFixed += stalePondObs.length;
+      } else {
+        // Could not auto-fix — flag for manual review
+        fixSummary.push({
+          category: "heartbeat_self_heal",
+          count: stalePondObs.length,
+          fixApplied: `NEEDS ATTENTION: ${healResult.note}`,
+          ids: stalePondObs.map(o => o.id),
         });
         errorsUnfixable++;
-      } else {
-        console.log(`[nightlyHealer] Lifestyle Bot ran ${runCount} time(s) yesterday, processed ${totalProcessed} leads ✓`);
       }
     }
+
+    // Also run a full bootstrap check to ensure ALL crons are registered
+    const bootstrapResult = await bootstrapHeartbeatJobs();
+    if (bootstrapResult.created > 0 || bootstrapResult.reEnabled > 0) {
+      console.log(`[nightlyHealer] Bootstrap during heal: created=${bootstrapResult.created}, re-enabled=${bootstrapResult.reEnabled}`);
+      fixSummary.push({
+        category: "heartbeat_bootstrap",
+        count: bootstrapResult.created + bootstrapResult.reEnabled,
+        fixApplied: `Bootstrap: ${bootstrapResult.created} jobs created, ${bootstrapResult.reEnabled} re-enabled`,
+        ids: [],
+      });
+      errorsFixed += bootstrapResult.created + bootstrapResult.reEnabled;
+    }
   } catch (e) {
-    console.warn("[nightlyHealer] Could not check lifestyle bot run status:", e);
+    console.warn("[nightlyHealer] Heartbeat self-heal failed:", e);
   }
+
+  // ── Stage 0.5: Pond Nurture Zero-Email & Consecutive Failure Detection ─────
+  // CRITICAL: Detect when pond nurture ran but sent 0 emails (like the Jul 2-3 outage).
+  // This catches API errors, pagination failures, or any silent failure mode.
+  try {
+    const pondRunObs = allObservations.filter(
+      o => o.source === "pond_nurture" && o.category === "daily_run"
+    );
+    const pondErrorObs = allObservations.filter(
+      o => o.source === "pond_nurture" && o.severity === "error"
+    );
+
+    // Check today's pond nurture run
+    let todayEmailCount = 0;
+    let pondRanToday = false;
+    for (const obs of pondRunObs) {
+      pondRanToday = true;
+      const match = (obs.message || "").match(/(\d+)\s+email/);
+      if (match) todayEmailCount = Math.max(todayEmailCount, parseInt(match[1]));
+    }
+
+    if (pondRanToday && todayEmailCount === 0) {
+      // CRITICAL: Pond nurture ran but sent 0 emails — something is broken
+      const errorDetail = pondErrorObs.length > 0
+        ? pondErrorObs.map(o => (o.detail ?? o.message).slice(0, 150)).join(" | ")
+        : "No specific error logged — investigate handler";
+
+      // Diagnose the error type
+      const isPaginationError = errorDetail.includes("Deep pagination") ||
+        errorDetail.includes("offset") || errorDetail.includes("nextLink");
+      const isRateLimit = errorDetail.includes("429") || errorDetail.includes("rate limit");
+      const isAuthError = errorDetail.includes("401") || errorDetail.includes("403") || errorDetail.includes("auth");
+      const isTimeout = errorDetail.includes("timed out") || errorDetail.includes("timeout");
+
+      let diagnosis = "Unknown failure";
+      let canAutoFix = false;
+      if (isPaginationError) {
+        diagnosis = "FUB API pagination error — code fix required (switch to cursor-based pagination)";
+      } else if (isRateLimit) {
+        diagnosis = "FUB API rate limiting — transient, will retry tomorrow";
+        canAutoFix = true;
+      } else if (isAuthError) {
+        diagnosis = "FUB API authentication failure — check FUB_API_KEY";
+      } else if (isTimeout) {
+        diagnosis = "FUB API timeout — transient network issue, will retry tomorrow";
+        canAutoFix = true;
+      }
+
+      // Check for consecutive failures (look at observations from past 72 hours)
+      const db = await getDb();
+      let consecutiveDays = 1;
+      if (db) {
+        const { sql } = await import("drizzle-orm");
+        const recentRuns = await db.execute(
+          sql`SELECT message, DATE(created_at) as run_date
+              FROM bot_observations
+              WHERE source = 'pond_nurture' AND category = 'daily_run'
+              AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)
+              ORDER BY created_at DESC`
+        ) as any;
+        const rows = Array.isArray(recentRuns) ? (recentRuns[0] ?? []) : [];
+        if (Array.isArray(rows)) {
+          for (const row of rows) {
+            const msg = row?.message ?? "";
+            const emailMatch = msg.match(/(\d+)\s+email/);
+            if (emailMatch && parseInt(emailMatch[1]) === 0) {
+              consecutiveDays++;
+            } else {
+              break; // Found a day with emails sent — stop counting
+            }
+          }
+        }
+      }
+
+      const severity = consecutiveDays >= 2 ? "error" : "warning";
+      const urgency = consecutiveDays >= 2
+        ? `🚨 CRITICAL: Pond nurture has sent 0 emails for ${consecutiveDays} CONSECUTIVE DAYS`
+        : `⚠️ Pond nurture sent 0 emails today`;
+
+      await writeObservation({
+        source: "nightly_healer",
+        severity,
+        category: "pond_zero_emails",
+        message: urgency,
+        detail: `Diagnosis: ${diagnosis} | Error detail: ${errorDetail.slice(0, 300)}`,
+        autoFixable: canAutoFix ? 1 : 0,
+        runId: `healer-pond-zero-${Date.now()}`,
+      });
+
+      fixSummary.push({
+        category: "pond_zero_emails",
+        count: 1,
+        fixApplied: `${urgency}. ${diagnosis}`,
+        ids: [],
+      });
+
+      if (canAutoFix) {
+        errorsFixed++;
+      } else {
+        errorsUnfixable++;
+      }
+
+      // IMMEDIATE ALERT to Peter if consecutive failures (don't wait for morning report)
+      if (consecutiveDays >= 2) {
+        try {
+          const { notifyOwner } = await import("./_core/notification");
+          await notifyOwner({
+            title: `🚨 URGENT: Pond Nurture Down ${consecutiveDays} Days — 0 Emails Sent`,
+            content: [
+              `Peter — this is an urgent alert from the Nightly Healer.`,
+              ``,
+              `Pond nurture has sent 0 emails for ${consecutiveDays} consecutive days.`,
+              `This means thousands of pond leads are NOT being contacted.`,
+              ``,
+              `Diagnosis: ${diagnosis}`,
+              `Error: ${errorDetail.slice(0, 200)}`,
+              ``,
+              consecutiveDays >= 3
+                ? `This has been going on for ${consecutiveDays} days. Immediate intervention required.`
+                : `This started yesterday. If not fixed by tomorrow, leads will go ${consecutiveDays + 1} days without contact.`,
+              ``,
+              `— Nightly Healer / Lifestyle Command Center`,
+            ].join("\n"),
+          });
+          console.log(`[nightlyHealer] 🚨 URGENT: Sent immediate alert to Peter — pond nurture down ${consecutiveDays} days`);
+        } catch (alertErr) {
+          console.error("[nightlyHealer] Could not send urgent pond alert:", alertErr);
+        }
+      }
+
+      console.warn(`[nightlyHealer] ${urgency} — ${diagnosis}`);
+    } else if (pondRanToday && todayEmailCount > 0) {
+      console.log(`[nightlyHealer] ✓ Pond nurture sent ${todayEmailCount} emails today — healthy`);
+    } else if (!pondRanToday) {
+      // Pond nurture didn't run at all today — the heartbeat self-heal in Stage 0.4 handles this
+      console.warn(`[nightlyHealer] Pond nurture did not run today — heartbeat check in Stage 0.4 should handle`);
+    }
+  } catch (e) {
+    console.warn("[nightlyHealer] Pond nurture zero-email check failed:", e);
+  }
+
+  // ── Stage 0.6: REMOVED — Lifestyle Bot (lifestyleBot.ts) was retired ────────
+  // The lifestyle-bot-daily heartbeat was deprecated (see heartbeatBootstrap.ts).
+  // Pond nurture is now handled by the Python pond-nurture-bot on GitHub Actions.
+  // The old check was always flagging "Lifestyle Bot did not run" because the
+  // heartbeat job no longer triggers, causing a permanent false-positive error.
+  // The Python nightly_health.py (4am CT) already monitors the GH Actions runs.
+  console.log("[nightlyHealer] Stage 0.6: Lifestyle Bot check skipped (retired — pond nurture on GH Actions)");
 
   // ── Stage 1: Read today's errors ──────────────────────────────────────────
   const errors = await getUnresolvedErrors(25); // last 25 hours

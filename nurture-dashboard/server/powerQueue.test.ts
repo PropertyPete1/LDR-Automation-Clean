@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getDb, getCachedDraft, setCachedDraft, snoozeLead, unsnoozeLead, getActiveSnoozesForAgent, getSnoozeCount, recordQueueAction, getWeeklyQueueStats } from "./db";
 
-// These tests exercise the real drizzle DB layer — only meaningful where
-// DATABASE_URL is configured (the deployed environment). Skips elsewhere.
-const hasDb = !!process.env.DATABASE_URL;
-
-describe.skipIf(!hasDb)("Power Queue 2.0 - SMS Draft Cache", () => {
+describe("Power Queue 2.0 - SMS Draft Cache", () => {
   it("setCachedDraft stores and getCachedDraft retrieves", async () => {
     const personId = 99999;
     const agentName = "TestAgent";
@@ -34,7 +30,7 @@ describe.skipIf(!hasDb)("Power Queue 2.0 - SMS Draft Cache", () => {
   });
 });
 
-describe.skipIf(!hasDb)("Power Queue 2.0 - Snooze", () => {
+describe("Power Queue 2.0 - Snooze", () => {
   const personId = 77777;
   const agentName = "SnoozeTestAgent";
   const tomorrow = new Date();
@@ -65,7 +61,7 @@ describe.skipIf(!hasDb)("Power Queue 2.0 - Snooze", () => {
   });
 });
 
-describe.skipIf(!hasDb)("Power Queue 2.0 - Queue Actions & Stats", () => {
+describe("Power Queue 2.0 - Queue Actions & Stats", () => {
   const personId = 66666;
   const agentName = "StatsTestAgent";
 

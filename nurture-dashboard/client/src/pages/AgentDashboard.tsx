@@ -259,6 +259,16 @@ export default function AgentDashboard() {
   const agentName = params.agentName || "";
   const displayName = toTitleCase(agentName);
 
+  // URL-param access context
+  const urlAdminToken = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("admin") ?? "";
+  }, []);
+  const accessParams = useMemo(() => ({
+    ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
+    ...(agentName ? { agent: agentName } : {}),
+  }), [urlAdminToken, agentName]);
+
   const [textedLeads, setTextedLeads] = useState<Record<number, boolean>>(() => {
     try {
       const saved = localStorage.getItem(`fub_agent_texted_${agentName.toLowerCase()}`);
@@ -271,7 +281,7 @@ export default function AgentDashboard() {
   const utils = trpc.useUtils();
 
   const { data, isLoading, error, refetch, isFetching } = trpc.agent.getLeads.useQuery(
-    { agentName },
+    { agentName, ...accessParams },
     {
       enabled: !!agentName,
       staleTime: 3 * 60 * 1000,
@@ -290,6 +300,7 @@ export default function AgentDashboard() {
       personId: lead.id,
       agentName: lead.assigned_agent,
       messageBody: customBody || lead.sms_body,
+      ...accessParams,
     });
     setTextedLeads(prev => {
       const next = { ...prev, [lead.id]: true };
@@ -306,7 +317,7 @@ export default function AgentDashboard() {
   };
 
   const handleRefresh = () => {
-    utils.agent.getLeads.invalidate({ agentName });
+    utils.agent.getLeads.invalidate({ agentName, ...accessParams });
     toast.info("Refreshing leads…");
   };
 
@@ -338,7 +349,11 @@ export default function AgentDashboard() {
   }, [byTier, textedLeads]);
 
   // Compliance stats
-  const { data: suppressionList } = trpc.compliance.getSuppressionList.useQuery({ limit: 5 });
+  // Suppression list is admin-only — only fetch if admin token present
+  const { data: suppressionList } = trpc.compliance.getSuppressionList.useQuery(
+    { limit: 5, ...accessParams },
+    { enabled: !!urlAdminToken }
+  );
 
   // ── Loading ──
   if (isLoading) {
@@ -491,7 +506,7 @@ export default function AgentDashboard() {
               variant="outline"
               size="sm"
               onClick={() => {
-                const url = `https://lifestyledash-wpnl8v84.manus.space/agent/${agentName.toLowerCase()}`;
+                const url = `https://fub-nurture-phfprjui.manus.space/agent/${agentName.toLowerCase()}`;
                 navigator.clipboard.writeText(url).then(() => {
                   toast.success("Dashboard link copied! Add to your phone home screen.");
                 }).catch(() => {

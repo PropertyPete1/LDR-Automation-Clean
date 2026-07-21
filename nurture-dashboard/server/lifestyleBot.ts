@@ -29,6 +29,7 @@ import { invokeLLM } from "./_core/llm";
 import { notifyOwner } from "./_core/notification";
 import { dbRecordSmsSentToday, getSmsSentTodayIds, getRecentBotRuns, getRecentObservations, insertBotRunLog, writeObservation, getOvernightHealerSummary } from "./db";
 import { isLeadSuppressed } from "./compliance";
+import { getSharedSuppressionTags } from "./botHelpers";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -248,13 +249,14 @@ async function getPondLeadsForBot(peterUserId: number, alreadySentToday: Set<num
     // Skip leads in closed/DNC stages
     const stage = (p.stage || "").toLowerCase().trim();
     if (stage && SKIP_STAGES.has(stage)) return false;
-    // Skip leads tagged DNC or unsubscribed
+    // Skip leads tagged with any shared suppression tag (single source of truth)
+    const suppressionTags = getSharedSuppressionTags();
     const tags: any[] = p.tags || [];
-    const hasDncTag = tags.some((t: any) => {
+    const hasSuppressTag = tags.some((t: any) => {
       const name = (t.name || "").toLowerCase();
-      return name.includes("dnc") || name.includes("unsubscribe") || name.includes("do not contact") || name.includes("opt-out");
+      return suppressionTags.some(st => name.includes(st));
     });
-    if (hasDncTag) return false;
+    if (hasSuppressTag) return false;
     return true;
   });
 
@@ -1043,11 +1045,12 @@ export async function sendBotClockinEmail(): Promise<ClockinEmailResult> {
         const stage = (p.stage || "").toLowerCase().trim();
         if (stage && SKIP_STAGES.has(stage)) return false;
         const tags: any[] = p.tags || [];
-        const hasDncTag = tags.some((t: any) => {
+        const suppressionTags2 = getSharedSuppressionTags();
+        const hasSuppressTag2 = tags.some((t: any) => {
           const name = (t.name || "").toLowerCase();
-          return name.includes("dnc") || name.includes("unsubscribe") || name.includes("do not contact");
+          return suppressionTags2.some(st => name.includes(st));
         });
-        if (hasDncTag) return false;
+        if (hasSuppressTag2) return false;
         return true;
       });
 

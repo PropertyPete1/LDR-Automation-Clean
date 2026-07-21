@@ -94,7 +94,7 @@ export function generatePersonalizedSms(
   return templates[seed % templates.length];
 }
 
-const DASHBOARD_BASE_URL = "https://lifestyledash-wpnl8v84.manus.space";
+const DASHBOARD_BASE_URL = "https://fub-nurture-phfprjui.manus.space";
 
 export function makeSmsUri(phone: string, body: string, agentName?: string, leadId?: string): string {
   // Normalise phone number

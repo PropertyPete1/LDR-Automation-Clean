@@ -2,6 +2,36 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+// Mock ENV
+vi.mock("./_core/env", () => ({
+  ENV: {
+    fubApiKey: "test_fub_key",
+    forgeApiUrl: "https://api.test.com",
+    forgeApiKey: "test_forge_key",
+    appId: "test_app_id",
+    cookieSecret: "test_secret",
+    databaseUrl: "mysql://test",
+    oAuthServerUrl: "https://oauth.test.com",
+    ownerOpenId: "test_owner",
+    isProduction: false,
+    powerQueueAdminToken: "test_admin_token",
+    anthropicApiKey: "sk-ant-api03-test-key-for-testing",
+  },
+}));
+
+// Mock agent registry for access control
+vi.mock("./agentRegistry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./agentRegistry")>();
+  return {
+    ...actual,
+    getActiveAgents: vi.fn().mockResolvedValue([
+      { name: "Peter", slug: "peter", role: "Agent", fubUserId: 2 },
+      { name: "Steven", slug: "steven", role: "Agent", fubUserId: 1 },
+      { name: "Stefanie", slug: "stefanie", role: "Agent", fubUserId: 31 },
+    ]),
+  };
+});
+
 // Mock the DB module
 vi.mock("./db", async (importOriginal) => {
   const original = await importOriginal<typeof import("./db")>();
@@ -82,6 +112,7 @@ describe("ai.draftSms", () => {
       leadCity: "Austin",
       daysStale: 18,
       assignedAgent: "Steven",
+      agent: "Steven",
     });
 
     expect(result).toHaveProperty("draft");
@@ -103,6 +134,7 @@ describe("ai.draftSms", () => {
       leadCity: "San Antonio",
       daysStale: 21,
       assignedAgent: "Stefanie",
+      agent: "Stefanie",
     });
 
     expect(result.draft).not.toMatch(/^"/);
@@ -124,6 +156,7 @@ describe("ai.draftSms", () => {
       daysStale: 17,
       assignedAgent: "Peter",
       notes: "Interested in 3BR near Riverwalk, budget $400k",
+      agent: "Peter",
     });
 
     // Verify it called Anthropic API directly
@@ -150,6 +183,7 @@ describe("ai.draftSms", () => {
       leadCity: "Austin",
       daysStale: 10,
       assignedAgent: "Steven",
+      agent: "Steven",
     });
 
     const [url] = mockFetch.mock.calls[0];

@@ -126,6 +126,8 @@ export const botRunLog = mysqlTable("bot_run_log", {
 });
 export type BotRunLog = typeof botRunLog.$inferSelect;
 export type InsertBotRunLog = typeof botRunLog.$inferInsert;
+/** Alias for backward compatibility with botHelpers.ts (plural form) */
+export const botRunLogs = botRunLog;
 
 /**
  * Autonomous monitoring engine run log.
@@ -496,3 +498,40 @@ export const queueActions = mysqlTable("queue_actions", {
 });
 export type QueueAction = typeof queueActions.$inferSelect;
 export type InsertQueueAction = typeof queueActions.$inferInsert;
+
+/**
+ * Email angle rotation log.
+ * Tracks the last angle used per lead to prevent repeating the same
+ * approach two sends in a row. Used by the agent bot brain upgrade.
+ */
+export const emailAngleLog = mysqlTable("email_angle_log", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull(),
+  /** Last angle used (one of the 5 AGENT_BOT_ANGLES) */
+  lastAngle: varchar("last_angle", { length: 200 }).notNull(),
+  /** When this angle was last sent */
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+});
+export type EmailAngleLog = typeof emailAngleLog.$inferSelect;
+export type InsertEmailAngleLog = typeof emailAngleLog.$inferInsert;
+
+/**
+ * Stores detected purchase timeline windows per lead.
+ * Re-extracted every send cycle — newer notes override older windows.
+ */
+export const purchaseWindow = mysqlTable("purchase_window", {
+  id: int("id").autoincrement().primaryKey(),
+  /** FUB person ID */
+  personId: int("person_id").notNull().unique(),
+  /** Detected earliest purchase date (when the lead plans to buy) */
+  windowStart: timestamp("window_start").notNull(),
+  /** The note date from which this window was extracted */
+  detectedFromNoteDate: timestamp("detected_from_note_date"),
+  /** Raw text that was parsed (for debugging) */
+  rawText: varchar("raw_text", { length: 500 }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+export type PurchaseWindow = typeof purchaseWindow.$inferSelect;
+export type InsertPurchaseWindow = typeof purchaseWindow.$inferInsert;

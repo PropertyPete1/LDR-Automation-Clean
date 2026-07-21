@@ -21,6 +21,7 @@ import { getDb, writeObservation } from "./db";
 import { pondNurtureLog, suppressedLeads } from "../drizzle/schema";
 import { suppressLead } from "./compliance";
 import { invokeLLM } from "./_core/llm";
+import { getSharedSuppressionTags, isExcludedSource, isSOISilenced } from "./botHelpers";
 
 // ── Config (mirrors rules.yaml) ───────────────────────────────────────────────
 
@@ -38,11 +39,8 @@ const STALE_AGENT_DAYS = 20;
 const STALE_REASSIGN_POND_ID = 2;
 
 const EXCLUDED_STAGES = ["Trash"];
-const EXCLUDED_TAGS = [
-  "do not contact", "realtor", "bounced", "unsubscribe",
-  "email opt out", "dnc", "do not nurture", "no ai email",
-  "do not email", "manual review",
-];
+// EXCLUDED_TAGS now reads from the shared suppression list (single source of truth)
+const EXCLUDED_TAGS = getSharedSuppressionTags();
 const MANUAL_SUPPRESSION_TAGS = [
   "Do Not Nurture", "No AI Email", "Do Not Email", "Manual Review",
 ];
@@ -133,16 +131,22 @@ async function fubGetPeople(params: Record<string, string | number>): Promise<an
   qs.set("limit", "100");
   qs.set("fields", "allFields");
   for (const [k, v] of Object.entries(params)) qs.set(k, String(v));
-  let offset = 0;
   const all: any[] = [];
+  let nextCursor: string | null = null;
+  let pages = 0;
+  const MAX_PAGES = 200; // Safety cap: 200 pages × 100 = 20,000 leads max
   while (true) {
-    qs.set("offset", String(offset));
+    if (nextCursor) qs.set("next", nextCursor);
     const data = await fubRequest("GET", `/people?${qs}`);
     const people = data?.people ?? [];
     all.push(...people);
-    if (people.length < 100) break;
-    offset += 100;
-    if (offset >= 10000) break; // Safety cap — well beyond expected pond size
+    pages++;
+    // Use cursor-based pagination via _metadata.next (FUB recommended)
+    const meta = data?._metadata;
+    if (people.length < 100 || !meta?.next || pages >= MAX_PAGES) break;
+    nextCursor = meta.next;
+    // Remove offset if present (not needed with cursor)
+    qs.delete("offset");
     await new Promise(r => setTimeout(r, 300)); // rate limit courtesy
   }
   return all;
@@ -182,6 +186,35 @@ async function fubMergeTags(personId: number, newTags: string[]): Promise<void> 
     await fubRequest("PUT", `/people/${personId}`, { tags: merged });
   } catch (e) {
     console.warn(`[PondNurture] Tag merge failed for person ${personId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+// ── SOI & Deal Room protections ──────────────────────────────────────────────
+
+/**
+ * Returns true if the lead was imported by an agent (SOI / Sphere of Influence).
+ * These leads must NEVER be reassigned to Lead Pond.
+ */
+function isAgentImported(person: any): boolean {
+  const source = String(person.source ?? "").toLowerCase();
+  const createdVia = String(person.createdVia ?? "").toLowerCase();
+  return source === "import" || createdVia === "import";
+}
+
+/**
+ * Returns true if the lead has any active deal in FUB pipelines.
+ * Leads in Deal Room must NEVER be reassigned to Lead Pond.
+ * Fails open (returns false) on API errors — better to accidentally process
+ * than to block the entire run.
+ */
+async function hasActiveDeal(personId: number): Promise<boolean> {
+  try {
+    const data = await fubRequest("GET", `/deals?personId=${personId}&limit=5`);
+    const deals: any[] = data?.deals ?? [];
+    return deals.some((d: any) => String(d.status ?? "").toLowerCase() === "active");
+  } catch (e) {
+    console.warn(`[PondNurture] hasActiveDeal check failed for person ${personId}:`, e instanceof Error ? e.message : e);
+    return false; // fail open
   }
 }
 
@@ -390,12 +423,78 @@ ${rendered.join("\n")}`;
   }
 }
 
+// ── Email thread formatting (thread-aware follow-ups) ────────────────────────
+
+const THREAD_STALENESS_DAYS = 30;
+
+function formatEmailThread(emails: any[]): string {
+  if (!emails.length) return "";
+
+  const cutoff = Date.now() - THREAD_STALENESS_DAYS * 86_400_000;
+
+  // Filter to only emails within the staleness window
+  const fresh = emails.filter((e: any) => {
+    const created = e.created ?? e.createdAt ?? "";
+    if (!created) return true; // benefit of the doubt
+    const ts = new Date(created).getTime();
+    return !isNaN(ts) && ts >= cutoff;
+  });
+
+  if (!fresh.length) return "";
+
+  // Sort chronologically (oldest first) — FUB returns newest first
+  const sorted = [...fresh].sort((a, b) => {
+    const ta = new Date(a.created ?? a.createdAt ?? 0).getTime();
+    const tb = new Date(b.created ?? b.createdAt ?? 0).getTime();
+    return ta - tb;
+  });
+
+  // Take last 5 for context
+  const recent = sorted.slice(-5);
+
+  const lines: string[] = [];
+  for (const e of recent) {
+    const isIncoming = e.isIncoming || e.direction === "incoming" || e.direction === "inbound";
+    const label = isIncoming ? "LEAD REPLIED" : "PETER SENT";
+    const subject = (e.subject ?? "").trim();
+    let body = (e.body ?? e.message ?? "").trim();
+
+    // Sanitize: strip HTML, redact PII, truncate
+    body = body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/https?:\/\/\S+/g, "[link]")
+      .replace(/\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, "[email]")
+      .replace(/\b\d{3}[-.\)\s]*\d{3}[-.\s]*\d{4}\b/g, "[phone]")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 400);
+
+    const created = e.created ?? e.createdAt ?? "";
+    let dateStr = "";
+    if (created) {
+      const d = new Date(created);
+      if (!isNaN(d.getTime())) {
+        dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
+          " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+    }
+
+    let entry = `[${label}] (${dateStr})`;
+    if (subject) entry += ` Subject: ${subject}`;
+    if (body) entry += `\n  ${body}`;
+    lines.push(entry);
+  }
+
+  return lines.join("\n\n");
+}
+
 // ── AI email generation ───────────────────────────────────────────────────────
 
 async function generatePondEmail(
   person: any,
   city: string,
-  recentNoteText: string
+  recentNoteText: string,
+  recentEmailThread: string = ""
 ): Promise<{ subject: string; emailBody: string } | null> {
   const firstName = personFirstName(person);
   const personId = Number(person.id ?? 0);
@@ -424,15 +523,59 @@ async function generatePondEmail(
     ? `The lead appears interested in ${city}. Tailor the note to that city or area.`
     : "No reliable city is known. Speak broadly about helping them find the right home anywhere in Texas.";
 
+  // Build thread continuation rules if we have a recent email thread
+  const threadSection = recentEmailThread
+    ? `
+
+=== RECENT EMAIL THREAD (CRITICAL — READ THIS FIRST) ===
+${recentEmailThread}
+=== END OF THREAD ===
+
+CRITICAL THREAD CONTINUATION RULES:
+- You MUST continue the existing conversation above. This is a follow-up, NOT a new outreach.
+- Reference what was last discussed. If Peter asked a question, follow up on that question.
+- If the lead replied, acknowledge their reply and build on it naturally.
+- Do NOT introduce a random new topic. Stay in the thread's context.
+- The subject line should feel like a reply or continuation (e.g., "Re: ..." or a natural follow-up subject).
+- If the last email was Peter asking about their timeframe, follow up on the timeframe.
+- If the lead mentioned a date or plan, reference it.
+- The freshness angle below is SECONDARY — only use it if the thread has fully concluded and there's nothing to follow up on.
+`
+    : "";
+
+  const threadOrFreshAngle = recentEmailThread
+    ? "Use the thread context above as your PRIMARY guide. The freshness angle is only a fallback."
+    : `Freshness angle for this cycle: ${angle}`;
+
+  // Holiday-aware email generation
+  const holidays: Record<string, string> = {
+    "01-01": "New Year's Day",
+    "02-14": "Valentine's Day",
+    "05-26": "Memorial Day",
+    "07-04": "Independence Day / 4th of July",
+    "09-01": "Labor Day",
+    "10-31": "Halloween",
+    "11-27": "Thanksgiving",
+    "12-24": "Christmas Eve",
+    "12-25": "Christmas Day",
+    "12-31": "New Year's Eve",
+  };
+  const nowCT = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Chicago" }));
+  const mmdd = `${String(nowCT.getMonth() + 1).padStart(2, "0")}-${String(nowCT.getDate()).padStart(2, "0")}`;
+  const todayHoliday = holidays[mmdd] || "";
+  const holidayInstruction = todayHoliday
+    ? `HOLIDAY CONTEXT: Today is ${todayHoliday}! This is a holiday, so the email should warmly acknowledge ${todayHoliday} in the opening or subject line. Wish them a happy ${todayHoliday} and keep the tone celebratory and festive. The email should still be about real estate and their home search, but lead with the holiday greeting. Make it feel like Peter is sending a quick personal holiday note to a friend, not a mass blast.`
+    : "";
+
   const prompt = `You are writing as Peter Allen from ${COMPANY_NAME}.
 Draft a warm, personal two-week nurture email to a real estate lead in a Follow Up Boss pond.
 
 Lead first name: ${firstName}
 City or area guidance: ${cityInstruction}
 Most recent FUB note: ${recentNoteText || "No recent note was available."}
-Freshness angle for this cycle: ${angle}
-Local market context: Use general, non-fabricated language. You may mention broad themes like inventory, rates, neighborhood fit, local restaurants, coffee shops, weekend events, and lifestyle, but do not invent specific openings, exact statistics, named businesses, or rate numbers.
-
+${threadOrFreshAngle}
+Local market context: Use general, non-fabricated language. You may mention broad themes like inventory, rates, neighborhood fit, local restaurants, coffee shops, weekend events, and lifestyle, but do not invent specific openings, exact statistics, named businesses, or rate numbers.${threadSection}
+${holidayInstruction ? `\n${holidayInstruction}\n` : ""}
 Requirements:
 - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, campaign, or transactional automation.
 - Write in a highly personal, warm, casual, and human tone. Think real estate advisor talking to a friend.
@@ -604,6 +747,18 @@ async function processLead(person: any): Promise<LeadResult> {
     console.log(`[PondNurture] ${name} (${personId}): suppressed — manual suppression tag`);
     return "suppressed";
   }
+  // Source-based exclusion
+  const excludedSrc = isExcludedSource(person);
+  if (excludedSrc) {
+    console.log(`[PondNurture] ${name} (${personId}): suppressed — excluded source: ${excludedSrc}`);
+    return "suppressed";
+  }
+  // SOI Total Silence
+  const soiRule = isSOISilenced(person);
+  if (soiRule) {
+    console.log(`[PondNurture] ${name} (${personId}): suppressed — soi_silenced (rule matched: ${soiRule})`);
+    return "suppressed";
+  }
 
   // 2. Must be in Lead Pond (pondId=2)
   const assignedPondId = Number(person.assignedPondId ?? 0);
@@ -705,10 +860,11 @@ async function processLead(person: any): Promise<LeadResult> {
     return "skipped";
   }
 
-  // 11. Generate email
+  // 11. Generate email (thread-aware)
   const city = detectCityFromNotes(notes, person);
   const recentNote = mostRecentNoteText(notes);
-  const generated = await generatePondEmail(person, city, recentNote);
+  const emailThread = formatEmailThread(emails);
+  const generated = await generatePondEmail(person, city, recentNote, emailThread);
   if (!generated) {
     console.warn(`[PondNurture] ${name} (${personId}): email generation failed`);
     return "error";
@@ -719,13 +875,15 @@ async function processLead(person: any): Promise<LeadResult> {
   await sendEmail(toEmail, generated.subject, fullBody);
 
   // 13. FUB note trail
+  const threadAwareLabel = emailThread ? " (Thread-Aware Follow-up)" : "";
   await fubAddNote(
     personId,
-    `Pond Nurture Email Sent`,
+    `Pond Nurture Email Sent${threadAwareLabel}`,
     `Automated two-week pond nurture outreach sent.\n\n` +
     `• Channel: Email\n` +
     `• City focus: ${city || "Texas/general"}\n` +
-    `• Subject: "${generated.subject}"`
+    `• Subject: "${generated.subject}"\n` +
+    `• Thread-aware: ${emailThread ? "Yes (continued existing conversation)" : "No (fresh outreach)"}`
   );
 
   // 15. Persist cadence log
@@ -768,6 +926,26 @@ async function runStaleAgentReassignment(): Promise<{ reassigned: number; suppre
     // Skip excluded/suppressed leads
     if (isExcluded(person)) { suppressed++; continue; }
     if (hasTag(person, MANUAL_SUPPRESSION_TAGS)) { suppressed++; continue; }
+    // Source-based exclusion
+    const exSrc = isExcludedSource(person);
+    if (exSrc) {
+      console.log(`[PondNurture] ${personName(person)} (${personId}): skipped stale reassign — excluded source: ${exSrc}`);
+      suppressed++;
+      continue;
+    }
+    // SOI Total Silence (replaces old isAgentImported)
+    const soiMatch = isSOISilenced(person);
+    if (soiMatch) {
+      console.log(`[PondNurture] ${personName(person)} (${personId}): skipped stale reassign — soi_silenced (rule matched: ${soiMatch})`);
+      suppressed++;
+      continue;
+    }
+    // Deal Room Protection: Never reassign leads with active deals
+    if (await hasActiveDeal(personId)) {
+      console.log(`[PondNurture] ${personName(person)} (${personId}): skipped stale reassign — has active deal`);
+      suppressed++;
+      continue;
+    }
     // NOTE: We intentionally do NOT check hasRecentOmnichannelTouch here.
     // The bot emails these leads regularly, which would make them look "recently touched"
     // and block reassignment forever. The rule is simple: created 20+ days ago = pond.

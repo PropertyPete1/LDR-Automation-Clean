@@ -201,7 +201,11 @@ export default function SmsQueue() {
   const [customSnoozeDate, setCustomSnoozeDate] = useState<Date | undefined>(undefined);
 
   // Dynamic roster — replaces hardcoded ROSTER_AGENT_NAMES (Golden Rule)
-  const { data: rosterData } = trpc.agent.getRoster.useQuery(undefined, { staleTime: 10 * 60_000 });
+  const accessParams = useMemo(() => ({
+    ...(adminToken ? { adminToken } : {}),
+    ...(lockedAgent ? { agent: lockedAgent } : {}),
+  }), [adminToken, lockedAgent]);
+  const { data: rosterData } = trpc.agent.getRoster.useQuery(accessParams, { staleTime: 10 * 60_000 });
   const ROSTER_AGENT_NAMES = useMemo(() => {
     if (!rosterData?.roster) return [];
     return rosterData.roster.map(a => a.name);
@@ -286,6 +290,7 @@ export default function SmsQueue() {
       leadName: lead.name,
       agentName,
       reason: "agent_marked",
+      ...accessParams,
     });
   };
 
@@ -419,6 +424,7 @@ export default function SmsQueue() {
         daysStale: lead.days_stale,
         assignedAgent: lead.assigned_agent,
         notes: lead.notes,
+        ...accessParams,
       });
       setDraftMessages(prev => ({ ...prev, [lead.id]: result.draft }));
     } catch {
@@ -443,6 +449,7 @@ export default function SmsQueue() {
       personId: lead.id,
       agentName: lead.assigned_agent,
       messageBody,
+      ...accessParams,
     });
     setTextedLeads(prev => ({ ...prev, [lead.id]: true }));
     // Power Queue 2.0: Record action for weekly stats
@@ -452,6 +459,7 @@ export default function SmsQueue() {
       actionType: 'texted',
       daysStale: lead.days_stale,
       isHotLead: lead.is_hot_reply || false,
+      ...accessParams,
     });
     const phone = lead.phone.replace(/\D/g, "");
     const isApple = /iPhone|iPad|iPod|Macintosh/i.test(navigator.userAgent);
@@ -500,6 +508,7 @@ export default function SmsQueue() {
       snoozeUntil,
       leadName: lead.name,
       daysStale: lead.days_stale,
+      ...accessParams,
     });
     setSnoozePopoverOpen(null);
     toast.info(`${lead.name.split(" ")[0]} snoozed until ${label}`, { duration: 3000 });
@@ -511,6 +520,7 @@ export default function SmsQueue() {
       personId: lead.id,
       agentName: lead.assigned_agent,
       channel: "call" as const,
+      ...accessParams,
     });
     // Power Queue 2.0: Record call action for weekly stats
     recordActionMutation.mutate({
@@ -519,6 +529,7 @@ export default function SmsQueue() {
       actionType: 'called',
       daysStale: lead.days_stale,
       isHotLead: lead.is_hot_reply || false,
+      ...accessParams,
     });
     const phone = lead.phone.replace(/\D/g, "");
     const cleanPhone = phone.startsWith("+") || phone.length > 10 ? phone : (phone.length === 10 ? "+1" + phone : phone);
@@ -537,7 +548,7 @@ export default function SmsQueue() {
     // Unsnooze all active snoozes for this agent
     if (snoozeInfoData?.entries) {
       for (const entry of snoozeInfoData.entries) {
-        unsnoozeMutation.mutate({ personId: entry.personId, agentName: agentNameForSnooze });
+        unsnoozeMutation.mutate({ personId: entry.personId, agentName: agentNameForSnooze, ...accessParams });
       }
     }
     toast.success("All snoozed leads restored.", { duration: 2000 });
@@ -1515,6 +1526,7 @@ function PondSmsSection() {
         assignedAgent: "Peter",
         notes: lead.notes || undefined,
         personId: lead.id,
+        ...(adminToken ? { adminToken } : {}),
       });
       setPondDrafts(prev => ({ ...prev, [lead.id]: result.draft }));
     } catch {
@@ -1542,6 +1554,7 @@ function PondSmsSection() {
       personId: lead.id,
       agentName: "Peter",
       messageBody,
+      ...(adminToken ? { adminToken } : {}),
     });
     setSentPondLeads(prev => ({ ...prev, [lead.id]: true }));
     const phone = lead.phone.replace(/\D/g, "");
