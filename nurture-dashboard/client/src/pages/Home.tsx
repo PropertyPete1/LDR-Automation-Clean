@@ -70,6 +70,26 @@ export default function Home() {
   const [filterAction, setFilterAction] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
 
+  // Read URL params for agent scoping (no login required)
+  const urlAgent = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("agent")?.trim() || null;
+  }, []);
+  const urlAdminToken = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("admin")?.trim() || null;
+  }, []);
+  const isAdminView = !!urlAdminToken;
+
+  // Build the Power Queue link preserving agent/admin params
+  const powerQueueHref = useMemo(() => {
+    const params = new URLSearchParams();
+    if (urlAgent) params.set("agent", urlAgent);
+    if (urlAdminToken) params.set("admin", urlAdminToken);
+    const qs = params.toString();
+    return qs ? `/sms-queue?${qs}` : "/sms-queue";
+  }, [urlAgent, urlAdminToken]);
+
   // ── Live data ─────────────────────────────────────────────────────────────
   const { data, isLoading, error, refetch, isRefetching } = trpc.fub.getDashboardStats.useQuery(
     undefined,
@@ -259,7 +279,7 @@ export default function Home() {
               </div>
             )}
 
-            <Link href="/sms-queue">
+            <Link href={powerQueueHref}>
               <Button size="sm" className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-[0_0_12px_rgba(201,168,76,0.3)]">
                 <Send className="h-3.5 w-3.5" />
                 Power Queue

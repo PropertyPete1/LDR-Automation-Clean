@@ -153,6 +153,12 @@ export default function SmsQueue() {
     return raw ? raw.trim() : null;
   }, []);
 
+  // Admin token from URL ?admin= param (Peter's override)
+  const adminToken = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    return new URLSearchParams(window.location.search).get("admin") || undefined;
+  }, []);
+
   const [selectedAgent, setSelectedAgent] = useState<string>(() => getAgentFromUrl());
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -203,12 +209,17 @@ export default function SmsQueue() {
 
   const { data: queueData, isLoading: queueLoading, error: queueError, refetch, dataUpdatedAt } =
     trpc.fub.getPendingQueue.useQuery(
-      // Pass lockedAgent as agentFilter so the SERVER only returns that agent's leads.
-      // When lockedAgent is null (Peter/admin), pass empty object — full queue returned.
-      lockedAgent ? { agentFilter: lockedAgent } : {},
+      // URL-param-based access: pass agent name and optional admin token.
+      // Admin with token sees all; agent without token sees only their leads.
+      {
+        agentFilter: lockedAgent || (adminToken ? "all" : undefined),
+        adminToken,
+      },
       {
         staleTime: 3 * 60 * 1000,
         refetchOnWindowFocus: false,
+        // Don't fetch if no agent param and no admin token
+        enabled: !!(lockedAgent || adminToken),
       }
     );
 
@@ -221,12 +232,32 @@ export default function SmsQueue() {
   );
 
   const leads: PendingLead[] = queueData?.leads || [];
-  // Server-derived access control: non-admins are locked to their own leads.
+  // URL-param-based access: admin is determined by valid admin token in URL
   const isAdmin: boolean = queueData?.isAdmin ?? false;
   const serverAgentName: string | null = queueData?.agentName ?? null;
-  // Effective lock: admins may use the URL ?agent= filter; non-admins are always
-  // locked to their own agent name (the server enforces this regardless).
-  const effectiveLock: string | null = isAdmin ? lockedAgent : (serverAgentName ?? lockedAgent);
+  // Effective lock: admins see all agents (or can filter); non-admins are locked to their URL agent
+  const effectiveLock: string | null = isAdmin ? null : (lockedAgent ?? serverAgentName);
+
+  // No agent param and no admin token → show "check your email" page
+  if (!lockedAgent && !adminToken) {
+    return (
+      <div className="min-h-screen bg-[#0D0F14] flex items-center justify-center p-6">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-amber-500/10 flex items-center justify-center">
+            <Mail className="h-8 w-8 text-amber-500" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-3">Power Queue</h1>
+          <p className="text-gray-400 mb-6">
+            Access your personalized queue through the link in your daily clock-in email.
+            Each agent has their own unique link.
+          </p>
+          <p className="text-sm text-gray-500">
+            If you're an admin, use your bookmarked admin URL.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const logSentNote = trpc.leads.logSentNote.useMutation({
     onError: (err) => console.error("FUB note log failed:", err.message),
@@ -1428,10 +1459,14 @@ export default function SmsQueue() {
 // Only visible to Peter (admin view, no ?agent= lock).
 // Features: DB-backed persistence (survives refresh), AI Copilot draft support.
 function PondSmsSection() {
-  const { data: pondLeads, isLoading } = trpc.fub.getPondSmsLeads.useQuery(undefined, {
-    staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
-  });
+  const adminToken = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    return new URLSearchParams(window.location.search).get("admin") || undefined;
+  }, []);
+  const { data: pondLeads, isLoading } = trpc.fub.getPondSmsLeads.useQuery(
+    { adminToken },
+    { staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false }
+  );
 
   // DB-backed persistence: fetch today's texted IDs for Peter
   const { data: dbTextedPond } = trpc.leads.getTodayTextedLeadIds.useQuery(

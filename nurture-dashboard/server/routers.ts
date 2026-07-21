@@ -20,7 +20,7 @@ import { suppressLead, isLeadSuppressed, getSuppressionList } from "./compliance
 import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "./memoryLayer";
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
-import { getActiveAgents, normalizeAgentName, getBotStatusRoster, resolveQueueViewer } from "./agentRegistry";
+import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -211,20 +211,41 @@ export const appRouter = router({
      * Returns the live pending SMS queue — leads that are stale and have a
      * phone number, enriched with a pre-generated SMS body and redirect link.
      */
-    getPendingQueue: protectedProcedure
-      .input(z.object({ agentFilter: z.string().optional() }))
-      .query(async ({ input, ctx }) => {
-        // ── Access control ────────────────────────────────────────────────
-        // Admins (Peter/Steven or role=admin) may filter to any agent or see
-        // all. Non-admin agents are FORCED to their own leads regardless of the
-        // client-supplied agentFilter — the URL ?agent= param is advisory only.
+    getPendingQueue: publicProcedure
+      .input(z.object({
+        agentFilter: z.string().optional(),
+        adminToken: z.string().optional(),
+      }))
+      .query(async ({ input }) => {
+        // ── URL-param-based access control (no login required) ─────────────
+        // Each agent gets their own link with ?agent=Name. The server scopes
+        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all
+        // to see the full queue.
+        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
+          input.adminToken === ENV.powerQueueAdminToken);
+
+        if (isAdmin) {
+          // Admin token valid — return full queue or filtered to requested agent
+          const filter = input.agentFilter === "all" ? undefined : input.agentFilter;
+          const leads = await getPendingQueue(ENV.fubApiKey, filter);
+          return { leads, isAdmin: true, agentName: null };
+        }
+
+        // Non-admin: agent param is REQUIRED and scopes the result
+        if (!input.agentFilter || input.agentFilter === "all") {
+          // No agent specified and no admin token → empty result
+          return { leads: [], isAdmin: false, agentName: null };
+        }
+
+        // Validate agent name against the live roster
         const agents = await getActiveAgents(undefined, ENV.fubApiKey);
-        const viewer = resolveQueueViewer(ctx.user, agents);
-        const effectiveFilter = viewer.isAdmin
-          ? input.agentFilter
-          : (viewer.agentName ?? "__no_such_agent__"); // unresolved agent → empty result
+        const matched = agents.find(a =>
+          a.slug === input.agentFilter!.toLowerCase() ||
+          a.name.toLowerCase() === input.agentFilter!.toLowerCase()
+        );
+        const effectiveFilter = matched ? matched.name : "__no_such_agent__";
         const leads = await getPendingQueue(ENV.fubApiKey, effectiveFilter);
-        return { leads, isAdmin: viewer.isAdmin, agentName: viewer.agentName };
+        return { leads, isAdmin: false, agentName: matched?.name ?? null };
       }),
 
     /**
@@ -234,12 +255,15 @@ export const appRouter = router({
      * Pond leads belong to Peter, so only admins may see them; a non-admin
      * agent gets an empty list (no cross-agent data).
      */
-    getPondSmsLeads: protectedProcedure.query(async ({ ctx }) => {
-      const agents = await getActiveAgents(undefined, ENV.fubApiKey);
-      const viewer = resolveQueueViewer(ctx.user, agents);
-      if (!viewer.isAdmin) return [];
-      return getPondSmsOnlyLeads(ENV.fubApiKey);
-    }),
+    getPondSmsLeads: publicProcedure
+      .input(z.object({ adminToken: z.string().optional() }))
+      .query(async ({ input }) => {
+        // Only admin token holders can see pond SMS leads
+        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
+          input.adminToken === ENV.powerQueueAdminToken);
+        if (!isAdmin) return [];
+        return getPondSmsOnlyLeads(ENV.fubApiKey);
+      }),
   }),
 
   leads: router({
