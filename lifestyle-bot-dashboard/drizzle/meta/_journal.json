@@ -29,6 +29,20 @@
       "when": 1784068127865,
       "tag": "0003_wild_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1784407942518,
+      "tag": "0004_daffy_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1784740333299,
+      "tag": "0005_young_kronos",
+      "breakpoints": true
     }
   ]
 }

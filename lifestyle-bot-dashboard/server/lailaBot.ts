@@ -24,6 +24,7 @@ import {
   logContactedLead,
   fetchPowerQueueCount,
 } from "./botHelpers";
+import { checkLegacyRetired } from "./legacyGate";
 
 const BOT_NAME = "Laila's Lifestyle Bot";
 const BOT_SLUG = "laila";
@@ -39,6 +40,11 @@ export async function runLailaBot(): Promise<{
   errored: number;
   skipped: number;
 }> {
+  // ─── Legacy Retirement Gate ───
+  if (await checkLegacyRetired(BOT_SLUG)) {
+    console.log(`[${BOT_NAME}] legacyRetired=true — exiting, engine handles this agent now.`);
+    return { sent: 0, errored: 0, skipped: 0 };
+  }
   await writeObservation({
     source: OBSERVATION_SOURCE,
     category: "run_start",

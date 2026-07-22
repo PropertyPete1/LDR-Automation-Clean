@@ -47,12 +47,12 @@ import {
 /**
  * LEGACY_BOT_SLUGS — These slugs have dedicated hardcoded bot files
  * (tiffanyBot.ts, abbyBot.ts, etc.) that already run via their own heartbeat schedules.
- * The engine MUST NEVER process these agents even if someone flips engineActive=true,
- * unless a future `legacyRetired` flag is added and set to true.
+ * The engine MUST NEVER process these agents UNLESS legacyRetired=true in their DB row.
+ * When legacyRetired=true, the legacy file exits immediately and the engine takes over.
  *
  * This is a code-level safeguard against double-sending.
  */
-const LEGACY_BOT_SLUGS = new Set([
+export const LEGACY_BOT_SLUGS = new Set([
   "sp500",
   "sp500_peter",
   "sp500_steven",
@@ -63,20 +63,28 @@ const LEGACY_BOT_SLUGS = new Set([
   "laila",
 ]);
 
-/** Returns true if the agent is a legacy hardcoded bot that the engine must not process. */
-function isLegacyBot(slug: string): boolean {
+/** Returns true if the slug belongs to a legacy bot (may or may not be retired). */
+export function isLegacyBot(slug: string): boolean {
   return LEGACY_BOT_SLUGS.has(slug);
+}
+
+/**
+ * Returns true if the engine should REFUSE to process this agent.
+ * A legacy bot is blocked UNLESS its legacyRetired flag is true.
+ */
+function isBlockedLegacy(slug: string, legacyRetired: boolean): boolean {
+  return LEGACY_BOT_SLUGS.has(slug) && !legacyRetired;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
-/** Fetch all engine-active agents from the database, excluding legacy bots */
+/** Fetch all engine-active agents from the database, excluding blocked legacy bots */
 export async function getActiveEngineAgents(): Promise<AgentBot[]> {
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select().from(agentBots).where(eq(agentBots.engineActive, true));
-  // SAFEGUARD: filter out any legacy bot that somehow has engineActive=true
-  return rows.filter(r => !isLegacyBot(r.botSlug));
+  // SAFEGUARD: filter out legacy bots that haven't been formally retired
+  return rows.filter(r => !isBlockedLegacy(r.botSlug, r.legacyRetired));
 }
 
 /** Fetch a single agent by slug (regardless of engineActive status) */
@@ -98,11 +106,12 @@ export async function runEngineForAgent(botSlug: string): Promise<{
   errored: number;
   skipped: number;
 }> {
-  // LEGACY SAFEGUARD: check FIRST, before any DB lookup, so it fires regardless of DB state
-  if (isLegacyBot(botSlug)) throw new Error(`[Engine] BLOCKED: ${botSlug} is a legacy hardcoded bot — engine refuses to process`);
-
+  // LEGACY SAFEGUARD: look up the agent first, then check retirement status
   const agent = await getAgentBySlug(botSlug);
   if (!agent) throw new Error(`[Engine] Agent not found: ${botSlug}`);
+  if (isBlockedLegacy(botSlug, agent.legacyRetired)) {
+    throw new Error(`[Engine] BLOCKED: ${botSlug} is a legacy hardcoded bot (legacyRetired=${agent.legacyRetired}) — engine refuses to process`);
+  }
   if (!agent.engineActive) throw new Error(`[Engine] Agent ${botSlug} is not engine-active`);
 
   const OBSERVATION_SOURCE = `${botSlug}_bot`;
@@ -224,6 +233,7 @@ export async function runEngineForAgent(botSlug: string): Promise<{
 export async function sendEngineClockinForAgent(botSlug: string): Promise<void> {
   const agent = await getAgentBySlug(botSlug);
   if (!agent || !agent.engineActive) return;
+  if (isBlockedLegacy(botSlug, agent.legacyRetired)) return;
 
   let leadsQueued = 0;
   let powerQueueCount = 0;
@@ -262,7 +272,7 @@ export async function sendEngineClockoffForAgent(
 ): Promise<void> {
   const agent = await getAgentBySlug(botSlug);
   if (!agent || !agent.engineActive) return;
-
+  if (isBlockedLegacy(botSlug, agent.legacyRetired)) return;
   await sendClockoffEmail({
     botName: agent.botName,
     agentFirstName: agent.agentFirstName,

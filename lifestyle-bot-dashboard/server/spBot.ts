@@ -28,6 +28,7 @@ import {
   STEVEN_EMAIL,
   fetchPowerQueueCount,
 } from "./botHelpers";
+import { checkLegacyRetired } from "./legacyGate";
 
 const BOT_NAME = "S&P500 Lifestyle Bot";
 const BOT_SLUG = "sp500";
@@ -46,6 +47,11 @@ async function runSpBotForAgent(
   agent: { fubId: number; firstName: string; lastName: string; email: string },
   slug: string
 ): Promise<{ sent: number; errored: number; skipped: number }> {
+  // ─── Legacy Retirement Gate ───
+  if (await checkLegacyRetired(slug)) {
+    console.log(`[${BOT_NAME}] (${agent.firstName}) legacyRetired=true — exiting, engine handles this agent now.`);
+    return { sent: 0, errored: 0, skipped: 0 };
+  }
   const OBSERVATION_SRC = `${slug}_bot`;
   await writeObservation({
     source: OBSERVATION_SRC,

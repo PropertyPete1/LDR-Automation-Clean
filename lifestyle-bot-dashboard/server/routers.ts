@@ -435,14 +435,82 @@ export const appRouter = router({
         await db.delete(agentBots).where(eq(agentBots.id, input.id));
         return { ok: true, id: input.id };
       }),
+
+    /**
+     * Atomic cutover: migrate a legacy bot to the engine.
+     * Sets engineActive=true AND legacyRetired=true in a single write.
+     * This guarantees exactly-one-motor: the engine picks it up AND the legacy file exits.
+     */
+    migrateAgentToEngine: adminProcedure
+      .input((input: unknown) => {
+        const i = input as { slug?: string };
+        if (!i?.slug) throw new Error("slug is required");
+        return { slug: i.slug };
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        // Verify the agent exists
+        const [agent] = await db.select().from(agentBots).where(eq(agentBots.botSlug, input.slug));
+        if (!agent) throw new Error(`Agent with slug '${input.slug}' not found in agent_bots`);
+        // Atomic single write: both flags in one UPDATE
+        await db.update(agentBots)
+          .set({ engineActive: true, legacyRetired: true })
+          .where(eq(agentBots.botSlug, input.slug));
+        return {
+          ok: true,
+          slug: input.slug,
+          engineActive: true,
+          legacyRetired: true,
+          message: `Agent '${input.slug}' migrated to engine. Legacy file will exit on next run.`,
+        };
+      }),
+
+    /**
+     * Rollback: revert a migration (engine OFF, legacy ON).
+     * For emergency use if the engine misbehaves post-migration.
+     */
+    rollbackMigration: adminProcedure
+      .input((input: unknown) => {
+        const i = input as { slug?: string };
+        if (!i?.slug) throw new Error("slug is required");
+        return { slug: i.slug };
+      })
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new Error("DB unavailable");
+        const { agentBots } = await import("../drizzle/schema");
+        const [agent] = await db.select().from(agentBots).where(eq(agentBots.botSlug, input.slug));
+        if (!agent) throw new Error(`Agent with slug '${input.slug}' not found in agent_bots`);
+        await db.update(agentBots)
+          .set({ engineActive: false, legacyRetired: false })
+          .where(eq(agentBots.botSlug, input.slug));
+        return {
+          ok: true,
+          slug: input.slug,
+          engineActive: false,
+          legacyRetired: false,
+          message: `Agent '${input.slug}' rolled back to legacy. Engine will skip on next run.`,
+        };
+      }),
   }),
 
   // ─── Power Queue (direct FUB query for 1-20 day stale leads) ──────────────────────────────────
+  // ─── Public Agent List (dynamic from agent_bots table) ──────────────────────────────────────
+  agents: router({
+    /** Public list of all registered agents — used by client-side UI to replace hardcoded maps */
+    list: publicProcedure.query(async () => {
+      const { getPublicAgentList } = await import("./agentRegistryCache");
+      return getPublicAgentList();
+    }),
+  }),
+
   powerQueue: router({
     /**
      * Returns the live Power Queue count for a specific agent by querying FUB directly.
      * Power Queue = leads in the 1-20 day stale window the agent should personally text.
-     * Uses agentName to look up the FUB ID from a static map.
+     * Uses dynamic agent registry to resolve the FUB display name.
      */
     getLiveCount: publicProcedure
       .input((input: unknown) => {
@@ -450,8 +518,9 @@ export const appRouter = router({
         return { agentName: i?.agentName ?? "" };
       })
       .query(async ({ input }) => {
-        // Map "Rue" (bot nickname) to "Stefanie" (FUB/portal name)
-        const portalName = input.agentName.toLowerCase() === "rue" ? "Stefanie" : input.agentName;
+        // Dynamic lookup: resolve agent name to Power Queue name via registry
+        const { getPowerQueueName } = await import("./agentRegistryCache");
+        const portalName = await getPowerQueueName(input.agentName) ?? input.agentName;
         if (!portalName) return { count: 0, agentName: input.agentName, fetchedAt: Date.now() };
         try {
           const count = await fetchPowerQueueCount(portalName);

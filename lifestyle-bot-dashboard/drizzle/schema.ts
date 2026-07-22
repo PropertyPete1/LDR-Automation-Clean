@@ -558,6 +558,8 @@ export const agentBots = mysqlTable("agent_bots", {
   headerGradient: varchar("headerGradient", { length: 300 }).notNull().default("linear-gradient(135deg,#1a3d1c 0%,#2c5f2e 60%,#3a7d3c 100%)"),
   /** Whether this agent is processed by the generic engine (true) or hardcoded bot files (false) */
   engineActive: boolean("engineActive").notNull().default(false),
+  /** Whether the legacy hardcoded bot file has been retired for this agent (engine takes over) */
+  legacyRetired: boolean("legacyRetired").notNull().default(false),
   /** When the one-time intro email was sent (NULL = not yet sent) */
   introSentAt: timestamp("introSentAt"),
   /** Row creation timestamp */

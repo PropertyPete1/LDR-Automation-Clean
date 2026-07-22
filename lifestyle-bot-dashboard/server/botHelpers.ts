@@ -1861,7 +1861,8 @@ export type ObservationCategory =
   | "run_complete"
   | "lead_error"
   | "bot_crash"
-  | "fixed";
+  | "fixed"
+  | "legacy_retired";
 
 export async function writeObservation(opts: {
   source: string;

@@ -5,7 +5,8 @@
     "agentFirstName": "Tiffany",
     "agentLastName": "Proske",
     "fubUserId": 20,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 3,
@@ -13,7 +14,8 @@
     "agentFirstName": "Stefanie",
     "agentLastName": "Graham",
     "fubUserId": 31,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 4,
@@ -21,7 +23,8 @@
     "agentFirstName": "Abby",
     "agentLastName": "Martinez",
     "fubUserId": 28,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 5,
@@ -29,7 +32,8 @@
     "agentFirstName": "Irma",
     "agentLastName": "Vidic Crisp",
     "fubUserId": 33,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 6,
@@ -37,7 +41,8 @@
     "agentFirstName": "Laila",
     "agentLastName": "Maria",
     "fubUserId": 35,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 7,
@@ -45,7 +50,8 @@
     "agentFirstName": "Jason",
     "agentLastName": "Casanova",
     "fubUserId": 37,
-    "engineActive": true
+    "engineActive": true,
+    "legacyRetired": false
   },
   {
     "id": 8,
@@ -53,7 +59,8 @@
     "agentFirstName": "Peter",
     "agentLastName": "Allen",
     "fubUserId": 2,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   },
   {
     "id": 9,
@@ -61,6 +68,7 @@
     "agentFirstName": "Steven",
     "agentLastName": "Van Orden",
     "fubUserId": 1,
-    "engineActive": false
+    "engineActive": false,
+    "legacyRetired": false
   }
 ]
