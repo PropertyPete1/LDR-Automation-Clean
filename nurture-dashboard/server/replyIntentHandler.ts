@@ -212,6 +212,7 @@ interface IntentClassification {
   highIntent: boolean;
   isOptOut: boolean;
   isNoLongerLooking: boolean; // moved away / stopped searching / not moving to Texas
+  isNotNow: boolean; // soft-close: timing not right, life circumstances changed, but may return
   confidence: number; // 0.0 – 1.0
   reason: string;     // short human-readable explanation
 }
@@ -260,12 +261,21 @@ High-intent signals (highIntent: true) — these need immediate agent follow-up:
 - Mentioning a specific timeline ("we want to buy in the next 30 days")
 - Asking about financing or mortgage pre-approval
 
+Not-now / soft-close signals (isNotNow: true) — FRIENDLY PAUSE, may return later:
+- Job fell through / relocation plans changed temporarily
+- "I'll keep your information if something changes"
+- "Not ready right now" / "timing isn't right"
+- Financial situation changed (lost job, waiting on sale, etc.)
+- Family circumstances changed temporarily (new baby, caring for parent)
+- "Maybe later" / "not this year" / "put me on hold"
+- Confused about who you are ("I'm not sure what email you are talking about")
+IMPORTANT: isNotNow is for leads who MAY come back but need a LONG pause (30+ days). It is distinct from isNoLongerLooking (permanent) and isOptOut (hostile).
+
 NOT any of the above:
 - Out-of-office auto-replies
 - Vacation responders
 - General questions or chitchat
 - Asking for more general information
-- Future timeline mentions ("maybe next year") — these are NOT no-longer-looking
 
 Be conservative: only flag when there is clear, unambiguous evidence.
 Confidence should reflect how certain you are (0.0 = no idea, 1.0 = absolutely certain).`;
@@ -278,12 +288,17 @@ ${truncatedBody}
 
 Return JSON with:
 - isOptOut (boolean): true if they want to STOP communications (hostile/firm)
-- isNoLongerLooking (boolean): true if they are no longer looking to move to Texas (friendly disengagement)
+- isNoLongerLooking (boolean): true if they are no longer looking to move to Texas (friendly, PERMANENT disengagement)
+- isNotNow (boolean): true if timing is wrong but they may return later (soft-close, TEMPORARY pause)
 - highIntent (boolean): true if they show strong buying/selling intent needing immediate follow-up
 - confidence (0.0-1.0): how certain you are
 - reason (string): short explanation under 200 chars
 
-NOTE: isOptOut and isNoLongerLooking are MUTUALLY EXCLUSIVE. If the person is friendly but done searching, use isNoLongerLooking. If they are hostile or demand removal, use isOptOut.`;
+NOTE: isOptOut, isNoLongerLooking, and isNotNow are MUTUALLY EXCLUSIVE. Pick the single best fit:
+- Hostile/firm stop → isOptOut
+- Permanently done searching → isNoLongerLooking
+- Temporarily paused / confused / life event → isNotNow
+- None of the above → all false`;
 
   try {
     const result = await invokeLLM({
@@ -300,12 +315,13 @@ NOTE: isOptOut and isNoLongerLooking are MUTUALLY EXCLUSIVE. If the person is fr
             type: "object",
             properties: {
               isOptOut: { type: "boolean", description: "True if the email indicates hostile opt-out intent" },
-              isNoLongerLooking: { type: "boolean", description: "True if the lead is no longer looking to move to Texas (friendly)" },
+              isNoLongerLooking: { type: "boolean", description: "True if the lead is no longer looking to move to Texas (permanent, friendly)" },
+              isNotNow: { type: "boolean", description: "True if timing is wrong but lead may return later (temporary soft-close)" },
               highIntent: { type: "boolean", description: "True if the email shows strong buying/selling intent" },
               confidence: { type: "number", description: "Confidence score 0.0 to 1.0" },
               reason: { type: "string", description: "Short explanation under 200 characters" },
             },
-            required: ["isOptOut", "isNoLongerLooking", "highIntent", "confidence", "reason"],
+            required: ["isOptOut", "isNoLongerLooking", "isNotNow", "highIntent", "confidence", "reason"],
             additionalProperties: false,
           },
         },
@@ -320,6 +336,7 @@ NOTE: isOptOut and isNoLongerLooking are MUTUALLY EXCLUSIVE. If the person is fr
     return {
       isOptOut: Boolean(parsed.isOptOut),
       isNoLongerLooking: Boolean(parsed.isNoLongerLooking),
+      isNotNow: Boolean(parsed.isNotNow),
       highIntent: Boolean(parsed.highIntent),
       confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0)),
       reason: String(parsed.reason || "").slice(0, 499),
@@ -327,7 +344,7 @@ NOTE: isOptOut and isNoLongerLooking are MUTUALLY EXCLUSIVE. If the person is fr
   } catch (e) {
     console.warn("[replyIntent] LLM classification failed:", e);
     // Safe fallback: treat as no intent if LLM fails
-    return { isOptOut: false, isNoLongerLooking: false, highIntent: false, confidence: 0, reason: "LLM classification failed" };
+    return { isOptOut: false, isNoLongerLooking: false, isNotNow: false, highIntent: false, confidence: 0, reason: "LLM classification failed" };
   }
 }
 
@@ -547,6 +564,8 @@ export interface ReplyIntentResult {
   alreadySuppressed: number;
   classifiedNoIntent: number;
   optOutsApplied: number;
+  repliesPaused: number; // leads that got Replied-Paused tag
+  notNowPaused: number; // leads classified as not-now (30-day pause)
   errors: number;
   durationMs: number;
   details: string[];
@@ -561,6 +580,8 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
     alreadySuppressed: 0,
     classifiedNoIntent: 0,
     optOutsApplied: 0,
+    repliesPaused: 0,
+    notNowPaused: 0,
     errors: 0,
     durationMs: 0,
     details: [],
@@ -652,6 +673,52 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
           continue;
         }
 
+        // ═══ FIX: UNIVERSAL REPLY PROTECTION ═══════════════════════════════════
+        // BEFORE classification: every reply from a known lead immediately gets:
+        //   1. A FUB note logging the reply text (so the AI skip gate can read it)
+        //   2. The "Replied - Paused" tag (hard-blocks all bot emails)
+        // This ensures protection regardless of how the LLM classifies the reply.
+        try {
+          // Write reply text into a FUB note
+          const replySnippet = candidate.bodyText.slice(0, 500);
+          const noteBody = [
+            `\ud83d\udce9 Lead replied via email (auto-detected):`,
+            ``,
+            `"${replySnippet}"`,
+            ``,
+            `Subject: "${candidate.subject}"`,
+            `From: ${candidate.fromEmail}`,
+            `Detected: ${new Date().toISOString()}`,
+            ``,
+            `\u2192 Automation paused (Replied - Paused tag applied).`,
+            `\u2192 A human must review and re-engage before removing the tag.`,
+            ``,
+            `\u2014 Reply Intent Handler (auto)`,
+          ].join("\n");
+
+          await fubPost("/notes", {
+            personId: lead.id,
+            body: noteBody,
+            subject: "\ud83d\udce9 Lead Reply Detected",
+            isHtml: false,
+          });
+
+          // Apply "Replied - Paused" tag (merge with existing, never overwrite)
+          const currentTags = lead.tags ?? [];
+          const REPLIED_PAUSED_TAG = "Replied - Paused";
+          if (!currentTags.some(t => t.toLowerCase() === REPLIED_PAUSED_TAG.toLowerCase())) {
+            const mergedTags = [...currentTags, REPLIED_PAUSED_TAG];
+            await fubPut(`/people/${lead.id}`, { tags: mergedTags });
+          }
+
+          result.repliesPaused++;
+          console.log(`[replyIntent] \u2705 Reply protection applied for ${lead.name} (${candidate.fromEmail}) — note written + Replied-Paused tag`);
+        } catch (protectErr) {
+          // Non-fatal: log but continue to classification
+          console.warn(`[replyIntent] \u26a0\ufe0f Failed to apply reply protection for ${lead.name}:`, protectErr);
+        }
+        // ═══ END UNIVERSAL REPLY PROTECTION ═══════════════════════════════════════
+
         // 2d. Classify reply intent with LLM
         console.log(`[replyIntent] Classifying reply from ${lead.name} (${candidate.fromEmail})...`);
         const classification = await classifyReplyIntent(candidate.bodyText, candidate.fromEmail);
@@ -659,6 +726,7 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
         console.log(
           `[replyIntent] ${lead.name}: isOptOut=${classification.isOptOut}, ` +
           `isNoLongerLooking=${classification.isNoLongerLooking}, ` +
+          `isNotNow=${classification.isNotNow}, ` +
           `confidence=${classification.confidence.toFixed(2)}, reason="${classification.reason}"`
         );
 
@@ -712,6 +780,73 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
             senderEmail: candidate.fromEmail,
             fubPersonId: lead.id,
             action: "annual_nurture",
+            confidence: classification.confidence.toFixed(3),
+            reason: classification.reason,
+          });
+        } else if (classification.isNotNow && classification.confidence >= CONFIDENCE_THRESHOLD) {
+          // ═══ FIX 3: NOT-NOW / SOFT-CLOSE → 30-day pause ════════════════════════
+          // Leads like Ken ("didn't get the job") or Melissa ("not sure what email")
+          // need a LONG pause (30+ days) so timeline cadence stretches them.
+          // The Replied-Paused tag is already applied above; here we also add
+          // a descriptive note and set a 30-day snooze marker.
+          try {
+            const pauseUntil = new Date();
+            pauseUntil.setDate(pauseUntil.getDate() + 30);
+            const pauseDate = pauseUntil.toISOString().split('T')[0];
+
+            // Write a classification note explaining the 30-day pause
+            await fubPost("/notes", {
+              personId: lead.id,
+              body: [
+                `\u23f8\ufe0f Soft-close reply detected — 30-day pause applied.`,
+                ``,
+                `Classification: NOT NOW (confidence: ${(classification.confidence * 100).toFixed(0)}%)`,
+                `Reason: ${classification.reason}`,
+                ``,
+                `Lead may return later. Do not resume automated outreach until ${pauseDate} at the earliest.`,
+                `A human must review and explicitly re-engage.`,
+                ``,
+                `\u2014 Reply Intent Handler (auto)`,
+              ].join("\n"),
+              subject: "\u23f8\ufe0f Not-Now Pause (30 days)",
+              isHtml: false,
+            });
+
+            // Add a "Not Now - 30 Day Pause" tag for easy filtering
+            const currentTags = lead.tags ?? [];
+            const NOT_NOW_TAG = "Not Now - 30 Day Pause";
+            if (!currentTags.some(t => t.toLowerCase() === NOT_NOW_TAG.toLowerCase())) {
+              const mergedTags = [...currentTags, NOT_NOW_TAG];
+              // Also ensure Replied - Paused is still there
+              if (!mergedTags.some(t => t.toLowerCase() === "replied - paused")) {
+                mergedTags.push("Replied - Paused");
+              }
+              await fubPut(`/people/${lead.id}`, { tags: mergedTags });
+            }
+          } catch (notNowErr) {
+            console.warn(`[replyIntent] Failed to apply not-now pause for ${lead.name}:`, notNowErr);
+          }
+
+          result.notNowPaused++;
+          result.details.push(
+            `NOT-NOW PAUSED (30d): ${lead.name} (${candidate.fromEmail}) — "${classification.reason}" (confidence: ${(classification.confidence * 100).toFixed(0)}%)`
+          );
+
+          await writeObservation({
+            source: "reply_intent",
+            severity: "info",
+            category: "not_now_paused",
+            message: `Not-now pause applied (30d) — ${lead.name}`,
+            detail: `Email: ${candidate.fromEmail} | Reason: ${classification.reason} | Confidence: ${(classification.confidence * 100).toFixed(0)}% | Subject: "${candidate.subject}"`,
+            autoFixable: 0,
+            runId,
+          });
+
+          await recordProcessed({
+            gmailMessageId: candidate.uid,
+            senderEmail: candidate.fromEmail,
+            fubPersonId: lead.id,
+            action: "not_now_paused",
             confidence: classification.confidence.toFixed(3),
             reason: classification.reason,
           });
@@ -797,7 +932,9 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
     // Step 3: Write summary observation
     const summaryMsg =
       `Reply intent scan: ${result.messagesScanned} scanned, ` +
+      `${result.repliesPaused} replies paused, ` +
       `${result.optOutsApplied} opt-outs applied, ` +
+      `${result.notNowPaused} not-now paused (30d), ` +
       `${result.classifiedNoIntent} no-intent, ` +
       `${result.notInFub} not-in-FUB, ` +
       `${result.alreadySuppressed} already suppressed, ` +

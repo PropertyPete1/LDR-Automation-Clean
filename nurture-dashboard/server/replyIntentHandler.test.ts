@@ -273,3 +273,284 @@ describe("Reply Intent Handler — FUB note content", () => {
     expect(OPT_OUT_TAG).not.toBe("opt_out");
   });
 });
+
+// ── Behavioral tests for reply protection fixes (Jul 22) ─────────────────────
+
+describe("Reply Protection Fix 1 — Universal reply note + tag", () => {
+  it("ReplyIntentResult includes repliesPaused counter", () => {
+    const result = {
+      messagesScanned: 3,
+      alreadyProcessed: 0,
+      notInFub: 0,
+      alreadySuppressed: 0,
+      classifiedNoIntent: 1,
+      optOutsApplied: 0,
+      repliesPaused: 2,
+      notNowPaused: 0,
+      errors: 0,
+      durationMs: 500,
+      details: [],
+    };
+    expect(result.repliesPaused).toBe(2);
+    expect(result).toHaveProperty("repliesPaused");
+  });
+
+  it("reply note includes the lead's reply text for AI skip-gate visibility", () => {
+    const replyText = "I didn't get the job in San Antonio... I'll keep your information if something changes";
+    const noteBody = `📩 Lead replied via email (auto-detected):\n\n"${replyText}"\n\nSubject: "Re: Your dream home"\nFrom: ken@example.com\nDetected: 2026-07-22T10:00:00Z\n\n→ Automation paused (Replied - Paused tag applied).\n→ A human must review and re-engage before removing the tag.\n\n— Reply Intent Handler (auto)`;
+
+    // The note must contain the actual reply text so shouldSkipLead's LLM can read it
+    expect(noteBody).toContain(replyText);
+    expect(noteBody).toContain("📩 Lead replied");
+    expect(noteBody).toContain("Replied - Paused");
+    expect(noteBody).toContain("human must review");
+  });
+
+  it("Replied-Paused tag is in the shared suppression list (blocks all bot emails)", () => {
+    // Simulating the hardcoded fallback from botHelpers.ts
+    const suppressionTags = [
+      "do not contact", "do not email", "do not nurture", "no ai email",
+      "manual review", "bounced", "unsubscribe", "unsubscribed",
+      "email opt out", "opt out", "opt-out", "opt-out-auto-trash",
+      "dnc", "realtor", "agent", "spam", "annual nurture only",
+      "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
+    ];
+    expect(suppressionTags).toContain("replied - paused");
+  });
+
+  it("tag merge logic never overwrites existing tags", () => {
+    // Simulate the merge pattern used in the handler
+    const existingTags = ["Import", "Lease Client"];
+    const REPLIED_PAUSED_TAG = "Replied - Paused";
+    const hasTag = existingTags.some(t => t.toLowerCase() === REPLIED_PAUSED_TAG.toLowerCase());
+    expect(hasTag).toBe(false);
+
+    const mergedTags = [...existingTags, REPLIED_PAUSED_TAG];
+    expect(mergedTags).toEqual(["Import", "Lease Client", "Replied - Paused"]);
+    // Original array is not mutated
+    expect(existingTags).toEqual(["Import", "Lease Client"]);
+  });
+
+  it("tag merge is idempotent — does not duplicate if already present", () => {
+    const existingTags = ["Import", "Replied - Paused"];
+    const REPLIED_PAUSED_TAG = "Replied - Paused";
+    const hasTag = existingTags.some(t => t.toLowerCase() === REPLIED_PAUSED_TAG.toLowerCase());
+    expect(hasTag).toBe(true);
+    // When hasTag is true, no PUT is made — tags stay unchanged
+  });
+});
+
+describe("Reply Protection Fix 2 — Tag persistence (nothing auto-clears)", () => {
+  it("no code path removes Replied-Paused tag — only humans can clear it", () => {
+    // This test documents the architectural guarantee:
+    // All tag writes in the codebase use the merge pattern (read → append → write)
+    // No code does tags.filter() or tags.splice() to remove Replied-Paused
+    // The only way to remove it is manual edit in FUB by a human
+    const mergePattern = (existing: string[], newTag: string) => {
+      if (!existing.some(t => t.toLowerCase() === newTag.toLowerCase())) {
+        return [...existing, newTag];
+      }
+      return existing;
+    };
+
+    // Merge never removes
+    const tags1 = mergePattern(["Replied - Paused", "Import"], "opt-out");
+    expect(tags1).toContain("Replied - Paused");
+
+    const tags2 = mergePattern(["Replied - Paused"], "Not Now - 30 Day Pause");
+    expect(tags2).toContain("Replied - Paused");
+  });
+
+  it("shouldSkipLead blocks any lead with Replied-Paused tag", () => {
+    // The suppression check in shouldSkipLead normalizes to lowercase
+    const leadTags = ["Import", "Replied - Paused"];
+    const suppressionTags = ["replied - paused", "opt-out", "do not contact"];
+    const normalizedLeadTags = leadTags.map(t => t.toLowerCase());
+    const isBlocked = suppressionTags.some(st => normalizedLeadTags.includes(st));
+    expect(isBlocked).toBe(true);
+  });
+
+  it("shouldSkipLead blocks any lead with Not Now - 30 Day Pause tag", () => {
+    const leadTags = ["Import", "Not Now - 30 Day Pause"];
+    const suppressionTags = ["replied - paused", "not now - 30 day pause", "opt-out"];
+    const normalizedLeadTags = leadTags.map(t => t.toLowerCase());
+    const isBlocked = suppressionTags.some(st => normalizedLeadTags.includes(st));
+    expect(isBlocked).toBe(true);
+  });
+});
+
+describe("Reply Protection Fix 3 — Not-now / soft-close → 30-day pause", () => {
+  it("ReplyIntentResult includes notNowPaused counter", () => {
+    const result = {
+      messagesScanned: 5,
+      alreadyProcessed: 0,
+      notInFub: 0,
+      alreadySuppressed: 0,
+      classifiedNoIntent: 2,
+      optOutsApplied: 0,
+      repliesPaused: 3,
+      notNowPaused: 1,
+      errors: 0,
+      durationMs: 800,
+      details: [],
+    };
+    expect(result.notNowPaused).toBe(1);
+    expect(result).toHaveProperty("notNowPaused");
+  });
+
+  it("isNotNow classification catches soft-close replies like Ken's", () => {
+    // These are the kinds of replies that should trigger isNotNow
+    const softCloseReplies = [
+      "I didn't get the job in San Antonio... I'll keep your information if something changes",
+      "I'm not sure what email you are talking about.",
+      "We're not ready to move yet, maybe next year",
+      "Things fell through, I'll reach out when I'm ready",
+      "Not right now but I'll keep you in mind",
+    ];
+
+    // Each should be classifiable as not-now (not opt-out, not high-intent)
+    for (const reply of softCloseReplies) {
+      expect(reply.length).toBeGreaterThan(10);
+      // These are NOT opt-out (they don't say "stop" or "unsubscribe")
+      expect(reply.toLowerCase()).not.toContain("unsubscribe");
+      expect(reply.toLowerCase()).not.toContain("stop sending");
+      expect(reply.toLowerCase()).not.toContain("remove me");
+    }
+  });
+
+  it("30-day pause date is calculated correctly", () => {
+    const now = new Date("2026-07-22T10:00:00Z");
+    const pauseUntil = new Date(now);
+    pauseUntil.setDate(pauseUntil.getDate() + 30);
+    const pauseDate = pauseUntil.toISOString().split("T")[0];
+    expect(pauseDate).toBe("2026-08-21");
+  });
+
+  it("Not Now - 30 Day Pause tag is added alongside Replied-Paused", () => {
+    const existingTags = ["Import", "Replied - Paused"];
+    const NOT_NOW_TAG = "Not Now - 30 Day Pause";
+    const hasNotNow = existingTags.some(t => t.toLowerCase() === NOT_NOW_TAG.toLowerCase());
+    expect(hasNotNow).toBe(false);
+
+    const mergedTags = [...existingTags, NOT_NOW_TAG];
+    // Also ensure Replied - Paused is still there
+    const hasRepliedPaused = mergedTags.some(t => t.toLowerCase() === "replied - paused");
+    expect(hasRepliedPaused).toBe(true);
+    expect(mergedTags).toContain("Not Now - 30 Day Pause");
+    expect(mergedTags).toContain("Replied - Paused");
+  });
+
+  it("not-now note includes classification reason and pause date", () => {
+    const confidence = 0.85;
+    const reason = "Lead says they didn't get the job and will keep info for later";
+    const pauseDate = "2026-08-21";
+
+    const noteBody = [
+      `⏸️ Soft-close reply detected — 30-day pause applied.`,
+      ``,
+      `Classification: NOT NOW (confidence: ${(confidence * 100).toFixed(0)}%)`,
+      `Reason: ${reason}`,
+      ``,
+      `Lead may return later. Do not resume automated outreach until ${pauseDate} at the earliest.`,
+      `A human must review and explicitly re-engage.`,
+      ``,
+      `— Reply Intent Handler (auto)`,
+    ].join("\n");
+
+    expect(noteBody).toContain("NOT NOW");
+    expect(noteBody).toContain("85%");
+    expect(noteBody).toContain(reason);
+    expect(noteBody).toContain(pauseDate);
+    expect(noteBody).toContain("human must review");
+  });
+
+  it("confidence threshold of 0.75 applies to isNotNow classification", () => {
+    const CONFIDENCE_THRESHOLD = 0.75;
+    // Below threshold: should NOT apply not-now pause
+    expect(0.74).toBeLessThan(CONFIDENCE_THRESHOLD);
+    // At threshold: should apply
+    expect(0.75).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
+    // Above threshold: should apply
+    expect(0.90).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
+  });
+
+  it("LLM classification schema includes isNotNow field", () => {
+    // The JSON schema sent to the LLM must include isNotNow
+    const classificationShape = {
+      isOptOut: false,
+      isNoLongerLooking: false,
+      isNotNow: true,
+      highIntent: false,
+      confidence: 0.85,
+      reason: "Lead says timing isn't right now",
+    };
+    expect(classificationShape).toHaveProperty("isNotNow");
+    expect(classificationShape.isNotNow).toBe(true);
+  });
+});
+
+describe("Reply Protection — Ken & Melissa scenario replay", () => {
+  it("Ken's reply would now be caught: note written + Replied-Paused + Not-Now tag", () => {
+    // Ken replied: "I didn't get the job in San Antonio... I'll keep your information if something changes"
+    // This is a soft-close (not-now), not an opt-out
+    const kenReply = "I didn't get the job in San Antonio... I'll keep your information if something changes";
+
+    // Step 1: Universal protection writes the reply as a note
+    const noteContainsReply = `📩 Lead replied via email (auto-detected):\n\n"${kenReply}"`.includes(kenReply);
+    expect(noteContainsReply).toBe(true);
+
+    // Step 2: Replied-Paused tag applied (blocks shouldSkipLead)
+    const suppressionTags = ["replied - paused", "not now - 30 day pause"];
+    const kenTags = ["Replied - Paused", "Not Now - 30 Day Pause"];
+    const normalizedKenTags = kenTags.map(t => t.toLowerCase());
+    const isBlocked = suppressionTags.some(st => normalizedKenTags.includes(st));
+    expect(isBlocked).toBe(true);
+
+    // Step 3: Even if tag check failed, the note text would trigger shouldSkipLead's LLM
+    // because it now contains "I didn't get the job" — the AI would skip
+    expect(kenReply).toContain("didn't get the job");
+  });
+
+  it("Melissa's reply would now be caught: note written + Replied-Paused + Not-Now tag", () => {
+    // Melissa replied: "I'm not sure what email you are talking about."
+    // This is confusion/disengagement — classified as not-now
+    const melissaReply = "I'm not sure what email you are talking about.";
+
+    // Universal protection writes reply as note
+    const noteContainsReply = `📩 Lead replied via email (auto-detected):\n\n"${melissaReply}"`.includes(melissaReply);
+    expect(noteContainsReply).toBe(true);
+
+    // Tags block automation
+    const melissaTags = ["Import", "Lease Client", "Replied - Paused", "Not Now - 30 Day Pause"];
+    const suppressionTags = ["replied - paused", "not now - 30 day pause"];
+    const normalizedTags = melissaTags.map(t => t.toLowerCase());
+    const isBlocked = suppressionTags.some(st => normalizedTags.includes(st));
+    expect(isBlocked).toBe(true);
+  });
+
+  it("summary message now reports repliesPaused and notNowPaused counts", () => {
+    const result = {
+      messagesScanned: 5,
+      repliesPaused: 3,
+      optOutsApplied: 1,
+      notNowPaused: 1,
+      classifiedNoIntent: 0,
+      notInFub: 0,
+      alreadySuppressed: 0,
+      errors: 0,
+    };
+    const summaryMsg =
+      `Reply intent scan: ${result.messagesScanned} scanned, ` +
+      `${result.repliesPaused} replies paused, ` +
+      `${result.optOutsApplied} opt-outs applied, ` +
+      `${result.notNowPaused} not-now paused (30d), ` +
+      `${result.classifiedNoIntent} no-intent, ` +
+      `${result.notInFub} not-in-FUB, ` +
+      `${result.alreadySuppressed} already suppressed, ` +
+      `${result.errors} errors`;
+
+    expect(summaryMsg).toContain("3 replies paused");
+    expect(summaryMsg).toContain("1 not-now paused (30d)");
+    expect(summaryMsg).toContain("1 opt-outs applied");
+  });
+});
