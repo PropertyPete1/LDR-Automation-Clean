@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import { clearPersonOwnerCache } from "./queueAccess";
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,7 @@ function caller() {
 describe("Security Hardening: resolveQueueAccess gating", () => {
   beforeEach(() => {
     mockFetch.mockClear();
+    clearPersonOwnerCache();
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -200,6 +202,12 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("leads.getNotes succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Steven (fubUserId=1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 1 }),
+      });
+      // Actual notes API call
       mockFetch.mockResolvedValueOnce({
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ notes: [] }),
@@ -224,6 +232,12 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("leads.getLastInbound succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Jason (fubUserId=37)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 37 }),
+      });
+      // Actual textMessages API call
       mockFetch.mockResolvedValueOnce({
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
@@ -239,6 +253,12 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("fub.getLatestInboundSms succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Tiffany (fubUserId=20)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 20 }),
+      });
+      // Actual textMessages API call
       mockFetch.mockResolvedValueOnce({
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
@@ -424,6 +444,11 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("compliance.markUnsubscribe succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Steven (fubUserId=1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 1 }),
+      });
       const result = await caller().compliance.markUnsubscribe({
         personId: 123,
         agent: "Steven",
@@ -461,6 +486,12 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("leads.logSentNote succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Steven (fubUserId=1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 1 }),
+      });
+      // Actual FUB note POST
       mockFetch.mockResolvedValueOnce({
         ok: true, status: 201, headers: { get: () => null },
         json: async () => ({ id: 1 }),
@@ -480,6 +511,12 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("leads.snoozeLead succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Steven (fubUserId=1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 1 }),
+      });
+      // Actual FUB note POST for snooze
       mockFetch.mockResolvedValueOnce({
         ok: true, status: 201, headers: { get: () => null },
         json: async () => ({ id: 1 }),
@@ -510,6 +547,11 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("leads.recordAction succeeds with valid agent", async () => {
+      // Person ownership lookup: personId 123 assigned to Steven (fubUserId=1)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ assignedUserId: 1 }),
+      });
       const result = await caller().leads.recordAction({
         personId: 123,
         agentName: "Steven",
@@ -570,6 +612,321 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
 
     it("bot.getPondPromotionHistory rejects without adminToken", async () => {
       await expect(caller().bot.getPondPromotionHistory({})).rejects.toThrow("Admin token required");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 10. RED-TEAM: TRUE PERSON OWNERSHIP VERIFICATION
+  //     Agent requesting a personId NOT assigned to them → UNAUTHORIZED
+  //     Agent requesting their own lead → works
+  //     Admin → works on anything
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("True person ownership verification (red-team)", () => {
+    // personId 999 is assigned to Jason (fubUserId=37)
+    // Tiffany (fubUserId=20) should be rejected
+    // Jason (fubUserId=37) should succeed
+    // Admin should bypass
+
+    function mockPersonLookup(assignedUserId: number | null) {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => ({ assignedUserId }),
+      });
+    }
+
+    function mockPersonNotFound() {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+        json: async () => ({}),
+      });
+    }
+
+    // ── leads.getNotes ──────────────────────────────────────────────────────
+
+    it("leads.getNotes: Tiffany requesting Jason's lead (personId 999) → UNAUTHORIZED", async () => {
+      // First fetch: person lookup → assigned to Jason (fubUserId=37)
+      mockPersonLookup(37);
+      await expect(
+        caller().leads.getNotes({ personId: 999, agent: "tiffany" })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.getNotes: Jason requesting his own lead (personId 999) → works", async () => {
+      // First fetch: person lookup → assigned to Jason (fubUserId=37)
+      mockPersonLookup(37);
+      // Second fetch: the actual notes API call
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ notes: [{ body: "test note" }] }),
+      });
+      const result = await caller().leads.getNotes({ personId: 999, agent: "jason" });
+      expect(result).toBeDefined();
+      expect(result.notes.length).toBeGreaterThanOrEqual(0);
+    });
+
+    it("leads.getNotes: admin bypasses ownership check", async () => {
+      // Admin doesn't trigger person lookup — goes straight to notes
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ notes: [{ body: "admin note" }] }),
+      });
+      const result = await caller().leads.getNotes({ personId: 999, adminToken: "test_admin_token" });
+      expect(result).toBeDefined();
+    });
+
+    // ── leads.getLastInbound ────────────────────────────────────────────────
+
+    it("leads.getLastInbound: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().leads.getLastInbound({ personId: 999, agent: "tiffany" })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.getLastInbound: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ textMessages: [] }),
+      });
+      const result = await caller().leads.getLastInbound({ personId: 999, agent: "jason" });
+      expect(result).toBeDefined();
+    });
+
+    // ── fub.getLatestInboundSms ─────────────────────────────────────────────
+
+    it("fub.getLatestInboundSms: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().fub.getLatestInboundSms({ personId: 999, agent: "laila" })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("fub.getLatestInboundSms: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ textMessages: [] }),
+      });
+      const result = await caller().fub.getLatestInboundSms({ personId: 999, agent: "jason" });
+      expect(result).toBeDefined();
+    });
+
+    // ── leads.logSentNote ───────────────────────────────────────────────────
+
+    it("leads.logSentNote: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().leads.logSentNote({
+          personId: 999, agentName: "Tiffany", messageBody: "hi", agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.logSentNote: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      // The logSentNote procedure makes a FUB POST to create a note
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ note: { id: 1 } }),
+      });
+      const result = await caller().leads.logSentNote({
+        personId: 999, agentName: "Jason", messageBody: "hi", agent: "jason",
+      });
+      expect(result).toBeDefined();
+    });
+
+    // ── leads.snoozeLead ────────────────────────────────────────────────────
+
+    it("leads.snoozeLead: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().leads.snoozeLead({
+          personId: 999, agentName: "Tiffany", snoozeUntil: "2026-08-01", agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.snoozeLead: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      // snoozeLead writes a FUB note
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ note: { id: 1 } }),
+      });
+      const result = await caller().leads.snoozeLead({
+        personId: 999, agentName: "Jason", snoozeUntil: "2026-08-01", agent: "jason",
+      });
+      expect(result).toBeDefined();
+    });
+
+    // ── leads.unsnoozeLead ──────────────────────────────────────────────────
+
+    it("leads.unsnoozeLead: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().leads.unsnoozeLead({ personId: 999, agentName: "Tiffany", agent: "tiffany" })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.unsnoozeLead: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      const result = await caller().leads.unsnoozeLead({ personId: 999, agentName: "Jason", agent: "jason" });
+      expect(result).toEqual({ success: true });
+    });
+
+    // ── leads.recordAction ──────────────────────────────────────────────────
+
+    it("leads.recordAction: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().leads.recordAction({
+          personId: 999, agentName: "Tiffany", actionType: "texted", agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("leads.recordAction: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      const result = await caller().leads.recordAction({
+        personId: 999, agentName: "Jason", actionType: "texted", agent: "jason",
+      });
+      expect(result).toEqual({ success: true });
+    });
+
+    // ── ai.draftSms (with personId) ─────────────────────────────────────────
+
+    it("ai.draftSms: wrong agent with personId → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().ai.draftSms({
+          leadName: "Test Lead", personId: 999, assignedAgent: "Tiffany", agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("ai.draftSms: correct agent with personId → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      // draftSms fetches SMS history from FUB
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ textMessages: [] }),
+      });
+      // draftSms calls Anthropic API
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ content: [{ type: "text", text: "Hey Test Lead! How's the search going?" }] }),
+      });
+      const result = await caller().ai.draftSms({
+        leadName: "Test Lead", personId: 999, assignedAgent: "Jason", agent: "jason",
+      });
+      expect(result).toHaveProperty("draft");
+    });
+
+    // ── ai.chat (with leadContext.id) ───────────────────────────────────────
+
+    it("ai.chat: wrong agent with leadContext.id → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().ai.chat({
+          messages: [{ role: "user", content: "hi" }],
+          leadContext: { id: 999, name: "Test Lead" },
+          agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("ai.chat: correct agent with leadContext.id → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      const result = await caller().ai.chat({
+        messages: [{ role: "user", content: "hi" }],
+        leadContext: { id: 999, name: "Test Lead", assigned_agent: "Jason" },
+        agent: "jason",
+      });
+      expect(result).toHaveProperty("content");
+    });
+
+    // ── compliance.markUnsubscribe ──────────────────────────────────────────
+
+    it("compliance.markUnsubscribe: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().compliance.markUnsubscribe({
+          personId: 999, reason: "agent_marked", agent: "tiffany",
+        })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("compliance.markUnsubscribe: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      const result = await caller().compliance.markUnsubscribe({
+        personId: 999, reason: "agent_marked", agent: "jason",
+      });
+      expect(result).toEqual({ success: true });
+    });
+
+    it("compliance.markUnsubscribe: admin bypasses ownership", async () => {
+      // Admin doesn't trigger person lookup
+      const result = await caller().compliance.markUnsubscribe({
+        personId: 999, reason: "agent_marked", adminToken: "test_admin_token",
+      });
+      expect(result).toEqual({ success: true });
+    });
+
+    // ── compliance.isLeadSuppressed ─────────────────────────────────────────
+
+    it("compliance.isLeadSuppressed: wrong agent → UNAUTHORIZED", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      await expect(
+        caller().compliance.isLeadSuppressed({ personId: 999, agent: "tiffany" })
+      ).rejects.toThrow("Lead is not assigned to your queue");
+    });
+
+    it("compliance.isLeadSuppressed: correct agent → works", async () => {
+      mockPersonLookup(37); // assigned to Jason
+      const result = await caller().compliance.isLeadSuppressed({ personId: 999, agent: "jason" });
+      expect(result).toEqual({ suppressed: false });
+    });
+
+    // ── Person not found in FUB → rejected ──────────────────────────────────
+
+    it("leads.getNotes: person not found in FUB → UNAUTHORIZED", async () => {
+      mockPersonNotFound();
+      await expect(
+        caller().leads.getNotes({ personId: 99999, agent: "jason" })
+      ).rejects.toThrow("Lead not found or not assigned to any agent");
+    });
+
+    // ── Cache behavior: second call uses cached assignedUserId ───────────────
+
+    it("ownership lookup is cached (second call does NOT re-fetch from FUB)", async () => {
+      // Use a unique personId to avoid cache from other tests
+      const uniquePersonId = 77777;
+      // First call: person lookup
+      mockPersonLookup(37); // assigned to Jason
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ textMessages: [] }),
+      });
+      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason" });
+
+      const fetchCallsAfterFirst = mockFetch.mock.calls.length;
+
+      // Second call: should use cache (no new person lookup fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: true, status: 200, headers: { get: () => null },
+        json: async () => ({ textMessages: [] }),
+      });
+      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason" });
+
+      // Only 1 new fetch (the textMessages call), NOT 2 (no person lookup)
+      const fetchCallsAfterSecond = mockFetch.mock.calls.length;
+      expect(fetchCallsAfterSecond - fetchCallsAfterFirst).toBe(1);
     });
   });
 });

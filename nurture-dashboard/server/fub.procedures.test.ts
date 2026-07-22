@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { clearPersonOwnerCache } from "./queueAccess";
 
 // Mock the LLM helper
 vi.mock("./_core/llm", () => ({
@@ -60,9 +61,16 @@ const mockUser = {
 describe("leads.logSentNote", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    clearPersonOwnerCache();
   });
 
   it("posts a note to FUB with the correct payload", async () => {
+    // Person ownership lookup: personId 42 assigned to Steven (fubUserId=1)
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 1 }),
+    });
+    // Actual FUB note POST
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -85,9 +93,9 @@ describe("leads.logSentNote", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(mockFetch).toHaveBeenCalledTimes(2); // ownership lookup + note POST
 
-    const [url, options] = mockFetch.mock.calls[0];
+    const [url, options] = mockFetch.mock.calls[1]; // second call is the note POST
     expect(url).toContain("/notes");
     const body = JSON.parse(options.body);
     expect(body.personId).toBe(42);
@@ -100,6 +108,12 @@ describe("leads.logSentNote", () => {
     // logSentNote is now publicProcedure so agents can log notes when tapping
     // tap-to-text links from their email digest without needing to be logged in.
     // Spam protection: personId must be a positive integer; FUB rejects invalid IDs.
+    // Person ownership lookup: personId 99 assigned to Irma (fubUserId=33)
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 33 }),
+    });
+    // Actual FUB note POST
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
@@ -119,7 +133,7 @@ describe("leads.logSentNote", () => {
       agent: "Irma",
     });
     expect(result).toEqual({ success: true });
-    // Confirm FUB was called
+    // Confirm FUB was called (second fetch is the note POST)
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/notes"),
       expect.objectContaining({ method: "POST" })
@@ -127,6 +141,12 @@ describe("leads.logSentNote", () => {
   });
 
   it("logs note without messageBody when not provided", async () => {
+    // Person ownership lookup: personId 42 assigned to Laila (fubUserId=35)
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 35 }),
+    });
+    // Actual FUB note POST
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -148,7 +168,7 @@ describe("leads.logSentNote", () => {
     });
 
     expect(result.success).toBe(true);
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body); // second call is note POST
     expect(body.body).toContain("Laila");
     expect(body.body).not.toContain("Message:");
   });
@@ -156,6 +176,12 @@ describe("leads.logSentNote", () => {
   it("canonicalizes a lowercase agent name to its roster display form", async () => {
     // "Maria" is Laila's LAST name, not an alias — she resolves to "Laila"
     // natively. Passing her real first name in any case normalizes to "Laila".
+    // Person ownership lookup: personId 43 assigned to Laila (fubUserId=35)
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 35 }),
+    });
+    // Actual FUB note POST
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -178,7 +204,7 @@ describe("leads.logSentNote", () => {
 
     expect(result.success).toBe(true);
     // The FUB note body uses the canonical "Laila".
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body); // second call is note POST
     expect(body.body).toContain("Laila");
   });
 });
@@ -237,9 +263,16 @@ describe("ai.draftReply", () => {
 describe("leads.logSentNote email channel", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    clearPersonOwnerCache();
   });
 
   it("logs an email note with the correct subject and body", async () => {
+    // Person ownership lookup: personId 42 assigned to Peter (fubUserId=2)
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 2 }),
+    });
+    // Actual FUB note POST
     mockFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
@@ -263,7 +296,7 @@ describe("leads.logSentNote email channel", () => {
     });
 
     expect(result.success).toBe(true);
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const body = JSON.parse(mockFetch.mock.calls[1][1].body); // second call is note POST
     expect(body.subject).toContain("Nurture Email Sent");
     expect(body.subject).toContain("Peter");
     expect(body.body).toContain("nurture email");

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import { clearPersonOwnerCache } from "./queueAccess";
+
+// Mock fetch for FUB person ownership lookups
+const mockFetch = vi.fn();
+vi.stubGlobal("fetch", mockFetch);
 
 // Mock ENV
 vi.mock("./_core/env", () => ({
@@ -78,6 +83,17 @@ function createPublicContext(): TrpcContext {
 }
 
 describe("ai.chat", () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    clearPersonOwnerCache();
+  });
+
+  function mockPersonOwnership(assignedUserId: number) {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId }),
+    });
+  }
   it("returns an assistant response for a basic user message", async () => {
     const ctx = createPublicContext();
     const caller = appRouter.createCaller(ctx);
@@ -93,6 +109,7 @@ describe("ai.chat", () => {
   });
 
   it("accepts lead context and still returns a string response", async () => {
+    mockPersonOwnership(1); // Steven's fubUserId
     const ctx = createPublicContext();
     const caller = appRouter.createCaller(ctx);
 
@@ -133,6 +150,7 @@ describe("ai.chat", () => {
   });
 
   it("includes notes and last_inbound_text in system prompt when provided", async () => {
+    mockPersonOwnership(31); // Stefanie's fubUserId
     const { invokeLLM } = await import("./_core/llm");
     const mockInvokeLLM = vi.mocked(invokeLLM);
     mockInvokeLLM.mockClear();
@@ -186,6 +204,7 @@ describe("ai.chat", () => {
   });
 
   it("injects agent memories into system prompt when memories exist", async () => {
+    mockPersonOwnership(1); // Steven's fubUserId
     const { invokeLLM } = await import("./_core/llm");
     const mockInvokeLLM = vi.mocked(invokeLLM);
     mockInvokeLLM.mockClear();
@@ -224,6 +243,7 @@ describe("ai.chat", () => {
   });
 
   it("injects winning SMS patterns into system prompt when feedback exists", async () => {
+    mockPersonOwnership(1); // Steven's fubUserId
     const { invokeLLM } = await import("./_core/llm");
     const mockInvokeLLM = vi.mocked(invokeLLM);
     mockInvokeLLM.mockClear();

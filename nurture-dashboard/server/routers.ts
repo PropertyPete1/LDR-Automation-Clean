@@ -21,7 +21,7 @@ import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
 import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
-import { requireAdmin, requireAdminOrAgent, accessFields } from "./queueAccess";
+import { requireAdmin, requireAdminOrAgent, requirePersonOwnership, accessFields } from "./queueAccess";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -195,7 +195,7 @@ export const appRouter = router({
     getLatestInboundSms: publicProcedure
       .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const res = await fubRequest("GET", `/textMessages?personId=${input.personId}&limit=20`);
         const msgs: any[] = res.textMessages || [];
         const inbound = msgs.find((m: any) => m.isIncoming === true || m.direction === "inbound");
@@ -308,7 +308,7 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const { personId, messageBody, channel } = input;
 
         // Dynamic: normalize agentName via agentRegistry (Golden Rule — no hardcoded names)
@@ -388,7 +388,7 @@ export const appRouter = router({
     getLastInbound: publicProcedure
       .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const data = (await fubRequest("GET", `/textMessages?personId=${input.personId}&limit=20`)) as {
           textMessages?: Array<{
             message?: string;
@@ -414,7 +414,7 @@ export const appRouter = router({
     getNotes: publicProcedure
       .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const data = (await fubRequest("GET", `/notes?personId=${input.personId}&limit=5`)) as {
           notes?: Array<{ body?: string; subject?: string; createdAt?: string }>;
         };
@@ -439,7 +439,7 @@ export const appRouter = router({
         ...accessFields,
       }))
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const { personId, agentName, snoozeUntil, reason, leadName, daysStale } = input;
 
         // Write FUB note for audit trail
@@ -477,7 +477,7 @@ export const appRouter = router({
         ...accessFields,
       }))
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         await unsnoozeLeadDb(input.personId, input.agentName);
         clearQueueCache();
         return { success: true };
@@ -503,7 +503,7 @@ export const appRouter = router({
         ...accessFields,
       }))
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         await recordQueueActionDb(input.personId, input.agentName, input.actionType, input.daysStale, input.isHotLead);
         return { success: true };
       }),
@@ -545,7 +545,12 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        // If a lead is selected, verify ownership via personId; otherwise just require agent/admin
+        if (input.leadContext?.id) {
+          await requirePersonOwnership(input, input.leadContext.id);
+        } else {
+          await requireAdminOrAgent(input);
+        }
         const { messages, leadContext } = input;
         const agentName = leadContext?.assigned_agent || "";
 
@@ -604,7 +609,12 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        // If personId is provided, verify ownership; otherwise just require agent/admin context
+        if (input.personId) {
+          await requirePersonOwnership(input, input.personId);
+        } else {
+          await requireAdminOrAgent(input);
+        }
         const { leadName, leadCity, daysStale, assignedAgent, notes, prefillMessage, personId, forceRefresh } = input;
 
         // ── Power Queue 2.0: Check cache first (per lead per day) ──────────────
@@ -724,7 +734,12 @@ Reference something SPECIFIC from the notes. Make it feel like the agent remembe
         })
       )
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        // If personId is provided, verify ownership; otherwise just require agent/admin context
+        if (input.personId) {
+          await requirePersonOwnership(input, input.personId);
+        } else {
+          await requireAdminOrAgent(input);
+        }
         const { leadName, leadCity, assignedAgent, inboundMessage, notes, personId } = input;
 
         // Inject memory context if we have a personId
@@ -1200,7 +1215,7 @@ Write a natural reply that addresses their message and keeps the conversation go
         ...accessFields,
       }))
       .mutation(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const result = await suppressLead({
           personId: input.personId,
           reason: input.reason,
@@ -1217,7 +1232,7 @@ Write a natural reply that addresses their message and keeps the conversation go
     isLeadSuppressed: publicProcedure
       .input(z.object({ personId: z.number(), ...accessFields }))
       .query(async ({ input }) => {
-        await requireAdminOrAgent(input);
+        await requirePersonOwnership(input, input.personId);
         const suppressed = await isLeadSuppressed(input.personId);
         return { suppressed };
       }),
