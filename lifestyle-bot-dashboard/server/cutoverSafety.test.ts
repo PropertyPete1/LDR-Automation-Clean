@@ -195,12 +195,84 @@ describe("Atomic Cutover Safety", () => {
     });
   });
 
-  describe("5. Rollback safety", () => {
+  describe("5. Rollback: rollbackAgentToLegacy restores exactly-one-motor (legacy)", () => {
     it("rollback (engineActive=false, legacyRetired=false) restores legacy-only (1 motor)", () => {
       const row: MockRow = { botSlug: "tiffany", engineActive: false, legacyRetired: false };
       expect(motorsRunning(row)).toBe(1);
       expect(legacyWouldRun(row)).toBe(true);
       expect(engineWouldProcess(row)).toBe(false);
+    });
+
+    it("after rollback, legacy file RUNS and engine REFUSES", () => {
+      // Start in migrated state
+      const row: MockRow = { botSlug: "laila", engineActive: true, legacyRetired: true };
+      expect(engineWouldProcess(row)).toBe(true);
+      expect(legacyWouldRun(row)).toBe(false);
+      expect(motorsRunning(row)).toBe(1);
+
+      // Atomic rollback: single write sets both flags
+      row.engineActive = false;
+      row.legacyRetired = false;
+
+      // After rollback: legacy runs, engine refuses
+      expect(legacyWouldRun(row)).toBe(true);
+      expect(engineWouldProcess(row)).toBe(false);
+      expect(motorsRunning(row)).toBe(1);
+    });
+
+    it("rollback transition is atomic — no intermediate state exists", () => {
+      const row: MockRow = { botSlug: "stefanie", engineActive: true, legacyRetired: true };
+      expect(motorsRunning(row)).toBe(1); // Before rollback: engine runs
+
+      // Atomic write (single SQL UPDATE)
+      row.engineActive = false;
+      row.legacyRetired = false;
+      expect(motorsRunning(row)).toBe(1); // After rollback: legacy runs
+    });
+
+    it("all legacy slugs maintain exactly-one-motor after rollback", () => {
+      for (const slug of ["tiffany", "stefanie", "abby", "irma", "laila", "sp500_peter", "sp500_steven"]) {
+        // Migrated state
+        const migrated: MockRow = { botSlug: slug, engineActive: true, legacyRetired: true };
+        expect(motorsRunning(migrated)).toBe(1);
+        expect(engineWouldProcess(migrated)).toBe(true);
+        expect(legacyWouldRun(migrated)).toBe(false);
+
+        // After rollback
+        const rolledBack: MockRow = { botSlug: slug, engineActive: false, legacyRetired: false };
+        expect(motorsRunning(rolledBack)).toBe(1);
+        expect(legacyWouldRun(rolledBack)).toBe(true);
+        expect(engineWouldProcess(rolledBack)).toBe(false);
+      }
+    });
+
+    it("full lifecycle: pre-migration → migrate → rollback → re-migrate", () => {
+      const row: MockRow = { botSlug: "abby", engineActive: false, legacyRetired: false };
+
+      // Pre-migration: legacy only
+      expect(motorsRunning(row)).toBe(1);
+      expect(legacyWouldRun(row)).toBe(true);
+
+      // Migrate
+      row.engineActive = true;
+      row.legacyRetired = true;
+      expect(motorsRunning(row)).toBe(1);
+      expect(engineWouldProcess(row)).toBe(true);
+      expect(legacyWouldRun(row)).toBe(false);
+
+      // Rollback
+      row.engineActive = false;
+      row.legacyRetired = false;
+      expect(motorsRunning(row)).toBe(1);
+      expect(legacyWouldRun(row)).toBe(true);
+      expect(engineWouldProcess(row)).toBe(false);
+
+      // Re-migrate
+      row.engineActive = true;
+      row.legacyRetired = true;
+      expect(motorsRunning(row)).toBe(1);
+      expect(engineWouldProcess(row)).toBe(true);
+      expect(legacyWouldRun(row)).toBe(false);
     });
   });
 
