@@ -1,0 +1,1 @@
+ALTER TABLE `agent_bots` ADD `legacyRetired` boolean DEFAULT false NOT NULL;
