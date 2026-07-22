@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import type { AgentBot } from "../drizzle/schema";
 import { sendEmail, PETER_EMAIL, STEVEN_EMAIL } from "./botHelpers";
 import { invokeLLM } from "./_core/llm";
+import { LEGACY_BOT_SLUGS } from "./botEngine";
 
 const OLD_DASHBOARD_BASE = "https://fub-nurture-phfprjui.manus.space";
 const NEW_DASHBOARD_BASE = "https://lifestyledash-wpnl8v84.manus.space";
@@ -102,6 +103,12 @@ export async function sendEngineIntroEmail(botSlug: string): Promise<boolean> {
 
   const [agent] = await db.select().from(agentBots).where(eq(agentBots.botSlug, botSlug)).limit(1);
   if (!agent) return false;
+  // Legacy gate (mirrors the engine's isBlockedLegacy): never send an intro for
+  // a legacy agent that has not been retired yet. Keeps the "exactly one motor"
+  // invariant consistent across ALL engine entry paths — intro included — so a
+  // partially-flipped row (engineActive without legacyRetired) can't fire a
+  // premature "I'm LIVE" email while the legacy file is still the active motor.
+  if (LEGACY_BOT_SLUGS.has(agent.botSlug) && !agent.legacyRetired) return false;
   if (agent.introSentAt) return false; // Already sent
 
   // Generate copy via LLM
