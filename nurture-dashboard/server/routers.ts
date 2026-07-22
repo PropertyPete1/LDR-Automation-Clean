@@ -22,6 +22,7 @@ import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
 import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
 import { requireAdmin, requireAdminOrAgent, requirePersonOwnership, accessFields } from "./queueAccess";
+import { stripDraftReasoning } from "./draftParser";
 
 const execAsync = promisify(exec);
 const AUDIT_RESULT_PATH = "/home/ubuntu/fub_automation/audit_result.json";
@@ -653,12 +654,20 @@ export const appRouter = router({
 
         const hasNotes = notes && notes.trim().length > 0;
         // ── Power Queue 2.0: Upgraded prompt for Claude claude-sonnet-4-6 ───────────────────
-        const systemPrompt = `You are writing a single SMS text message for a Texas real estate agent to send to a lead. Rules:
-- Write ONLY the SMS text itself — no quotes, no labels, no explanation, no markdown
+        const systemPrompt = `You are writing a single SMS text message for a Texas real estate agent to send to a lead.
+
+CRITICAL OUTPUT RULE: Your ENTIRE response must be ONLY the SMS message text. Nothing else.
+- Do NOT include any reasoning, thinking, commentary, or explanation
+- Do NOT start with phrases like "Here's", "I'll craft", "The notes", "This message", "Based on", "Since", "Given that"
+- Do NOT wrap the message in quotes
+- Do NOT add anything before or after the SMS text
+- If you need to reason about what to write, do so silently — your output is the SMS itself
+
+SMS Rules:
 - Maximum 2 sentences. Under 160 characters total.
 - Sound like a real human agent — casual, warm, specific. Not a bot.
 - Use the lead's first name naturally
-- If notes are provided, you MUST reference something specific from them (a city they mentioned, a price range, a question they asked, a property type). Generic messages are unacceptable.
+- If notes are provided, reference something specific from them (a city, price range, question, property type). If notes are thin or only contain follow-up records, ask a simple friendly question about their home search.
 - Never use more than 1 emoji. Prefer zero.
 - Never mention automation, AI, or systems
 - NEVER repeat or closely paraphrase a message that was already sent (see history below)${memoryContext}${smsHistoryContext}`;
@@ -709,8 +718,8 @@ Reference something SPECIFIC from the notes. Make it feel like the agent remembe
           throw new Error("Unexpected Anthropic response format");
         }
 
-        // Strip any surrounding quotes the model might add
-        const cleaned = content.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+        // ── Belt-and-suspenders: strip reasoning/meta-commentary from response ──
+        const cleaned = stripDraftReasoning(content);
 
         // ── Power Queue 2.0: Cache the draft for today ────────────────────────
         if (personId && assignedAgent) {
@@ -781,7 +790,7 @@ Write a natural reply that addresses their message and keeps the conversation go
           throw new Error("Unexpected LLM response format");
         }
 
-        const cleaned = content.trim().replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+        const cleaned = stripDraftReasoning(content);
         return { draft: cleaned };
       }),
 
