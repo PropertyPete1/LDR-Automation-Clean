@@ -2514,6 +2514,21 @@ class RuleEngine:
         # ── Send the email (with Peter Allen signature block) ──
         seller_plaintext = build_seller_email_plaintext(email_body, self.rules)
         seller_html = build_seller_email_html(email_body, self.rules)
+        # BCC every other live (non-bounced) address on the FUB record so all of
+        # the lead's inboxes receive the same single message (per Peter), plus
+        # Peter's standing BCC copy. One To: address, one send, no duplicates.
+        _bounced_lower = {b.lower() for b in bounced_addresses}
+        _seen_bcc = {to_email.lower(), self.rules.owner_email.lower()}
+        extra_bcc: list[str] = []
+        for addr in all_emails:
+            addr_l = addr.lower()
+            if addr_l in _seen_bcc or addr_l in _bounced_lower:
+                continue
+            _seen_bcc.add(addr_l)
+            extra_bcc.append(addr)
+        bcc_list = extra_bcc + (
+            [self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else []
+        )
         self.email.send(
             to_email,
             subject,
@@ -2521,7 +2536,7 @@ class RuleEngine:
             from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
             html_body=seller_html,
-            bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
+            bcc=bcc_list,
         )
 
         # ── Log FUB note ──
@@ -2530,7 +2545,8 @@ class RuleEngine:
                 f"\U0001f3e0 Seller Nurture email #{emails_sent + 1} sent.\n\n"
                 f"Subject: \"{subject}\"\n"
                 f"Sent to: {to_email}\n"
-                f"Track: Seller Nurture (5-email sequence + monthly)"
+                + (f"BCC'd (lead's other addresses): {', '.join(extra_bcc)}\n" if extra_bcc else "")
+                + f"Track: Seller Nurture (5-email sequence + monthly)"
             )
             self.fub.add_note(person_id, "Automation: Seller Nurture Email Sent", fub_note)
         except Exception as note_exc:  # noqa: BLE001
