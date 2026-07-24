@@ -209,7 +209,7 @@ describe("Skip-Gate — 24h Agent Note Check", () => {
     expect(result.reason).toContain("24 hours");
   });
 
-  it("does NOT skip a lead whose last note is 48 hours old", async () => {
+  it("does NOT skip a lead whose last note is 48 hours old", { timeout: 15000 }, async () => {
     // This test will actually call Anthropic (or fail gracefully if no key)
     // The important thing is the 24h check doesn't fire
     const oldNoteTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // 48 hours ago
