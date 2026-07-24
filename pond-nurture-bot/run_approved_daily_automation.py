@@ -163,6 +163,7 @@ def main() -> int:
     engine.scan_pond_responses_for_intent()
     engine.scan_stale_agent_no_note_reassignment()
     engine.scan_stale_leads()
+    engine.scan_seller_nurture()  # Seller nurture track: 5-email sequence for "Seller Lead" tagged pond leads
     engine.scan_agent_followup()
     engine.poll_new_leads()
     engine.process_new_lead_timers()

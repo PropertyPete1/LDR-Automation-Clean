@@ -39,6 +39,18 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from anthropic import Anthropic
 from pydantic import BaseModel
 
+from fub_automation.seller_nurture import (
+    SELLER_LEAD_TAG,
+    SELLER_MONTHLY_CADENCE_DAYS,
+    SELLER_NURTURE_AUDIT_ACTION,
+    SELLER_REPLIED_TAG,
+    SELLER_SEQUENCE_LENGTH,
+    SELLER_SEQUENCE_SCHEDULE,
+    SELLER_SUPPRESS_TAGS,
+    extract_property_address_from_notes,
+    generate_seller_email,
+)
+
 LOGGER = logging.getLogger("fub_automation")
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -347,6 +359,16 @@ class AuditDB:
                     detected_from_note_date TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS seller_nurture_drip (
+                    person_id INTEGER PRIMARY KEY,
+                    enrolled_at TEXT NOT NULL,
+                    last_sent_at TEXT,
+                    emails_sent INTEGER NOT NULL DEFAULT 0,
+                    property_address TEXT,
+                    neighborhood TEXT,
+                    subject TEXT,
+                    message_hash TEXT
+                );
                 """
             )
 
@@ -465,6 +487,53 @@ class AuditDB:
                 """,
                 (person_id, now_iso(), now_iso(), subject, digest),
             )
+
+    # ── Seller Nurture Drip DB Helpers ──────────────────────────────────────────
+    def enroll_seller_nurture(self, person_id: int, property_address: str = "", neighborhood: str = "") -> None:
+        """Enroll a lead in the seller nurture drip. INSERT OR IGNORE so re-detection is safe."""
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT OR IGNORE INTO seller_nurture_drip(person_id, enrolled_at, property_address, neighborhood)
+                VALUES (?, ?, ?, ?)
+                """,
+                (person_id, now_iso(), property_address[:500] if property_address else "", neighborhood[:200] if neighborhood else ""),
+            )
+
+    def get_seller_nurture_enrollment(self, person_id: int) -> Optional[dict]:
+        """Return the seller drip row for person_id, or None if not enrolled."""
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            row = con.execute(
+                "SELECT * FROM seller_nurture_drip WHERE person_id=?", (person_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_seller_nurture_drip(self, person_id: int, subject: str, message: str, property_address: str = "", neighborhood: str = "") -> None:
+        """Update seller drip record after each email send: bump emails_sent, update last_sent_at."""
+        digest = hashlib.sha256(message.encode("utf-8")).hexdigest()
+        with self.connect() as con:
+            con.execute(
+                """
+                INSERT INTO seller_nurture_drip(person_id, enrolled_at, last_sent_at, emails_sent, property_address, neighborhood, subject, message_hash)
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(person_id) DO UPDATE SET
+                    last_sent_at=excluded.last_sent_at,
+                    emails_sent=emails_sent + 1,
+                    property_address=COALESCE(NULLIF(excluded.property_address, ''), property_address),
+                    neighborhood=COALESCE(NULLIF(excluded.neighborhood, ''), neighborhood),
+                    subject=excluded.subject,
+                    message_hash=excluded.message_hash
+                """,
+                (person_id, now_iso(), now_iso(), property_address, neighborhood, subject, digest),
+            )
+
+    def get_all_seller_nurture_enrollments(self) -> List[dict]:
+        """Return all seller nurture enrollments for stats/digest purposes."""
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute("SELECT * FROM seller_nurture_drip").fetchall()
+        return [dict(row) for row in rows]
 
     def add_new_lead_timer(self, person_id: int, assigned_user_id: Optional[int], created_at: Optional[str] = None) -> None:
         created_time = created_at if created_at else now_iso()
@@ -2192,6 +2261,220 @@ class RuleEngine:
         )
         return _send_status
 
+    # ══════════════════════════════════════════════════════════════════════════════
+    # SELLER NURTURE TRACK
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    def scan_seller_nurture(self) -> None:
+        """Seller Nurture Track: Send personalized AI emails to pond leads tagged 'Seller Lead'.
+
+        5-email sequence (days 0/4/10/18/30) then monthly market updates.
+        Email only — no texting. Uses same sending conventions as all other bots.
+        """
+        LOGGER.info("Seller nurture: scanning for leads tagged '%s' in pond...", SELLER_LEAD_TAG)
+
+        # Fetch all leads in the configured ponds
+        pond_ids = [p["id"] if isinstance(p, dict) else p for p in self.rules.pond_ids]
+        all_seller_candidates = []
+        for pond_id in pond_ids:
+            try:
+                leads = self.fub.get_people(tags=SELLER_LEAD_TAG, assignedGroupIds=pond_id, fields="allFields")
+                all_seller_candidates.extend(leads)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Seller nurture: failed to fetch pond %s: %s", pond_id, exc)
+
+        # Deduplicate by person_id
+        seen_ids = set()
+        candidates = []
+        for p in all_seller_candidates:
+            pid = int(p.get("id", 0))
+            if pid and pid not in seen_ids:
+                seen_ids.add(pid)
+                candidates.append(p)
+
+        LOGGER.info("Seller nurture: %s candidate(s) found with tag '%s' in pond.", len(candidates), SELLER_LEAD_TAG)
+
+        sent_count = 0
+        cap = 25  # Daily cap for seller nurture emails
+
+        for person in candidates:
+            if sent_count >= cap:
+                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "daily_cap_reached", None, {"cap": cap})
+                LOGGER.info("Seller nurture: daily cap of %s reached.", cap)
+                break
+            try:
+                status = self.process_seller_nurture_candidate(person)
+                if status in ("sent", "dry_run_sent"):
+                    sent_count += 1
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Seller nurture failed for person %s", person.get("id"))
+                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "error", person.get("id"), {"error": str(exc)})
+
+        LOGGER.info("Seller nurture: completed. Sent=%s", sent_count)
+
+    def process_seller_nurture_candidate(self, person: dict) -> str:
+        """Process a single seller lead for the nurture drip.
+
+        Returns: 'sent', 'dry_run_sent', 'skipped', 'suppressed', or 'error'
+        """
+        person_id = int(person["id"])
+
+        # ── Suppression checks ──
+        # Seller track suppression: all standard tags EXCEPT 'dnc' (email-only track, DNC only blocks non-email)
+        all_suppress = SELLER_SUPPRESS_TAGS.union({t.lower() for t in self.rules.phase2_manual_suppression_tags})
+        if self.has_any_tag(person, all_suppress):
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "suppression tag"})
+            return "suppressed"
+
+        # Respect FUB built-in unsubscribe fields
+        if (
+            person.get("unsubscribed") or person.get("emailOptOut")
+            or person.get("unsubscribedEmail") or person.get("isUnsubscribed")
+        ):
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "FUB unsubscribed flag"})
+            return "suppressed"
+
+        # Check for unsubscribed emails in the emails list
+        emails_list = person.get("emails") or []
+        for email_dict in emails_list:
+            if isinstance(email_dict, dict):
+                if email_dict.get("unsubscribed") or email_dict.get("isUnsubscribed") or email_dict.get("optOut"):
+                    self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "email unsubscribed"})
+                    return "suppressed"
+
+        # SOI silence check
+        soi_reason = self._is_soi_silenced(person)
+        if soi_reason:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": f"SOI silenced: {soi_reason}"})
+            return "suppressed"
+
+        # Must have an email address
+        if not emails_list:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "no email"})
+            return "suppressed"
+
+        to_email = emails_list[0].get("value") or emails_list[0].get("email") if emails_list else None
+        if not to_email:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "no valid email address"})
+            return "suppressed"
+
+        # ── Enrollment & cadence check ──
+        enrollment = self.db.get_seller_nurture_enrollment(person_id)
+        if enrollment:
+            emails_sent = int(enrollment.get("emails_sent") or 0)
+            enrolled_at_str = enrollment.get("enrolled_at")
+            last_sent_raw = enrollment.get("last_sent_at")
+        else:
+            emails_sent = 0
+            enrolled_at_str = None
+            last_sent_raw = None
+
+        # Determine which email to send next
+        if emails_sent < SELLER_SEQUENCE_LENGTH:
+            # Still in the 5-email sequence
+            if enrolled_at_str:
+                enrolled_dt = parse_fub_datetime(enrolled_at_str)
+                if enrolled_dt:
+                    days_since_enrollment = (dt.datetime.now(UTC) - enrolled_dt).days
+                    required_days = SELLER_SEQUENCE_SCHEDULE.get(emails_sent, 999)
+                    if days_since_enrollment < required_days:
+                        self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {
+                            "reason": f"cadence: day {days_since_enrollment} < required day {required_days} for email #{emails_sent + 1}"
+                        })
+                        return "skipped"
+            # First email (not yet enrolled) — enroll now
+            if not enrollment:
+                notes = self.safe_get_notes(person_id)
+                prop_addr, neighborhood = extract_property_address_from_notes(notes)
+                self.db.enroll_seller_nurture(person_id, prop_addr, neighborhood)
+                enrollment = self.db.get_seller_nurture_enrollment(person_id)
+        else:
+            # Post-sequence: monthly cadence
+            if last_sent_raw:
+                last_sent_dt = parse_fub_datetime(last_sent_raw)
+                if last_sent_dt and dt.datetime.now(UTC) - last_sent_dt < dt.timedelta(days=SELLER_MONTHLY_CADENCE_DAYS):
+                    days_since = (dt.datetime.now(UTC) - last_sent_dt).days
+                    self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {
+                        "reason": f"monthly cadence: {days_since}d < {SELLER_MONTHLY_CADENCE_DAYS}d"
+                    })
+                    return "skipped"
+
+        # ── Fetch notes for AI context ──
+        notes = self.safe_get_notes(person_id)
+        notes_context_parts: List[str] = []
+        for idx, note in enumerate(notes[:10], 1):
+            raw = str(note.get("body") or note.get("text") or note.get("note") or "")
+            cleaned = re.sub(r"<[^>]+>", " ", raw)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            if cleaned:
+                notes_context_parts.append(f"{idx}. {cleaned[:400]}")
+        notes_context = "\n".join(notes_context_parts) if notes_context_parts else ""
+
+        # Get property address from enrollment or extract fresh
+        prop_addr = (enrollment or {}).get("property_address") or ""
+        neighborhood = (enrollment or {}).get("neighborhood") or ""
+        if not prop_addr and not neighborhood:
+            prop_addr, neighborhood = extract_property_address_from_notes(notes)
+
+        # ── LLM skip check (same as buyer track) ──
+        should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
+        if should_skip:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {"reason": f"LLM skip: {skip_reason}"})
+            return "skipped"
+
+        # ── Generate the AI email ──
+        generated = generate_seller_email(
+            llm_call_fn=self.content._llm_call,
+            person=person,
+            email_number=emails_sent,
+            property_address=prop_addr,
+            neighborhood=neighborhood,
+            notes_context=notes_context,
+            rules=self.rules,
+        )
+        subject = generated.get("subject", "Your home's value \U0001f3e1")
+        email_body = generated.get("email_body", "")
+        if not email_body:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "error", person_id, {"reason": "empty LLM response"})
+            return "error"
+
+        # ── Send the email ──
+        self.email.send(
+            to_email,
+            subject,
+            append_email_footer(email_body, self.rules),
+            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
+            reply_to=self.rules.owner_email,
+        )
+
+        # ── Log FUB note ──
+        try:
+            fub_note = (
+                f"\U0001f3e0 Seller Nurture email #{emails_sent + 1} sent.\n\n"
+                f"Subject: \"{subject}\"\n"
+                f"Sent to: {to_email}\n"
+                f"Track: Seller Nurture (5-email sequence + monthly)"
+            )
+            self.fub.add_note(person_id, "Automation: Seller Nurture Email Sent", fub_note)
+        except Exception as note_exc:  # noqa: BLE001
+            LOGGER.warning("Seller nurture: failed to log FUB note for person %s: %s", person_id, note_exc)
+
+        # ── Update drip log ──
+        self.db.upsert_seller_nurture_drip(person_id, subject, email_body, prop_addr, neighborhood)
+        _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.log(SELLER_NURTURE_AUDIT_ACTION, _send_status, person_id, {
+            "to": to_email,
+            "subject": subject,
+            "email_number": emails_sent + 1,
+            "property_address": prop_addr,
+            "neighborhood": neighborhood,
+        })
+        LOGGER.info(
+            "Seller nurture: sent email #%s to person %s (%s)",
+            emails_sent + 1, person_id, to_email
+        )
+        return _send_status
+
     def run_daily_scans(self) -> None:
         # Safeguard: Check if daily scans have already completed successfully today in the local timezone
         try:
@@ -2213,6 +2496,7 @@ class RuleEngine:
         self.scan_all_leads_for_disqualification()  # Reply Intent Handler
         self.scan_stale_agent_no_note_reassignment()
         self.scan_stale_leads()
+        self.scan_seller_nurture()  # Seller nurture track (tag: "Seller Lead")
         self.scan_agent_followup()
         self.scan_email_address_updates()
         self.send_phase2_daily_summary()
@@ -4875,7 +5159,7 @@ class RuleEngine:
         since = dt.datetime.now(UTC) - dt.timedelta(days=7)
         # Get all leads that received any bot email in the last 7 days
         email_actions = ["pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
-                         "long_term_nurture_drip", "instant_welcome_email"]
+                         "long_term_nurture_drip", "instant_welcome_email", "seller_nurture"]
         recent_sends = self.db.recent_audit_rows(email_actions, since)
         # Filter to only real sends — exclude dry_run_sent (no email was actually delivered)
         sent_rows = [r for r in recent_sends if r.get("status") in ("sent", "email_sent", "completed")]
@@ -4952,7 +5236,12 @@ class RuleEngine:
                     reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
                     LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
                     # 1. Tag the lead
-                    self.fub.update_person(person_id, {"tags": ["Replied - Paused"]}, merge_tags=True)
+                    tags_to_add = ["Replied - Paused"]
+                    # If this is a seller lead, also add "Seller-Replied" tag for Monday digest
+                    if self.has_any_tag(person, [SELLER_LEAD_TAG]):
+                        tags_to_add.append(SELLER_REPLIED_TAG)
+                        LOGGER.info("Reply detected for SELLER lead %s — adding '%s' tag", person_id, SELLER_REPLIED_TAG)
+                    self.fub.update_person(person_id, {"tags": tags_to_add}, merge_tags=True)
                     # 2. Add FUB note
                     note_title = "\U0001f525 Automation: Lead Replied — All Automation Paused"
                     note_body = (

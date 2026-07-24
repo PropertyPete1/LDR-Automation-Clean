@@ -52,6 +52,114 @@ def get_db():
     return conn
 
 
+def query_seller_nurture_stats(conn, start: dt.datetime, end: dt.datetime) -> dict:
+    """Query seller nurture track stats for the digest period."""
+    start_iso = start.isoformat()
+    end_iso = end.isoformat()
+    stats = {}
+
+    # Seller nurture emails sent
+    sent = conn.execute(
+        """SELECT COUNT(*) as cnt FROM audit_log
+           WHERE created_at >= ? AND created_at < ?
+           AND action = 'seller_nurture'
+           AND status IN ('sent', 'email_sent', 'completed')""",
+        (start_iso, end_iso),
+    ).fetchone()["cnt"]
+    stats["seller_emails_sent"] = sent
+
+    # Seller leads enrolled (total in drip table)
+    try:
+        enrolled = conn.execute(
+            "SELECT COUNT(*) as cnt FROM seller_nurture_drip"
+        ).fetchone()["cnt"]
+    except Exception:
+        enrolled = 0
+    stats["seller_enrolled_total"] = enrolled
+
+    # Seller replies this week
+    seller_reply_rows = conn.execute(
+        """SELECT DISTINCT a.person_id, a.details FROM audit_log a
+           WHERE a.created_at >= ? AND a.created_at < ?
+           AND a.action = 'reply_detected'
+           AND a.status = 'alert_sent'
+           AND a.person_id IN (
+               SELECT DISTINCT person_id FROM audit_log
+               WHERE action = 'seller_nurture'
+               AND status IN ('sent', 'email_sent', 'completed')
+           )""",
+        (start_iso, end_iso),
+    ).fetchall()
+    stats["seller_replies"] = []
+    for row in seller_reply_rows:
+        detail = {}
+        try:
+            detail = json.loads(row["details"]) if row["details"] else {}
+        except Exception:
+            pass
+        stats["seller_replies"].append({
+            "person_id": row["person_id"],
+            "reply_snippet": detail.get("reply_snippet", ""),
+            "reply_channel": detail.get("reply_channel", "unknown"),
+        })
+    stats["seller_replies_count"] = len(stats["seller_replies"])
+
+    # Seller nurture errors
+    errors = conn.execute(
+        """SELECT COUNT(*) as cnt FROM audit_log
+           WHERE created_at >= ? AND created_at < ?
+           AND action = 'seller_nurture' AND status = 'error'""",
+        (start_iso, end_iso),
+    ).fetchone()["cnt"]
+    stats["seller_errors"] = errors
+
+    return stats
+
+
+def format_seller_nurture_section(seller_stats: dict) -> str:
+    """Format the Seller Nurture Track section as HTML for the digest email."""
+    sent = seller_stats.get("seller_emails_sent", 0)
+    enrolled = seller_stats.get("seller_enrolled_total", 0)
+    replies_count = seller_stats.get("seller_replies_count", 0)
+    errors = seller_stats.get("seller_errors", 0)
+    replies = seller_stats.get("seller_replies", [])
+
+    # Seller Replies section for round-robin assignment
+    replies_html = ""
+    if replies:
+        reply_rows = ""
+        for r in replies:
+            snippet = r.get("reply_snippet", "")[:150]
+            channel = r.get("reply_channel", "unknown")
+            pid = r.get("person_id", "?")
+            reply_rows += (
+                f"<tr>"
+                f"<td style='padding:6px;'>#{pid}</td>"
+                f"<td style='padding:6px;'>{channel}</td>"
+                f"<td style='padding:6px; font-style:italic;'>\"{snippet}\"</td>"
+                f"</tr>\n"
+            )
+        replies_html = f"""
+        <h3>\U0001f4e8 Seller Replies (for round-robin assignment)</h3>
+        <p style="color: #6b7280; font-size: 0.85em;">These seller leads replied this week. Assign to an agent for follow-up.</p>
+        <table style="border-collapse: collapse; width: 100%;">
+        <tr style="background: #f3f4f6;"><th style="text-align:left; padding:8px;">Lead ID</th><th style="padding:8px;">Channel</th><th style="padding:8px;">Reply Snippet</th></tr>
+        {reply_rows}
+        </table>
+        """
+
+    return f"""
+    <h2>\U0001f3e0 Seller Nurture Track</h2>
+    <table style="border-collapse: collapse; width: 100%;">
+    <tr><td style="padding:6px;">Seller emails sent this week</td><td style="padding:6px;"><strong>{sent}</strong></td></tr>
+    <tr><td style="padding:6px;">Total enrolled seller leads</td><td style="padding:6px;"><strong>{enrolled}</strong></td></tr>
+    <tr><td style="padding:6px;">Seller replies this week</td><td style="padding:6px;"><strong>{replies_count}</strong></td></tr>
+    <tr><td style="padding:6px;">Errors</td><td style="padding:6px;"><strong>{errors}</strong></td></tr>
+    </table>
+    {replies_html}
+    """
+
+
 def query_period(conn, start: dt.datetime, end: dt.datetime):
     """Query audit_log for a given period and return stats dict."""
     start_iso = start.isoformat()
@@ -297,6 +405,8 @@ def format_digest(this_week: dict, last_week: dict, pond_size: int) -> str:
 
     {format_power_queue_section(this_week.get('power_queue_stats'))}
 
+    {format_seller_nurture_section(this_week.get('seller_nurture_stats', {}))}
+
     <h2>📊 Best-Send-Time Data</h2>
     <p>Reply-time data points collected: <strong>{this_week['reply_time_data_points']}</strong></p>
     <p style="color: #6b7280; font-size: 0.85em;">After 8+ weeks we'll use this data to optimize send windows.</p>
@@ -358,6 +468,10 @@ def main():
 
     this_week_stats = query_period(conn, this_week_start, this_week_end)
     last_week_stats = query_period(conn, last_week_start, last_week_end)
+
+    # Seller nurture stats
+    seller_stats = query_seller_nurture_stats(conn, this_week_start, this_week_end)
+    this_week_stats["seller_nurture_stats"] = seller_stats
 
     conn.close()
 

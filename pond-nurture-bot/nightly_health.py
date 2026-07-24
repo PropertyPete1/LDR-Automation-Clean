@@ -284,7 +284,7 @@ def fix_daily_errors(dry_run: bool) -> None:
                 continue
 
             # ── pond_nurture / stale_reassignment errors: refresh dashboard ──
-            if action in ("pond_nurture", "stale_agent_pond_reassignment", "agent_followup_reminder"):
+            if action in ("pond_nurture", "seller_nurture", "stale_agent_pond_reassignment", "agent_followup_reminder"):
                 warnings.append(
                     f"{count} '{action}' error(s) logged today. "
                     f"Sample error: {str(sample_error)[:100]}. "
@@ -1415,6 +1415,33 @@ def send_morning_email(
     if soi_protected_count > 0:
         lines.append(f"🛡️ Pond reassignments skipped (SOI-protected): {soi_protected_count}")
         lines.append("")
+
+    # ── Seller Nurture Track section ─────────────────────────────────────────
+    try:
+        import sqlite3 as _sq3
+        if DB_PATH.exists():
+            with _sq3.connect(str(DB_PATH)) as _scon:
+                _scon.row_factory = _sq3.Row
+                _today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+                _seller_sent = _scon.execute(
+                    "SELECT COUNT(*) as cnt FROM audit_log WHERE date(created_at) = ? AND action = 'seller_nurture' AND status IN ('sent','email_sent','completed')",
+                    (_today,)
+                ).fetchone()["cnt"]
+                _seller_errors = _scon.execute(
+                    "SELECT COUNT(*) as cnt FROM audit_log WHERE date(created_at) = ? AND action = 'seller_nurture' AND status = 'error'",
+                    (_today,)
+                ).fetchone()["cnt"]
+                try:
+                    _seller_enrolled = _scon.execute("SELECT COUNT(*) as cnt FROM seller_nurture_drip").fetchone()["cnt"]
+                except Exception:
+                    _seller_enrolled = 0
+                lines.append("🏠 SELLER NURTURE TRACK:")
+                lines.append(f"   Emails sent today: {_seller_sent}")
+                lines.append(f"   Errors today: {_seller_errors}")
+                lines.append(f"   Total enrolled: {_seller_enrolled}")
+                lines.append("")
+    except Exception as _se:
+        log.debug("Seller nurture stats for email failed: %s", _se)
 
     # ── Engagement Tier & Reply-Time section (Tier 3) ─────────────────
     try:
