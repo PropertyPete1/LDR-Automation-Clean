@@ -283,7 +283,7 @@ def generate_seller_email(
 # This signature is appended ONLY to seller nurture track emails.
 # Buyer sequences remain unchanged.
 
-PETER_HEADSHOT_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/WLYpNtuVlwhrhvgC.png"
+PETER_HEADSHOT_URL = "https://raw.githubusercontent.com/PropertyPete1/LDR-Automation-Clean/main/pond-nurture-bot/assets/peter_headshot.png"
 TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS-2024.pdf"
 TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf"
 INSTAGRAM_URL = "https://www.instagram.com/lifestyledesignrealtytexas/"
