@@ -40,6 +40,7 @@ from anthropic import Anthropic
 from pydantic import BaseModel
 
 from fub_automation.seller_nurture import (
+    SELLER_BOUNCE_ROTATION_ACTION,
     SELLER_LEAD_TAG,
     SELLER_MONTHLY_CADENCE_DAYS,
     SELLER_NURTURE_AUDIT_ACTION,
@@ -50,7 +51,10 @@ from fub_automation.seller_nurture import (
     build_seller_email_html,
     build_seller_email_plaintext,
     extract_property_address_from_notes,
+    format_rotation_fub_note,
     generate_seller_email,
+    get_all_lead_emails,
+    select_send_address,
 )
 
 LOGGER = logging.getLogger("fub_automation")
@@ -373,6 +377,17 @@ class AuditDB:
                 );
                 """
             )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seller_bounced_emails (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id INTEGER NOT NULL,
+                    email_address TEXT NOT NULL,
+                    bounced_at TEXT NOT NULL,
+                    UNIQUE(person_id, email_address)
+                );
+                """
+            )
 
     def log(self, action: str, status: str, person_id: Optional[int] = None, details: Optional[dict] = None) -> None:
         with self.connect() as con:
@@ -536,6 +551,56 @@ class AuditDB:
             con.row_factory = sqlite3.Row
             rows = con.execute("SELECT * FROM seller_nurture_drip").fetchall()
         return [dict(row) for row in rows]
+
+    # ── Seller Bounce Rotation DB Helpers ─────────────────────────────────────
+    def get_seller_bounced_emails(self, person_id: int) -> List[str]:
+        """Return all bounced email addresses for a given seller lead."""
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT email_address FROM seller_bounced_emails WHERE person_id=?",
+                (person_id,)
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def mark_seller_email_bounced(self, person_id: int, email_address: str) -> None:
+        """Record that an email address bounced for a seller lead."""
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR IGNORE INTO seller_bounced_emails(person_id, email_address, bounced_at) VALUES (?, ?, ?)",
+                (person_id, email_address.lower().strip(), now_iso()),
+            )
+
+    def get_seller_bounce_rotation_stats(self, since: Optional[str] = None) -> dict:
+        """Return bounce rotation stats for the digest.
+
+        Returns dict with keys:
+          - total_bounced_addresses: total unique bounced addresses
+          - leads_with_bounces: number of unique leads that have had bounces
+          - rotations_this_period: bounces recorded since `since` (ISO string)
+          - leads_exhausted: leads where ALL addresses have bounced (fully suppressed)
+        """
+        with self.connect() as con:
+            total = con.execute("SELECT COUNT(*) FROM seller_bounced_emails").fetchone()[0]
+            leads = con.execute("SELECT COUNT(DISTINCT person_id) FROM seller_bounced_emails").fetchone()[0]
+            if since:
+                rotations = con.execute(
+                    "SELECT COUNT(*) FROM seller_bounced_emails WHERE bounced_at >= ?", (since,)
+                ).fetchone()[0]
+            else:
+                rotations = total
+            # Leads exhausted: leads in seller_bounced_emails whose bounced count >= their email count in drip
+            # We approximate by counting leads with 2+ bounces (most leads have 1-2 emails)
+            exhausted = con.execute(
+                "SELECT COUNT(DISTINCT person_id) FROM seller_bounced_emails "
+                "GROUP BY person_id HAVING COUNT(*) >= 2"
+            ).fetchall()
+            exhausted_count = len(exhausted)
+        return {
+            "total_bounced_addresses": total,
+            "leads_with_bounces": leads,
+            "rotations_this_period": rotations,
+            "leads_exhausted": exhausted_count,
+        }
 
     def add_new_lead_timer(self, person_id: int, assigned_user_id: Optional[int], created_at: Optional[str] = None) -> None:
         created_time = created_at if created_at else now_iso()
@@ -2350,14 +2415,20 @@ class RuleEngine:
             self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": f"SOI silenced: {soi_reason}"})
             return "suppressed"
 
-        # Must have an email address
-        if not emails_list:
+        # Must have an email address — with bounce fallback rotation
+        all_emails = get_all_lead_emails(person)
+        if not all_emails:
             self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "no email"})
             return "suppressed"
-
-        to_email = emails_list[0].get("value") or emails_list[0].get("email") if emails_list else None
+        bounced_addresses = self.db.get_seller_bounced_emails(person_id)
+        to_email = select_send_address(all_emails, bounced_addresses)
         if not to_email:
-            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "no valid email address"})
+            # All addresses exhausted — suppress as bounced
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {
+                "reason": "all email addresses bounced",
+                "bounced_addresses": bounced_addresses,
+                "total_on_record": len(all_emails),
+            })
             return "suppressed"
 
         # ── Enrollment & cadence check ──
@@ -2480,6 +2551,82 @@ class RuleEngine:
             emails_sent + 1, person_id, to_email
         )
         return _send_status
+
+    def handle_seller_bounce(self, person_id: int, bounced_email: str) -> str:
+        """Handle a bounce for a seller nurture lead.
+
+        Called by the bounce handler when a seller nurture email bounces.
+        Marks the address as dead, rotates to the next address if available,
+        logs a FUB note, and suppresses if all addresses are exhausted.
+
+        Returns: 'rotated', 'exhausted', or 'error'
+        """
+        try:
+            # Mark this address as bounced
+            self.db.mark_seller_email_bounced(person_id, bounced_email)
+            LOGGER.info("Seller bounce rotation: marked %s as bounced for person %s", bounced_email, person_id)
+
+            # Fetch the person to see all available addresses
+            person = self.fub.get_person(person_id)
+            if not person:
+                self.db.log(SELLER_BOUNCE_ROTATION_ACTION, "error", person_id, {
+                    "reason": "person not found in FUB",
+                    "bounced_email": bounced_email,
+                })
+                return "error"
+
+            all_emails = get_all_lead_emails(person)
+            bounced_addresses = self.db.get_seller_bounced_emails(person_id)
+            next_email = select_send_address(all_emails, bounced_addresses)
+
+            exhausted = next_email is None
+            note_subject, note_body = format_rotation_fub_note(
+                bounced_email=bounced_email,
+                new_email=next_email,
+                total_addresses=len(all_emails),
+                exhausted=exhausted,
+            )
+
+            # Log FUB note documenting the rotation
+            try:
+                self.fub.add_note(person_id, note_subject, note_body)
+            except Exception as note_exc:  # noqa: BLE001
+                LOGGER.warning("Seller bounce rotation: failed to log FUB note for person %s: %s", person_id, note_exc)
+
+            if exhausted:
+                # All addresses dead — tag as bounced for suppression
+                try:
+                    current_tags = person.get("tags") or []
+                    if "bounced" not in [t.lower() for t in current_tags]:
+                        self.fub.update_person(person_id, {"tags": current_tags + ["bounced"]})
+                except Exception as tag_exc:  # noqa: BLE001
+                    LOGGER.warning("Seller bounce rotation: failed to add bounced tag for person %s: %s", person_id, tag_exc)
+                self.db.log(SELLER_BOUNCE_ROTATION_ACTION, "exhausted", person_id, {
+                    "bounced_email": bounced_email,
+                    "all_bounced": bounced_addresses,
+                    "total_on_record": len(all_emails),
+                })
+                LOGGER.info("Seller bounce rotation: ALL addresses exhausted for person %s. Suppressed.", person_id)
+                return "exhausted"
+            else:
+                self.db.log(SELLER_BOUNCE_ROTATION_ACTION, "rotated", person_id, {
+                    "bounced_email": bounced_email,
+                    "next_email": next_email,
+                    "total_on_record": len(all_emails),
+                    "total_bounced": len(bounced_addresses),
+                })
+                LOGGER.info(
+                    "Seller bounce rotation: rotated person %s from %s to %s",
+                    person_id, bounced_email, next_email
+                )
+                return "rotated"
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Seller bounce rotation failed for person %s", person_id)
+            self.db.log(SELLER_BOUNCE_ROTATION_ACTION, "error", person_id, {
+                "bounced_email": bounced_email,
+                "error": str(exc),
+            })
+            return "error"
 
     def run_daily_scans(self) -> None:
         # Safeguard: Check if daily scans have already completed successfully today in the local timezone

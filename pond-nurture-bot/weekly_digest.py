@@ -113,6 +113,36 @@ def query_seller_nurture_stats(conn, start: dt.datetime, end: dt.datetime) -> di
     ).fetchone()["cnt"]
     stats["seller_errors"] = errors
 
+    # Bounce rotation stats
+    try:
+        rotations = conn.execute(
+            """SELECT COUNT(*) as cnt FROM seller_bounced_emails
+               WHERE bounced_at >= ? AND bounced_at < ?""",
+            (start_iso, end_iso),
+        ).fetchone()["cnt"]
+    except Exception:
+        rotations = 0
+    stats["seller_bounce_rotations"] = rotations
+
+    try:
+        total_bounced = conn.execute(
+            "SELECT COUNT(*) as cnt FROM seller_bounced_emails"
+        ).fetchone()["cnt"]
+    except Exception:
+        total_bounced = 0
+    stats["seller_total_bounced_addresses"] = total_bounced
+
+    try:
+        leads_exhausted = conn.execute(
+            """SELECT COUNT(*) as cnt FROM (
+                SELECT person_id FROM seller_bounced_emails
+                GROUP BY person_id HAVING COUNT(*) >= 2
+            )"""
+        ).fetchone()["cnt"]
+    except Exception:
+        leads_exhausted = 0
+    stats["seller_leads_exhausted"] = leads_exhausted
+
     return stats
 
 
@@ -148,6 +178,22 @@ def format_seller_nurture_section(seller_stats: dict) -> str:
         </table>
         """
 
+    # Bounce rotation stats
+    bounce_rotations = seller_stats.get("seller_bounce_rotations", 0)
+    total_bounced_addrs = seller_stats.get("seller_total_bounced_addresses", 0)
+    leads_exhausted = seller_stats.get("seller_leads_exhausted", 0)
+
+    bounce_html = ""
+    if bounce_rotations > 0 or total_bounced_addrs > 0:
+        bounce_html = f"""
+        <h3>\U0001f504 Bounce Rotation</h3>
+        <table style="border-collapse: collapse; width: 100%;">
+        <tr><td style="padding:6px;">Addresses bounced this week</td><td style="padding:6px;"><strong>{bounce_rotations}</strong></td></tr>
+        <tr><td style="padding:6px;">Total dead addresses (all time)</td><td style="padding:6px;"><strong>{total_bounced_addrs}</strong></td></tr>
+        <tr><td style="padding:6px;">Leads fully exhausted (all emails bounced)</td><td style="padding:6px;"><strong>{leads_exhausted}</strong></td></tr>
+        </table>
+        """
+
     return f"""
     <h2>\U0001f3e0 Seller Nurture Track</h2>
     <table style="border-collapse: collapse; width: 100%;">
@@ -156,6 +202,7 @@ def format_seller_nurture_section(seller_stats: dict) -> str:
     <tr><td style="padding:6px;">Seller replies this week</td><td style="padding:6px;"><strong>{replies_count}</strong></td></tr>
     <tr><td style="padding:6px;">Errors</td><td style="padding:6px;"><strong>{errors}</strong></td></tr>
     </table>
+    {bounce_html}
     {replies_html}
     """
 

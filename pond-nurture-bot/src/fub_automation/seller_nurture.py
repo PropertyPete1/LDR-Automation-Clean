@@ -413,3 +413,77 @@ If you no longer want market updates from us, reply UNSUBSCRIBE and we will remo
 """
 
     return f"{body_text.strip()}\n{signature_plain}\n{footer_plain}"
+
+
+# ── Bounce Fallback Rotation ─────────────────────────────────────────────────
+# Tracks bounced email addresses per lead and rotates to the next available
+# address on the FUB record. Only suppresses when ALL addresses are exhausted.
+
+SELLER_BOUNCE_ROTATION_ACTION = "seller_bounce_rotation"
+
+
+def get_all_lead_emails(person: dict) -> List[str]:
+    """Extract all email addresses from a FUB person record, preserving order.
+    
+    Returns a deduplicated list of lowercase email addresses in the order
+    they appear on the FUB record (emails[0] is primary).
+    """
+    emails_list = person.get("emails") or []
+    seen: set = set()
+    result: List[str] = []
+    for email_dict in emails_list:
+        if isinstance(email_dict, dict):
+            val = (email_dict.get("value") or email_dict.get("email") or "").strip().lower()
+            if val and val not in seen:
+                seen.add(val)
+                result.append(val)
+    return result
+
+
+def select_send_address(
+    all_emails: List[str],
+    bounced_addresses: List[str],
+) -> Optional[str]:
+    """Select the next valid email address for sending, skipping bounced ones.
+    
+    Args:
+        all_emails: All email addresses on the FUB record (ordered, primary first)
+        bounced_addresses: List of addresses known to have bounced for this lead
+    
+    Returns:
+        The first non-bounced address, or None if all are exhausted.
+    """
+    bounced_set = {addr.lower() for addr in bounced_addresses}
+    for email in all_emails:
+        if email.lower() not in bounced_set:
+            return email
+    return None
+
+
+def format_rotation_fub_note(
+    bounced_email: str,
+    new_email: Optional[str],
+    total_addresses: int,
+    exhausted: bool,
+) -> Tuple[str, str]:
+    """Format a FUB note documenting a bounce rotation event.
+    
+    Returns (subject, body) tuple for the FUB note.
+    """
+    if exhausted:
+        subject = "📧 Seller Nurture: All Email Addresses Bounced"
+        body = (
+            f"The seller nurture email to \"{bounced_email}\" bounced (permanent delivery failure).\n\n"
+            f"All {total_addresses} email address(es) on file have now bounced. "
+            f"Lead is being suppressed from seller nurture until a valid email is added.\n\n"
+            f"Action: Seller nurture sequence paused. Lead tagged 'bounced'."
+        )
+    else:
+        subject = "📧 Seller Nurture: Email Bounced — Rotated to Next Address"
+        body = (
+            f"The seller nurture email to \"{bounced_email}\" bounced (permanent delivery failure).\n\n"
+            f"Rotating to next address on file: \"{new_email}\"\n"
+            f"({total_addresses} total address(es) on record)\n\n"
+            f"Action: Next seller nurture email will be sent to the new address."
+        )
+    return subject, body
