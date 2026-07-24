@@ -91,7 +91,7 @@ class Settings:
             fub_api_key=os.environ.get("FUB_API_KEY", ""),
             fub_system_name=os.environ.get("FUB_SYSTEM_NAME"),
             fub_system_key=os.environ.get("FUB_SYSTEM_KEY"),
-            openai_model=os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "claude-sonnet-4-20250514"),
+            openai_model=os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "claude-haiku-4-5-20251001"),
             database_path=os.environ.get("DATABASE_PATH", "data/fub_automation.sqlite3"),
             rules_path=os.environ.get("RULES_PATH", "config/rules.yaml"),
             base_url=os.environ.get("BASE_URL", "http://localhost:8080"),
@@ -896,7 +896,7 @@ class ContentGenerator:
     def __init__(self, settings: Settings, rules: Rules):
         api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         self.client = Anthropic(api_key=api_key, timeout=120.0)
-        self.model = os.getenv("LLM_MODEL") or settings.openai_model or "claude-sonnet-4-20250514"
+        self.model = os.getenv("LLM_MODEL") or settings.openai_model or "claude-haiku-4-5-20251001"
         self.rules = rules
 
     def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True) -> str:

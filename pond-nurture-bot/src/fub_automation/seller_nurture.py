@@ -14,7 +14,7 @@ Hard Rules:
   - Same sending convention: "Peter | Lifestyle Design Realty"
   - BCC to Peter
   - CAN-SPAM footer with unsubscribe and physical address
-  - Uses claude-sonnet-4-6 via ANTHROPIC_API_KEY
+  - Uses claude-haiku-4-5 via ANTHROPIC_API_KEY
 
 Trigger: FUB tag "Seller Lead" present AND lead is in configured pond
 Suppression: All existing suppression rules EXCEPT "DNC" tag (email-only track, DNC only blocks non-email)

@@ -57,11 +57,11 @@ describe("Anthropic Direct — Agent Bot Email Generation", () => {
     const skipSection = source.slice(skipStart, skipEnd > -1 ? skipEnd : skipStart + 5000);
 
     expect(skipSection).toContain("api.anthropic.com/v1/messages");
-    expect(skipSection).toContain("claude-sonnet-4-6");
+    expect(skipSection).toContain("claude-haiku-4-5");
     expect(skipSection).not.toContain("invokeLLM");
   });
 
-  it("uses claude-sonnet-4-6 model for email generation", async () => {
+  it("uses claude-haiku-4-5 model for email generation", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const source = fs.readFileSync(
@@ -69,8 +69,8 @@ describe("Anthropic Direct — Agent Bot Email Generation", () => {
       "utf-8"
     );
 
-    // Count occurrences of claude-sonnet-4-6 (should be 2: one in shouldSkipLead, one in generateFollowUpMessage)
-    const matches = source.match(/claude-sonnet-4-6/g);
+    // Count occurrences of claude-haiku-4-5 (should be 2: one in shouldSkipLead, one in generateFollowUpMessage)
+    const matches = source.match(/claude-haiku-4-5/g);
     expect(matches).not.toBeNull();
     expect(matches!.length).toBeGreaterThanOrEqual(2);
   });

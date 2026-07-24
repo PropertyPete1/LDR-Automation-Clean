@@ -758,7 +758,7 @@ SKIP: NO`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5",
         max_tokens: 100,
         system: "You are a precise real estate CRM assistant. Answer only in the exact format requested.",
         messages: [{ role: "user", content: prompt }],
@@ -943,7 +943,7 @@ NO_WINDOW`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5",
         max_tokens: 100,
         system: "You are a precise date extraction assistant. Respond only in the exact format requested.",
         messages: [{ role: "user", content: prompt }],
@@ -1257,7 +1257,7 @@ IMPORTANT:
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5",
         max_tokens: 512,
         system: "You are an expert real estate agent writing highly personalized, intelligent follow-up emails. Your emails feel handcrafted and genuine, never automated. You always reference specific context when available. You are strategic about temporal reasoning — you know what date it is and reference time-bound events relative to today.",
         messages: [{ role: "user", content: prompt }],

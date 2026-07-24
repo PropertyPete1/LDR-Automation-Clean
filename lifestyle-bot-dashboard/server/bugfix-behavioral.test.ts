@@ -36,7 +36,7 @@ function mockRoutedFetch(opts: { anthropicText?: string; fubDeals?: unknown[] })
         id: "msg_mock",
         type: "message",
         role: "assistant",
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5",
         content: [{ type: "text", text: opts.anthropicText ?? "SKIP: NO" }],
         stop_reason: "end_turn",
         usage: { input_tokens: 100, output_tokens: 40 },

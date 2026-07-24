@@ -5,7 +5,7 @@
  * brainUpgrade.test.ts checks the source text; these tests exercise the actual
  * functions with a mocked fetch and assert BEHAVIOR:
  *   1. generateFollowUpMessage / shouldSkipLead actually CALL
- *      https://api.anthropic.com/v1/messages with claude-sonnet-4-6 + x-api-key
+ *      https://api.anthropic.com/v1/messages with claude-haiku-4-5 + x-api-key
  *   2. Deal protection actually CALLS https://api.followupboss.com/v1/deals
  *      (north-star: the "/v1deals" 404 bug class — a malformed path would fail here)
  *   3. The real prompt string contains full context + temporal reasoning
@@ -51,7 +51,7 @@ function mockRoutedFetch(opts: { anthropicText?: string; fubDeals?: unknown[] })
         id: "msg_mock",
         type: "message",
         role: "assistant",
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5",
         content: [{ type: "text", text: opts.anthropicText ?? "SKIP: NO" }],
         stop_reason: "end_turn",
         usage: { input_tokens: 100, output_tokens: 40 },
@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe("Anthropic URL is actually called (spec 1)", () => {
-  it("generateFollowUpMessage calls api.anthropic.com with claude-sonnet-4-6 and x-api-key", async () => {
+  it("generateFollowUpMessage calls api.anthropic.com with claude-haiku-4-5 and x-api-key", async () => {
     const mockFetch = mockRoutedFetch({
       anthropicText:
         "SUBJECT: Those Alamo Heights listings\nHey Maria,\nDid you get a chance to look at those listings I sent?\nPeter",
@@ -115,7 +115,7 @@ describe("Anthropic URL is actually called (spec 1)", () => {
     expect(url).toBe("https://api.anthropic.com/v1/messages");
     expect(options.headers["x-api-key"]).toBe("sk-ant-api03-test-key");
     expect(options.headers["anthropic-version"]).toBe("2023-06-01");
-    expect(JSON.parse(options.body).model).toBe("claude-sonnet-4-6");
+    expect(JSON.parse(options.body).model).toBe("claude-haiku-4-5");
 
     expect(result.subject).toContain("Those Alamo Heights listings");
     expect(result.body).toContain("Hey Maria,");
@@ -371,7 +371,7 @@ describe("Engine wiring + zero Forge references (launch guard)", () => {
     }
     const llmSrc = fs.readFileSync(path.join(__dirname_, "_core/llm.ts"), "utf-8");
     expect(llmSrc).toContain("https://api.anthropic.com/v1/messages");
-    expect(llmSrc).toContain("claude-sonnet-4-6");
+    expect(llmSrc).toContain("claude-haiku-4-5");
   });
 
   it("agent_bots_snapshot.json: exactly one engine-active row (jason, fubUserId 37); every other slug is legacy-guarded", () => {

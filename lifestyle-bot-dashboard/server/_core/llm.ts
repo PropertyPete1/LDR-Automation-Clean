@@ -2,7 +2,7 @@
  * llm.ts — Anthropic-direct LLM client.
  *
  * All agent-bot LLM calls hit https://api.anthropic.com/v1/messages with
- * model `claude-sonnet-4-6`, authenticated via ANTHROPIC_API_KEY. The
+ * model `claude-haiku-4-5`, authenticated via ANTHROPIC_API_KEY. The
  * previous third-party LLM proxy is no longer used for LLM calls.
  *
  * The OpenAI-style interface (invokeLLM + choices[0].message.content) is
@@ -12,7 +12,7 @@
 import { ENV } from "./env";
 
 export const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
-export const ANTHROPIC_MODEL = "claude-sonnet-4-6";
+export const ANTHROPIC_MODEL = "claude-haiku-4-5";
 const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 2048;
 

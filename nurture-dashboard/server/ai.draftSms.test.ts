@@ -80,7 +80,7 @@ function mockAnthropicResponse(text: string) {
       type: "message",
       role: "assistant",
       content: [{ type: "text", text }],
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5",
       usage: { input_tokens: 50, output_tokens: 20 },
     }),
   });
@@ -168,7 +168,7 @@ describe("ai.draftSms", () => {
 
     // Verify the body contains the correct model and notes reference
     const body = JSON.parse(options.body);
-    expect(body.model).toBe("claude-sonnet-4-6");
+    expect(body.model).toBe("claude-haiku-4-5");
     expect(body.messages[0].content).toContain("Interested in 3BR near Riverwalk");
   });
 

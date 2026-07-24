@@ -340,7 +340,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         json: async () => ({
           id: "msg_mock", type: "message", role: "assistant",
           content: [{ type: "text", text: "Hey Test!" }],
-          model: "claude-sonnet-4-6",
+          model: "claude-haiku-4-5",
           usage: { input_tokens: 50, output_tokens: 20 },
         }),
       });

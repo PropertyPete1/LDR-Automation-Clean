@@ -653,7 +653,7 @@ export const appRouter = router({
         }
 
         const hasNotes = notes && notes.trim().length > 0;
-        // ── Power Queue 2.0: Upgraded prompt for Claude claude-sonnet-4-6 ───────────────────
+        // ── Power Queue 2.0: Upgraded prompt for Claude claude-haiku-4-5 ───────────────────
         const systemPrompt = `You are writing a single SMS text message for a Texas real estate agent to send to a lead.
 
 CRITICAL OUTPUT RULE: Your ENTIRE response must be ONLY the SMS message text. Nothing else.
@@ -700,7 +700,7 @@ Reference something SPECIFIC from the notes. Make it feel like the agent remembe
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: "claude-sonnet-4-6",
+            model: "claude-haiku-4-5",
             max_tokens: 200,
             system: systemPrompt,
             messages: [
