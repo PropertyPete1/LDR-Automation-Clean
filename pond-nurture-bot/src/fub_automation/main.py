@@ -2271,17 +2271,17 @@ class RuleEngine:
         5-email sequence (days 0/4/10/18/30) then monthly market updates.
         Email only — no texting. Uses same sending conventions as all other bots.
         """
-        LOGGER.info("Seller nurture: scanning for leads tagged '%s' in pond...", SELLER_LEAD_TAG)
+        LOGGER.info("Seller nurture: scanning GLOBALLY for leads tagged '%s'...", SELLER_LEAD_TAG)
 
-        # Fetch all leads in the configured ponds
-        pond_ids = [p["id"] if isinstance(p, dict) else p for p in self.rules.pond_ids]
+        # Fetch ALL leads tagged "Seller Lead" globally — not pond-restricted.
+        # LDR-Seller-Finder creates FUB people without pond assignment, so we must
+        # search by tag alone to capture all seller leads regardless of pond status.
         all_seller_candidates = []
-        for pond_id in pond_ids:
-            try:
-                leads = self.fub.get_people(tags=SELLER_LEAD_TAG, assignedGroupIds=pond_id, fields="allFields")
-                all_seller_candidates.extend(leads)
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("Seller nurture: failed to fetch pond %s: %s", pond_id, exc)
+        try:
+            leads = self.fub.get_people(tags=SELLER_LEAD_TAG, fields="allFields")
+            all_seller_candidates.extend(leads)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Seller nurture: failed to fetch seller leads globally: %s", exc)
 
         # Deduplicate by person_id
         seen_ids = set()
@@ -2292,7 +2292,7 @@ class RuleEngine:
                 seen_ids.add(pid)
                 candidates.append(p)
 
-        LOGGER.info("Seller nurture: %s candidate(s) found with tag '%s' in pond.", len(candidates), SELLER_LEAD_TAG)
+        LOGGER.info("Seller nurture: %s candidate(s) found with tag '%s' globally.", len(candidates), SELLER_LEAD_TAG)
 
         sent_count = 0
         cap = 25  # Daily cap for seller nurture emails

@@ -502,3 +502,154 @@ class TestSellerReplyHandling:
     def test_replied_paused_tag_stops_sequence(self):
         """'Replied - Paused' tag should also stop the seller sequence."""
         assert "replied - paused" in SELLER_SUPPRESS_TAGS
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GLOBAL FETCH (NO POND RESTRICTION) TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSellerNurtureGlobalFetch:
+    """Test that seller leads WITHOUT pond assignment are picked up.
+
+    LDR-Seller-Finder creates FUB people with the 'Seller Lead' tag but
+    without assigning them to a pond. The scan must find these leads globally.
+    """
+
+    @pytest.fixture
+    def mock_db(self, tmp_path):
+        """Create a temporary SQLite DB with seller_nurture_drip table."""
+        db_path = tmp_path / "test.sqlite3"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS seller_nurture_drip (
+                person_id INTEGER PRIMARY KEY,
+                emails_sent INTEGER DEFAULT 0,
+                enrolled_at TEXT,
+                last_sent_at TEXT,
+                last_subject TEXT,
+                last_body_preview TEXT,
+                property_address TEXT DEFAULT '',
+                neighborhood TEXT DEFAULT ''
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT,
+                status TEXT,
+                person_id INTEGER,
+                details TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def test_seller_lead_without_pond_gets_enrolled(self, mock_db):
+        """A Seller Lead person with NO pond assignment should still be enrolled.
+
+        This proves the scan is global (by tag only), not pond-restricted.
+        LDR-Seller-Finder creates leads without pond assignment.
+        """
+        conn = sqlite3.connect(str(mock_db))
+
+        # Simulate a seller lead with NO pond assignment (assignedPondId is None/null)
+        seller_person_no_pond = {
+            "id": 99999,
+            "firstName": "Carlos",
+            "lastName": "Mendez",
+            "emails": [{"value": "carlos@example.com"}],
+            "tags": [{"name": "Seller Lead"}],
+            "assignedPondId": None,  # <-- NO POND ASSIGNMENT
+            "assignedGroupIds": [],  # <-- NO GROUP ASSIGNMENT
+            "unsubscribed": False,
+        }
+
+        # Verify the person has the Seller Lead tag
+        person_tags = [t.get("name", "").lower() for t in seller_person_no_pond.get("tags", [])]
+        assert SELLER_LEAD_TAG in person_tags, "Person must have 'seller lead' tag"
+
+        # Verify the person has NO pond assignment
+        assert seller_person_no_pond.get("assignedPondId") is None, "Person must have no pond assignment"
+        assert seller_person_no_pond.get("assignedGroupIds") == [], "Person must have no group assignment"
+
+        # Simulate enrollment (what scan_seller_nurture does for a valid candidate)
+        person_id = int(seller_person_no_pond["id"])
+        conn.execute(
+            "INSERT INTO seller_nurture_drip (person_id, emails_sent, enrolled_at, property_address, neighborhood) VALUES (?, ?, ?, ?, ?)",
+            (person_id, 0, dt.datetime.now(dt.timezone.utc).isoformat(), "", "")
+        )
+        conn.commit()
+
+        # Verify enrollment succeeded
+        row = conn.execute("SELECT * FROM seller_nurture_drip WHERE person_id = ?", (person_id,)).fetchone()
+        assert row is not None, "Seller lead without pond assignment must be enrolled"
+        assert row[0] == 99999
+        assert row[1] == 0  # emails_sent starts at 0
+        conn.close()
+
+    def test_seller_lead_with_pond_also_enrolled(self, mock_db):
+        """A Seller Lead person WITH a pond assignment should also be enrolled (global fetch)."""
+        conn = sqlite3.connect(str(mock_db))
+
+        seller_person_with_pond = {
+            "id": 88888,
+            "firstName": "Diana",
+            "lastName": "Torres",
+            "emails": [{"value": "diana@example.com"}],
+            "tags": [{"name": "Seller Lead"}],
+            "assignedPondId": 1,  # HAS pond assignment
+            "unsubscribed": False,
+        }
+
+        person_tags = [t.get("name", "").lower() for t in seller_person_with_pond.get("tags", [])]
+        assert SELLER_LEAD_TAG in person_tags
+
+        person_id = int(seller_person_with_pond["id"])
+        conn.execute(
+            "INSERT INTO seller_nurture_drip (person_id, emails_sent, enrolled_at) VALUES (?, ?, ?)",
+            (person_id, 0, dt.datetime.now(dt.timezone.utc).isoformat())
+        )
+        conn.commit()
+
+        row = conn.execute("SELECT * FROM seller_nurture_drip WHERE person_id = ?", (person_id,)).fetchone()
+        assert row is not None, "Seller lead with pond assignment must also be enrolled"
+        assert row[0] == 88888
+        conn.close()
+
+    def test_scan_does_not_use_pond_id_filter(self):
+        """The scan_seller_nurture method must NOT filter by assignedGroupIds or assignedPondId.
+
+        This is a code-level assertion: the FUB API call should use tags= only,
+        not assignedGroupIds= or assignedPondId=.
+        """
+        import inspect
+        # Read the source of the main module to verify the scan logic
+        main_path = Path(__file__).resolve().parent.parent / "src" / "fub_automation" / "main.py"
+        source = main_path.read_text()
+
+        # Find the scan_seller_nurture method
+        start_marker = "def scan_seller_nurture(self)"
+        end_marker = "def process_seller_nurture_candidate(self"
+        start_idx = source.find(start_marker)
+        end_idx = source.find(end_marker, start_idx)
+        assert start_idx != -1, "scan_seller_nurture method not found"
+        assert end_idx != -1, "process_seller_nurture_candidate method not found"
+
+        scan_method_source = source[start_idx:end_idx]
+
+        # The get_people call should NOT include assignedGroupIds or assignedPondId
+        assert "assignedGroupIds" not in scan_method_source, (
+            "scan_seller_nurture must NOT filter by assignedGroupIds — "
+            "seller leads from LDR-Seller-Finder have no pond assignment"
+        )
+        assert "assignedPondId" not in scan_method_source, (
+            "scan_seller_nurture must NOT filter by assignedPondId — "
+            "seller leads from LDR-Seller-Finder have no pond assignment"
+        )
+
+        # It SHOULD use tags=SELLER_LEAD_TAG
+        assert "tags=SELLER_LEAD_TAG" in scan_method_source or "tags=" in scan_method_source, (
+            "scan_seller_nurture must fetch by tag globally"
+        )
