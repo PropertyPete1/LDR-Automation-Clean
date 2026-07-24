@@ -653,3 +653,151 @@ class TestSellerNurtureGlobalFetch:
         assert "tags=SELLER_LEAD_TAG" in scan_method_source or "tags=" in scan_method_source, (
             "scan_seller_nurture must fetch by tag globally"
         )
+
+
+# ── Seller Email Signature Tests ─────────────────────────────────────────────
+
+class TestSellerEmailSignature:
+    """Tests for the seller email signature builder functions."""
+
+    class FakeRules:
+        company_name = "Lifestyle Design Realty"
+        company_address = "1209 S Saint Marys St #232, San Antonio, TX 78210"
+
+    def test_html_contains_peter_allen_name(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "Peter Allen" in html
+
+    def test_html_contains_headshot_image(self):
+        from fub_automation.seller_nurture import build_seller_email_html, PETER_HEADSHOT_URL
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert PETER_HEADSHOT_URL in html
+        assert '<img' in html
+
+    def test_html_contains_phone_number(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "520.373.7839" in html
+
+    def test_html_contains_email_address(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "Peter@lifestyledesignrealty.com" in html
+
+    def test_html_contains_office_address(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "1212 Chicon St, Suite 101" in html
+        assert "Austin, TX 78702" in html
+
+    def test_html_contains_trec_links(self):
+        from fub_automation.seller_nurture import build_seller_email_html, TREC_IABS_URL, TREC_CONSUMER_PROTECTION_URL
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert TREC_IABS_URL in html
+        assert TREC_CONSUMER_PROTECTION_URL in html
+        assert "Information About Brokerage Services" in html
+        assert "TREC Consumer Protection Notice" in html
+
+    def test_html_contains_instagram_link(self):
+        from fub_automation.seller_nurture import build_seller_email_html, INSTAGRAM_URL
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert INSTAGRAM_URL in html
+
+    def test_html_contains_facebook_link(self):
+        from fub_automation.seller_nurture import build_seller_email_html, FACEBOOK_URL
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert FACEBOOK_URL in html
+
+    def test_html_contains_referral_link(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "Send this Link to a Friend" in html
+
+    def test_html_contains_company_info_and_title(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "Lifestyle Design Realty, LLC" in html
+        assert "Managing Realtor and Owner" in html
+        assert "Army Veteran at your service" in html
+
+    def test_html_contains_unsubscribe_footer(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
+        assert "UNSUBSCRIBE" in html
+        assert self.FakeRules.company_address in html
+
+    def test_html_body_text_is_included(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        body = "Hey Sarah, just wanted to check in about your home value."
+        html = build_seller_email_html(body, self.FakeRules())
+        assert "Hey Sarah" in html
+        assert "home value" in html
+
+    def test_html_signature_comes_before_footer(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hello there.", self.FakeRules())
+        sig_pos = html.find("Peter Allen")
+        footer_pos = html.find("UNSUBSCRIBE")
+        assert sig_pos < footer_pos, "Signature must come before the CAN-SPAM footer"
+
+    def test_html_body_comes_before_signature(self):
+        from fub_automation.seller_nurture import build_seller_email_html
+        html = build_seller_email_html("Hey Sarah, quick question.", self.FakeRules())
+        body_pos = html.find("Hey Sarah")
+        sig_pos = html.find("Peter Allen")
+        assert body_pos < sig_pos, "Body must come before signature"
+
+    def test_plaintext_contains_peter_allen_name(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert "Peter Allen" in text
+
+    def test_plaintext_contains_phone_number(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert "520.373.7839" in text
+
+    def test_plaintext_contains_email_address(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert "Peter@lifestyledesignrealty.com" in text
+
+    def test_plaintext_contains_office_address(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert "1212 Chicon St, Suite 101" in text
+        assert "Austin, TX 78702" in text
+
+    def test_plaintext_contains_trec_urls(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext, TREC_IABS_URL, TREC_CONSUMER_PROTECTION_URL
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert TREC_IABS_URL in text
+        assert TREC_CONSUMER_PROTECTION_URL in text
+
+    def test_plaintext_contains_social_urls(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext, INSTAGRAM_URL, FACEBOOK_URL
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert INSTAGRAM_URL in text
+        assert FACEBOOK_URL in text
+
+    def test_plaintext_contains_unsubscribe_footer(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey there, just checking in.", self.FakeRules())
+        assert "UNSUBSCRIBE" in text
+        assert self.FakeRules.company_address in text
+
+    def test_plaintext_body_comes_first(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hey Sarah, quick question.", self.FakeRules())
+        body_pos = text.find("Hey Sarah")
+        sig_pos = text.find("Peter Allen")
+        footer_pos = text.find("UNSUBSCRIBE")
+        assert body_pos < sig_pos < footer_pos
+
+    def test_plaintext_contains_company_title(self):
+        from fub_automation.seller_nurture import build_seller_email_plaintext
+        text = build_seller_email_plaintext("Hello.", self.FakeRules())
+        assert "Lifestyle Design Realty, LLC" in text
+        assert "Managing Realtor and Owner" in text
+        assert "Army Veteran at your service" in text

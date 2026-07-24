@@ -47,6 +47,8 @@ from fub_automation.seller_nurture import (
     SELLER_SEQUENCE_LENGTH,
     SELLER_SEQUENCE_SCHEDULE,
     SELLER_SUPPRESS_TAGS,
+    build_seller_email_html,
+    build_seller_email_plaintext,
     extract_property_address_from_notes,
     generate_seller_email,
 )
@@ -2438,13 +2440,17 @@ class RuleEngine:
             self.db.log(SELLER_NURTURE_AUDIT_ACTION, "error", person_id, {"reason": "empty LLM response"})
             return "error"
 
-        # ── Send the email ──
+        # ── Send the email (with Peter Allen signature block) ──
+        seller_plaintext = build_seller_email_plaintext(email_body, self.rules)
+        seller_html = build_seller_email_html(email_body, self.rules)
         self.email.send(
             to_email,
             subject,
-            append_email_footer(email_body, self.rules),
+            seller_plaintext,
             from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
+            html_body=seller_html,
+            bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
         )
 
         # ── Log FUB note ──

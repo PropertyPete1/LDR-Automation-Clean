@@ -277,3 +277,139 @@ def generate_seller_email(
     if not content:
         raise ValueError("LLM returned empty seller nurture email")
     return json.loads(content)
+
+
+# ── Seller Email Signature ────────────────────────────────────────────────────
+# This signature is appended ONLY to seller nurture track emails.
+# Buyer sequences remain unchanged.
+
+PETER_HEADSHOT_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310519663320037777/WLYpNtuVlwhrhvgC.png"
+TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS-2024.pdf"
+TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf"
+INSTAGRAM_URL = "https://www.instagram.com/lifestyledesignrealtytexas/"
+FACEBOOK_URL = "https://www.facebook.com/lifestyledesignrealty"
+REFERRAL_URL = "https://lifestyledesignrealty.com"
+
+
+def build_seller_email_html(body_text: str, rules) -> str:
+    """Build the full HTML email for seller nurture with signature and CAN-SPAM footer.
+
+    Structure:
+      1. Email body (converted from plain text to HTML paragraphs)
+      2. Peter Allen signature block (TREC links, headshot + contact info, social icons)
+      3. CAN-SPAM footer (unsubscribe + physical address)
+
+    This is used ONLY for seller nurture emails. Buyer sequences are untouched.
+    """
+    # Convert plain text body to HTML paragraphs
+    paragraphs = body_text.strip().split("\n\n")
+    body_html_parts = []
+    for para in paragraphs:
+        # Handle single newlines within a paragraph as <br>
+        lines = para.strip().split("\n")
+        body_html_parts.append(
+            '<p style="margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+            f'line-height:1.5;color:#333333;">{("<br>".join(lines))}</p>'
+        )
+    body_html = "\n".join(body_html_parts)
+
+    signature_html = f"""
+<table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;border-top:1px solid #cccccc;padding-top:16px;">
+  <tr>
+    <td colspan="2" style="padding-bottom:12px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.4;">
+      <a href="{TREC_IABS_URL}" style="color:#1a5276;text-decoration:none;">Information About Brokerage Services</a><br>
+      <a href="{TREC_CONSUMER_PROTECTION_URL}" style="color:#1a5276;text-decoration:none;">TREC Consumer Protection Notice</a>
+    </td>
+  </tr>
+  <tr>
+    <td style="vertical-align:top;padding-right:14px;width:120px;">
+      <img src="{PETER_HEADSHOT_URL}" alt="Peter Allen" width="120" style="display:block;border-radius:4px;width:120px;height:auto;" />
+    </td>
+    <td style="vertical-align:top;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.5;color:#333333;">
+      <strong style="font-size:16px;color:#1a1a1a;">Peter Allen</strong><br>
+      Lifestyle Design Realty, LLC<br>
+      Managing Realtor and Owner<br>
+      Army Veteran at your service<br>
+      <br>
+      C: <a href="tel:5203737839" style="color:#1a5276;text-decoration:none;">520.373.7839</a><br>
+      E: <a href="mailto:Peter@lifestyledesignrealty.com" style="color:#1a5276;text-decoration:none;">Peter@lifestyledesignrealty.com</a><br>
+      <a href="{REFERRAL_URL}" style="color:#1a5276;text-decoration:none;">Send this Link to a Friend [Click Here]</a><br>
+      <br>
+      1212 Chicon St, Suite 101<br>
+      Austin, TX 78702
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" style="padding-top:12px;">
+      <a href="{INSTAGRAM_URL}" style="text-decoration:none;margin-right:12px;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1a5276;">&#x1F4F7; View my feed</a>
+      <a href="{FACEBOOK_URL}" style="text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1a5276;">&#x1F44D; Add me on Facebook</a>
+    </td>
+  </tr>
+</table>
+"""
+
+    footer_html = f"""
+<table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;border-top:1px solid #eeeeee;padding-top:12px;width:100%;">
+  <tr>
+    <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.4;color:#999999;">
+      {rules.company_name}<br>
+      {rules.company_address}<br><br>
+      If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
+    </td>
+  </tr>
+</table>
+"""
+
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="margin:0;padding:20px;background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+{body_html}
+{signature_html}
+{footer_html}
+</body>
+</html>"""
+
+    return full_html
+
+
+def build_seller_email_plaintext(body_text: str, rules) -> str:
+    """Build the plain-text version of the seller nurture email with signature and footer.
+
+    Structure:
+      1. Email body (as-is)
+      2. Peter Allen signature (plain text)
+      3. CAN-SPAM footer
+
+    This is the plain-text fallback for email clients that don't render HTML.
+    """
+    signature_plain = """
+---
+Information About Brokerage Services: https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS-2024.pdf
+TREC Consumer Protection Notice: https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf
+
+Peter Allen
+Lifestyle Design Realty, LLC
+Managing Realtor and Owner
+Army Veteran at your service
+
+C: 520.373.7839
+E: Peter@lifestyledesignrealty.com
+Send this Link to a Friend: https://lifestyledesignrealty.com
+
+1212 Chicon St, Suite 101
+Austin, TX 78702
+
+Instagram: https://www.instagram.com/lifestyledesignrealtytexas/
+Facebook: https://www.facebook.com/lifestyledesignrealty
+"""
+
+    footer_plain = f"""
+--
+{rules.company_name}
+{rules.company_address}
+
+If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
+"""
+
+    return f"{body_text.strip()}\n{signature_plain}\n{footer_plain}"
