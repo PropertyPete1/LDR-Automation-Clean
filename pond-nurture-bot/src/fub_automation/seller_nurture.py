@@ -335,7 +335,10 @@ def generate_seller_email(
 # This signature is appended ONLY to seller nurture track emails.
 # Buyer sequences remain unchanged.
 
-PETER_HEADSHOT_URL = "https://raw.githubusercontent.com/PropertyPete1/LDR-Automation-Clean/main/pond-nurture-bot/assets/peter_headshot.png"
+# Served from the PUBLIC ldr-public-assets repo — this code repo is private, so
+# raw URLs on it would 404 for email clients. Verified 200 image/png
+# unauthenticated 2026-07-25.
+PETER_HEADSHOT_URL = "https://raw.githubusercontent.com/PropertyPete1/ldr-public-assets/main/peter_headshot.png"
 # Verified 200 (application/pdf) 2026-07-24. The previous "IABS-2024.pdf"
 # returned 404 — a dead regulatory-disclosure link on every seller email.
 # If TREC renames it again, the stable landing page is
