@@ -107,6 +107,17 @@ The assigned-agent accountability workflow also runs daily. If an assigned lead 
 
 The new-lead workflow starts from the `peopleCreated` webhook. The service stores a timer, checks after thirty minutes, creates an urgent Follow Up Boss task if untouched, checks again after sixty minutes, and reassigns to Peter Allen if still untouched.
 
+## Seller Nurture Track — Volume Ramp & Long-Tail Cadence (2026-07 upgrade)
+
+Seller leads (tag `Seller Lead`, pushed by the LDR-Seller-Finder repo) receive a 5-email sequence (days 0/4/10/18/30), then an ongoing long-tail drip. Both the daily volume and the long-tail cadence are settings in `config/rules.yaml`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `seller_daily_cap_ramp` | `[25, 25, 50, 50]` | Daily seller-email cap ramps weekly: week 0 (anchored to the first seller email ever sent) uses the first value, week 1 the second, and so on, then **holds at the last value forever**. A single-value list is a flat cap. |
+| `seller_longtail_cadence_days` | `21` | After email #5 (day 30), long-tail emails go out every N days (21 = every 3 weeks; previously 30 = monthly). |
+
+Long-tail emails rotate through three angles in strict order — `market_update` → `equity_teaser` → `case_study` → repeat — so copy never repeats back-to-back for the same lead. The rotation is derived from the number of emails already sent, so it needs no extra state and survives restarts. Stops are unchanged: reply (tags `Seller-Replied`), unsubscribe, and full bounce-exhaustion all end the drip. The Monday digest shows long-tail send counts with a per-angle breakdown.
+
 ## Compliance Reminder
 
 This project includes suppression hooks for opt-outs, SMS consent, and excluded contact tags, but it is not legal advice. The owner should confirm TCPA, DNC, CAN-SPAM, state law, brokerage policy, and platform-provider requirements before sending automated outreach. In particular, SMS should only be sent where documented consent exists, and commercial email must include truthful sender information, a valid postal address, and an opt-out mechanism.

@@ -54,6 +54,8 @@ from fub_automation.seller_nurture import (
     format_rotation_fub_note,
     generate_seller_email,
     get_all_lead_emails,
+    longtail_angle_for,
+    ramp_daily_cap,
     select_send_address,
 )
 
@@ -179,6 +181,9 @@ class Rules:
     long_term_nurture_suppression_tag: str
     # Email address update scanner — detects "I changed my email" replies and updates FUB automatically
     email_address_update_scan_enabled: bool
+    # Seller nurture volume ramp + long-tail cadence (LDR-Seller-Finder volume upgrade)
+    seller_daily_cap_ramp: List[int]      # e.g. [25, 25, 50, 50] — advances weekly, holds at last value
+    seller_longtail_cadence_days: int     # post-sequence cadence (was monthly/30; now every 3 weeks/21)
 
     @classmethod
     def load(cls, path: str) -> "Rules":
@@ -279,6 +284,8 @@ class Rules:
             long_term_nurture_suppression_tag=data.get("long_term_nurture_suppression_tag", "long-term-nurture"),
             # long_term_nurture_future_keywords removed — future-timeline detection is now AI-powered
             email_address_update_scan_enabled=bool(data.get("email_address_update_scan_enabled", True)),
+            seller_daily_cap_ramp=[int(c) for c in data.get("seller_daily_cap_ramp", [25, 25, 50, 50])] or [25],
+            seller_longtail_cadence_days=int(data.get("seller_longtail_cadence_days", 21)),
         )
 
 
@@ -544,6 +551,46 @@ class AuditDB:
                 """,
                 (person_id, now_iso(), now_iso(), property_address, neighborhood, subject, digest),
             )
+
+    def get_seller_first_send_at(self) -> Optional[dt.datetime]:
+        """Return the timestamp of the first seller nurture email ever sent.
+
+        Used as the anchor for the weekly cap ramp. Falls back to the earliest
+        enrollment if last_sent_at is missing. Returns None if no seller
+        nurture activity exists yet (ramp week 0).
+        """
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT MIN(COALESCE(last_sent_at, enrolled_at)) FROM seller_nurture_drip "
+                "WHERE emails_sent > 0 OR last_sent_at IS NOT NULL"
+            ).fetchone()
+        raw = row[0] if row else None
+        if not raw:
+            return None
+        try:
+            parsed = dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            return parsed
+        except ValueError:
+            return None
+
+    def get_seller_longtail_send_count(self, since: Optional[str] = None) -> int:
+        """Count long-tail seller sends (email #6+) from the audit log.
+
+        Used by the Monday digest. `since` is an ISO timestamp lower bound.
+        """
+        with self.connect() as con:
+            q = (
+                "SELECT COUNT(*) FROM audit_log WHERE action=? AND status IN ('sent','dry_run_sent') "
+                "AND CAST(json_extract(details, '$.email_number') AS INTEGER) > ?"
+            )
+            params: list = [SELLER_NURTURE_AUDIT_ACTION, SELLER_SEQUENCE_LENGTH]
+            if since:
+                q += " AND created_at >= ?"
+                params.append(since)
+            row = con.execute(q, params).fetchone()
+        return int(row[0] or 0)
 
     def get_all_seller_nurture_enrollments(self) -> List[dict]:
         """Return all seller nurture enrollments for stats/digest purposes."""
@@ -2362,11 +2409,19 @@ class RuleEngine:
         LOGGER.info("Seller nurture: %s candidate(s) found with tag '%s' globally.", len(candidates), SELLER_LEAD_TAG)
 
         sent_count = 0
-        cap = 25  # Daily cap for seller nurture emails
+        # Daily cap ramps weekly from rules.seller_daily_cap_ramp (e.g. [25,25,50,50]),
+        # anchored to the first seller nurture send ever, then holds at the last value.
+        first_send_at = self.db.get_seller_first_send_at()
+        cap = ramp_daily_cap(self.rules.seller_daily_cap_ramp, first_send_at)
+        LOGGER.info(
+            "Seller nurture: today's daily cap = %s (ramp %s, anchor %s)",
+            cap, self.rules.seller_daily_cap_ramp,
+            first_send_at.isoformat() if first_send_at else "none (week 0)",
+        )
 
         for person in candidates:
             if sent_count >= cap:
-                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "daily_cap_reached", None, {"cap": cap})
+                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "daily_cap_reached", None, {"cap": cap, "ramp": self.rules.seller_daily_cap_ramp})
                 LOGGER.info("Seller nurture: daily cap of %s reached.", cap)
                 break
             try:
@@ -2462,13 +2517,15 @@ class RuleEngine:
                 self.db.enroll_seller_nurture(person_id, prop_addr, neighborhood)
                 enrollment = self.db.get_seller_nurture_enrollment(person_id)
         else:
-            # Post-sequence: monthly cadence
+            # Post-sequence long-tail: every rules.seller_longtail_cadence_days
+            # (default 21 = every 3 weeks), with rotating angles.
+            longtail_days = int(getattr(self.rules, "seller_longtail_cadence_days", SELLER_MONTHLY_CADENCE_DAYS) or SELLER_MONTHLY_CADENCE_DAYS)
             if last_sent_raw:
                 last_sent_dt = parse_fub_datetime(last_sent_raw)
-                if last_sent_dt and dt.datetime.now(UTC) - last_sent_dt < dt.timedelta(days=SELLER_MONTHLY_CADENCE_DAYS):
+                if last_sent_dt and dt.datetime.now(UTC) - last_sent_dt < dt.timedelta(days=longtail_days):
                     days_since = (dt.datetime.now(UTC) - last_sent_dt).days
                     self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {
-                        "reason": f"monthly cadence: {days_since}d < {SELLER_MONTHLY_CADENCE_DAYS}d"
+                        "reason": f"long-tail cadence: {days_since}d < {longtail_days}d"
                     })
                     return "skipped"
 
@@ -2555,13 +2612,16 @@ class RuleEngine:
         # ── Update drip log ──
         self.db.upsert_seller_nurture_drip(person_id, subject, email_body, prop_addr, neighborhood)
         _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
-        self.db.log(SELLER_NURTURE_AUDIT_ACTION, _send_status, person_id, {
+        _audit_details = {
             "to": to_email,
             "subject": subject,
             "email_number": emails_sent + 1,
             "property_address": prop_addr,
             "neighborhood": neighborhood,
-        })
+        }
+        if emails_sent >= SELLER_SEQUENCE_LENGTH:
+            _audit_details["longtail_angle"] = longtail_angle_for(emails_sent)
+        self.db.log(SELLER_NURTURE_AUDIT_ACTION, _send_status, person_id, _audit_details)
         LOGGER.info(
             "Seller nurture: sent email #%s to person %s (%s)",
             emails_sent + 1, person_id, to_email

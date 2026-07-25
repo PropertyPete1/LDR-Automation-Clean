@@ -136,6 +136,16 @@ long_term_nurture_suppression_tag: "long-term-nurture"
 # Default: true (safe to leave on — only acts on very clear, explicit messages)
 email_address_update_scan_enabled: true
 
+# Seller Nurture volume ramp + long-tail cadence (volume upgrade, 2026-07)
+# Daily seller-email cap ramps weekly: week 0 (from the first seller email ever
+# sent) uses the first value, week 1 the second, etc., then HOLDS at the last
+# value forever. Edit the list to change pace; a single value = flat cap.
+seller_daily_cap_ramp: [25, 25, 50, 50]
+# After email #5 (day 30), long-tail cadence in days (21 = every 3 weeks).
+# Long-tail emails rotate angles market_update -> equity_teaser -> case_study
+# so copy never repeats back-to-back for the same lead. Was 30 (monthly).
+seller_longtail_cadence_days: 21
+
 # Pond nurture SMS — FUB native SMS sent alongside the daily pond nurture emails
 # Uses the same FUB /textMessages API as the Lifestyle Bot (NOT Twilio)
 # Deduplication: leads already texted by Lifestyle Bot today are skipped

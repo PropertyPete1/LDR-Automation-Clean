@@ -801,3 +801,120 @@ class TestSellerEmailSignature:
         assert "Lifestyle Design Realty, LLC" in text
         assert "Managing Realtor and Owner" in text
         assert "Army Veteran at your service" in text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Volume upgrade (2026-07): weekly cap ramp + 3-week long-tail angle rotation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSellerRampAndLongtail:
+    """Weekly daily-cap ramp and every-3-weeks long-tail angle rotation."""
+
+    def test_ramp_week_progression(self):
+        import datetime as _dt
+        from datetime import timezone as _tz
+        from fub_automation.seller_nurture import ramp_daily_cap
+        now = _dt.datetime(2026, 7, 24, tzinfo=_tz.utc)
+        ramp = [25, 25, 50, 50]
+        for days, expected in [(0, 25), (6, 25), (7, 25), (13, 25), (14, 50), (20, 50), (21, 50), (27, 50)]:
+            anchor = now - _dt.timedelta(days=days)
+            assert ramp_daily_cap(ramp, anchor, now) == expected, f"day {days}"
+
+    def test_ramp_holds_at_last_value_forever(self):
+        import datetime as _dt
+        from datetime import timezone as _tz
+        from fub_automation.seller_nurture import ramp_daily_cap
+        now = _dt.datetime(2026, 7, 24, tzinfo=_tz.utc)
+        anchor = now - _dt.timedelta(days=365)
+        assert ramp_daily_cap([25, 25, 50, 50], anchor, now) == 50
+
+    def test_ramp_no_anchor_is_week_zero(self):
+        from fub_automation.seller_nurture import ramp_daily_cap
+        assert ramp_daily_cap([25, 25, 50, 50], None) == 25
+
+    def test_ramp_empty_list_falls_back(self):
+        from fub_automation.seller_nurture import ramp_daily_cap
+        assert ramp_daily_cap([], None) == 25
+
+    def test_ramp_naive_datetime_handled(self):
+        import datetime as _dt
+        from fub_automation.seller_nurture import ramp_daily_cap
+        anchor = _dt.datetime(2020, 1, 1)  # naive, long past -> holds at last value
+        assert ramp_daily_cap([25, 50], anchor) == 50
+
+    def test_longtail_angle_rotation_never_repeats_back_to_back(self):
+        from fub_automation.seller_nurture import LONGTAIL_ANGLES, longtail_angle_for
+        seq = [longtail_angle_for(n) for n in range(5, 30)]
+        assert seq[0] == "market_update"  # first long-tail email
+        for a, b in zip(seq, seq[1:]):
+            assert a != b, "long-tail angle repeated back-to-back"
+        assert set(seq) == set(LONGTAIL_ANGLES)
+
+    def test_longtail_prompt_uses_rotated_angle(self, seller_person, mock_rules):
+        """Email #6 (emails_sent=5) must use market_update; #7 equity_teaser; #8 case_study."""
+        captured = {}
+
+        def fake_llm(messages, temperature=0.8):
+            captured["prompt"] = messages[0]["content"]
+            return json.dumps({"subject": "s", "email_body": "b"})
+
+        expectations = {5: "market_update", 6: "equity_teaser", 7: "case_study", 8: "market_update"}
+        for emails_sent, angle in expectations.items():
+            generate_seller_email(
+                llm_call_fn=fake_llm, person=seller_person, email_number=emails_sent,
+                property_address="", neighborhood="", notes_context="", rules=mock_rules,
+            )
+            assert angle in captured["prompt"], f"email #{emails_sent + 1} should use {angle}"
+
+    def test_rules_defaults(self, tmp_path):
+        """Rules.load exposes the new settings with correct defaults when absent from yaml."""
+        from fub_automation.main import Rules
+        p = tmp_path / "rules.yaml"
+        p.write_text("company_name: Test\n", encoding="utf-8")
+        r = Rules.load(str(p))
+        assert r.seller_daily_cap_ramp == [25, 25, 50, 50]
+        assert r.seller_longtail_cadence_days == 21
+
+    def test_first_send_anchor_and_longtail_count(self, tmp_path):
+        """AuditDB.get_seller_first_send_at + get_seller_longtail_send_count."""
+        from fub_automation.main import AuditDB
+        db = AuditDB(str(tmp_path / "d" / "audit.sqlite3"))
+        assert db.get_seller_first_send_at() is None
+        assert db.get_seller_longtail_send_count() == 0
+        with db.connect() as con:
+            con.execute(
+                "INSERT INTO seller_nurture_drip(person_id, enrolled_at, last_sent_at, emails_sent) "
+                "VALUES (1, '2026-07-01T12:00:00+00:00', '2026-07-01T12:00:00+00:00', 1)"
+            )
+        anchor = db.get_seller_first_send_at()
+        assert anchor is not None and anchor.year == 2026 and anchor.month == 7
+        db.log("seller_nurture", "sent", 1, {"email_number": 6, "longtail_angle": "market_update"})
+        db.log("seller_nurture", "sent", 1, {"email_number": 3})
+        assert db.get_seller_longtail_send_count() == 1
+
+    def test_digest_longtail_stats(self, tmp_path):
+        """weekly_digest.query_seller_nurture_stats returns long-tail counts + angle breakdown."""
+        import importlib.util
+        import os as _os
+        from fub_automation.main import AuditDB
+        db = AuditDB(str(tmp_path / "d" / "audit.sqlite3"))
+        db.log("seller_nurture", "sent", 1, {"email_number": 6, "longtail_angle": "market_update"})
+        db.log("seller_nurture", "sent", 2, {"email_number": 7, "longtail_angle": "equity_teaser"})
+        db.log("seller_nurture", "sent", 3, {"email_number": 2})  # sequence email, not long-tail
+        spec = importlib.util.spec_from_file_location(
+            "weekly_digest",
+            _os.path.join(str(Path(__file__).resolve().parent.parent), "weekly_digest.py"),
+        )
+        wd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(wd)
+        conn = sqlite3.connect(db.path)
+        conn.row_factory = sqlite3.Row
+        start = dt.datetime(2020, 1, 1)
+        end = dt.datetime(2030, 1, 1)
+        stats = wd.query_seller_nurture_stats(conn, start, end)
+        assert stats["seller_longtail_sent"] == 2
+        assert stats["seller_longtail_angles"] == {"market_update": 1, "equity_teaser": 1}
+        assert stats["seller_emails_sent"] == 3
+        html = wd.format_seller_nurture_section(stats)
+        assert "Long-tail sends this week" in html
+        assert "market update: 1" in html

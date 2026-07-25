@@ -68,6 +68,38 @@ def query_seller_nurture_stats(conn, start: dt.datetime, end: dt.datetime) -> di
     ).fetchone()["cnt"]
     stats["seller_emails_sent"] = sent
 
+    # Long-tail sends this period (email #6+, i.e. after the day-30 email;
+    # every-3-weeks cadence with rotating market/equity/case-study angles)
+    try:
+        longtail = conn.execute(
+            """SELECT COUNT(*) as cnt FROM audit_log
+               WHERE created_at >= ? AND created_at < ?
+               AND action = 'seller_nurture'
+               AND status IN ('sent', 'email_sent', 'completed')
+               AND CAST(json_extract(details, '$.email_number') AS INTEGER) > 5""",
+            (start_iso, end_iso),
+        ).fetchone()["cnt"]
+    except Exception:
+        longtail = 0
+    stats["seller_longtail_sent"] = longtail
+
+    # Long-tail angle breakdown for the period
+    stats["seller_longtail_angles"] = {}
+    try:
+        angle_rows = conn.execute(
+            """SELECT json_extract(details, '$.longtail_angle') as angle, COUNT(*) as cnt
+               FROM audit_log
+               WHERE created_at >= ? AND created_at < ?
+               AND action = 'seller_nurture'
+               AND status IN ('sent', 'email_sent', 'completed')
+               AND json_extract(details, '$.longtail_angle') IS NOT NULL
+               GROUP BY angle""",
+            (start_iso, end_iso),
+        ).fetchall()
+        stats["seller_longtail_angles"] = {r["angle"]: r["cnt"] for r in angle_rows}
+    except Exception:
+        pass
+
     # Seller leads enrolled (total in drip table)
     try:
         enrolled = conn.execute(
@@ -153,6 +185,13 @@ def format_seller_nurture_section(seller_stats: dict) -> str:
     replies_count = seller_stats.get("seller_replies_count", 0)
     errors = seller_stats.get("seller_errors", 0)
     replies = seller_stats.get("seller_replies", [])
+    longtail_sent = seller_stats.get("seller_longtail_sent", 0)
+    longtail_angles = seller_stats.get("seller_longtail_angles", {}) or {}
+    angle_breakdown = ""
+    if longtail_angles:
+        angle_breakdown = " (" + ", ".join(
+            f"{k.replace('_', ' ')}: {v}" for k, v in sorted(longtail_angles.items()) if k
+        ) + ")"
 
     # Seller Replies section for round-robin assignment
     replies_html = ""
@@ -198,6 +237,7 @@ def format_seller_nurture_section(seller_stats: dict) -> str:
     <h2>\U0001f3e0 Seller Nurture Track</h2>
     <table style="border-collapse: collapse; width: 100%;">
     <tr><td style="padding:6px;">Seller emails sent this week</td><td style="padding:6px;"><strong>{sent}</strong></td></tr>
+    <tr><td style="padding:6px;">Long-tail sends this week (email #6+, every 3 weeks)</td><td style="padding:6px;"><strong>{longtail_sent}</strong>{angle_breakdown}</td></tr>
     <tr><td style="padding:6px;">Total enrolled seller leads</td><td style="padding:6px;"><strong>{enrolled}</strong></td></tr>
     <tr><td style="padding:6px;">Seller replies this week</td><td style="padding:6px;"><strong>{replies_count}</strong></td></tr>
     <tr><td style="padding:6px;">Errors</td><td style="padding:6px;"><strong>{errors}</strong></td></tr>

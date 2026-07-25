@@ -43,7 +43,42 @@ SELLER_SEQUENCE_SCHEDULE = {
     4: 30,   # Email 5: day 30
 }
 SELLER_SEQUENCE_LENGTH = 5
-SELLER_MONTHLY_CADENCE_DAYS = 30  # After sequence completes, monthly updates
+SELLER_MONTHLY_CADENCE_DAYS = 30  # Legacy default; overridden by rules.seller_longtail_cadence_days (21 = every 3 weeks)
+
+# ── Long-tail angle rotation (post day-30 email) ────────────────────────────
+# Deterministic rotation keyed by how many long-tail emails have gone out, so
+# the same angle can never repeat back-to-back for a lead (and survives
+# restarts with no extra state — derived from emails_sent).
+LONGTAIL_ANGLES = ["market_update", "equity_teaser", "case_study"]
+
+
+def longtail_angle_for(emails_sent: int) -> str:
+    """Return the long-tail angle for the next email given emails already sent.
+
+    emails_sent >= SELLER_SEQUENCE_LENGTH (5). The first long-tail email
+    (emails_sent == 5) gets market_update, then equity_teaser, case_study,
+    market_update, … — strict rotation, never the same angle twice in a row.
+    """
+    idx = max(0, emails_sent - SELLER_SEQUENCE_LENGTH) % len(LONGTAIL_ANGLES)
+    return LONGTAIL_ANGLES[idx]
+
+
+def ramp_daily_cap(ramp: list, first_send_at: "Optional[dt.datetime]", now: "Optional[dt.datetime]" = None) -> int:
+    """Resolve today's seller daily send cap from the weekly ramp schedule.
+
+    ramp: e.g. [25, 25, 50, 50] — week 0 uses ramp[0], week 1 ramp[1], …
+    then holds at the last value forever. Anchor = first seller nurture email
+    ever sent (min enrolled_at). No anchor yet -> week 0.
+    """
+    if not ramp:
+        return 25
+    if first_send_at is None:
+        return int(ramp[0])
+    now = now or dt.datetime.now(timezone.utc)
+    if first_send_at.tzinfo is None:
+        first_send_at = first_send_at.replace(tzinfo=timezone.utc)
+    weeks = max(0, (now - first_send_at).days // 7)
+    return int(ramp[min(weeks, len(ramp) - 1)])
 
 # ── Seller Tag Constants ──────────────────────────────────────────────────────
 SELLER_LEAD_TAG = "seller lead"
@@ -212,25 +247,42 @@ def generate_seller_email(
             "This should feel like a friend saying 'I've got your back' — not a salesperson following up."
         )
     else:
-        # Monthly market update (post-sequence)
-        cycle_seed = f"{person_id}-seller-monthly-{email_number}-{dt.datetime.now(timezone.utc).strftime('%Y-%m')}"
-        seed_hash = int(hashlib.sha256(cycle_seed.encode('utf-8')).hexdigest(), 16)
-        monthly_angles = [
-            "quick local market pulse — what's selling in their area and what it means for their home value",
-            "seasonal market insight — how the current season affects home values and buyer demand",
-            "neighborhood spotlight — recent sales activity and what's trending in their area",
-            "home equity check-in — a friendly reminder that their home value may have changed",
-            "market conditions update — inventory, buyer demand, and what it means for homeowners",
-        ]
-        angle = monthly_angles[seed_hash % len(monthly_angles)]
-        email_angle = f"MONTHLY MARKET UPDATE: {angle}"
+        # Long-tail nurture (post day-30 email): every 3 weeks, strict angle
+        # rotation market_update -> equity_teaser -> case_study -> … so copy
+        # never repeats back-to-back for the same lead.
+        angle_key = longtail_angle_for(email_number)
+        longtail_instructions = {
+            "market_update": (
+                "LOCAL MARKET UPDATE",
+                "Share a quick local market pulse: what's been selling in their area, general "
+                "trends in buyer demand or inventory, and what that means for their home's value. "
+                "Do NOT invent specific statistics. Informational and helpful — 'thought you'd want "
+                "to know what's happening in your neighborhood.' "
+                "End with a soft question like 'curious what your place might be worth right now?'"
+            ),
+            "equity_teaser": (
+                "EQUITY TEASER",
+                "Use the angle that many homeowners are sitting on more equity than they realize, "
+                "and home values in their area may have shifted since they last checked. "
+                "Friendly reminder that knowing where they stand costs nothing. "
+                "Soft CTA: offer to run a free, no-obligation equity report for their place."
+            ),
+            "case_study": (
+                "LOCAL CASE STUDY",
+                "Share a brief, privacy-safe story about recently helping a local homeowner get a "
+                "great result (sold above asking, quick sale, smooth process). No real names or "
+                "exact addresses. The point is quiet social proof. "
+                "End with a casual, zero-pressure offer to chat whenever they're curious about their options."
+            ),
+        }
+        angle_title, angle_instruction = longtail_instructions[angle_key]
+        email_angle = f"LONG-TAIL NURTURE ({angle_key}): {angle_title}"
         email_instruction = (
-            f"This is a monthly market update for a seller lead (email #{email_number + 1} in the ongoing nurture). "
-            f"Focus on: {angle}. "
-            "Keep it informational, helpful, and low-pressure. "
-            "Reference their neighborhood or area if known. "
-            "End with a simple question or soft CTA — 'curious about your home's current value?' or similar. "
-            "This should feel like a helpful market newsletter from a friend in real estate, not a sales pitch."
+            f"This is an ongoing long-tail nurture email for a seller lead (email #{email_number + 1} overall; "
+            f"these go out every few weeks after the initial sequence). "
+            f"{angle_instruction} "
+            "Keep it informational, warm, and low-pressure — like a helpful note from a friend in real "
+            "estate, never a sales pitch. Reference their neighborhood or area if known."
         )
 
     safe_notes = notes_context or "No recent notes available."
