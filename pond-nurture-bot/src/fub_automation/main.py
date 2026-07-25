@@ -2541,6 +2541,12 @@ class RuleEngine:
                     self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": "email unsubscribed"})
                     return "suppressed"
 
+        # Source-based exclusion (e.g. Zillow Rentals — never touch, stays on Steven)
+        excluded_src = self._is_excluded_source(person)
+        if excluded_src:
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
+            return "suppressed"
+
         # SOI silence check
         soi_reason = self._is_soi_silenced(person)
         if soi_reason:

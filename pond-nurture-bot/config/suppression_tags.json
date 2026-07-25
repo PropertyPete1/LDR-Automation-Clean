@@ -29,6 +29,7 @@
   ],
   "excluded_sources": [
     "New Agent Inquiry",
-    "BOTM Newsletter"
+    "BOTM Newsletter",
+    "Zillow Rentals"
   ]
 }
