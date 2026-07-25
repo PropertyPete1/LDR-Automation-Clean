@@ -373,7 +373,7 @@ def build_seller_email_html(body_text: str, rules) -> str:
     body_html = "\n".join(body_html_parts)
 
     signature_html = f"""
-<table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;border-top:1px solid #cccccc;padding-top:16px;">
+<table cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;border-top:1px solid #cccccc;padding-top:16px;width:100%;max-width:500px;">
   <tr>
     <td colspan="2" style="padding-bottom:12px;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.4;">
       <a href="{TREC_IABS_URL}" style="color:#1a5276;text-decoration:none;">Information About Brokerage Services</a><br>
@@ -381,10 +381,10 @@ def build_seller_email_html(body_text: str, rules) -> str:
     </td>
   </tr>
   <tr>
-    <td style="vertical-align:top;padding-right:14px;width:120px;">
-      <img src="{PETER_HEADSHOT_URL}" alt="Peter Allen" width="120" style="display:block;border-radius:4px;width:120px;height:auto;" />
+    <td style="vertical-align:middle;padding-right:16px;width:110px;">
+      <img src="{PETER_HEADSHOT_URL}" alt="Peter Allen" width="110" height="147" style="display:block;border-radius:6px;width:110px;height:147px;" />
     </td>
-    <td style="vertical-align:top;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.5;color:#333333;">
+    <td style="vertical-align:middle;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#333333;">
       <strong style="font-size:16px;color:#1a1a1a;">Peter Allen</strong><br>
       Lifestyle Design Realty, LLC<br>
       Managing Realtor and Owner<br>

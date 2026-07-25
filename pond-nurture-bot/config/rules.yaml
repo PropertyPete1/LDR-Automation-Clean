@@ -3,7 +3,7 @@
 # Owner approved Phase 2 customer emails and stale-agent reassignment live on June 3, 2026; keep SMS disabled.
 
 company_name: "Lifestyle Design Realty"
-company_address: "1209 S Saint Marys St #232, San Antonio, TX 78210"
+company_address: "1212 Chicon St, Suite 101, Austin, TX 78702"
 owner_email: "peter@lifestyledesignrealty.com"
 team_email: "team@lifestyledesignrealty.com"  # Lead-facing From address (verified alias on peter@ GWS)
 default_agent_reminder_cc: "peter@lifestyledesignrealty.com"

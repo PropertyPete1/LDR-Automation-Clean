@@ -662,7 +662,7 @@ class TestSellerEmailSignature:
 
     class FakeRules:
         company_name = "Lifestyle Design Realty"
-        company_address = "1209 S Saint Marys St #232, San Antonio, TX 78210"
+        company_address = "1212 Chicon St, Suite 101, Austin, TX 78702"
 
     def test_html_contains_peter_allen_name(self):
         from fub_automation.seller_nurture import build_seller_email_html
