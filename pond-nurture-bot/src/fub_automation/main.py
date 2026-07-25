@@ -395,6 +395,22 @@ class AuditDB:
                 );
                 """
             )
+            # Crash-safe send ledger. The drip row (emails_sent) is only bumped
+            # AFTER the SMTP handoff, so a crash between "email delivered" and
+            # "drip updated" used to make the next run re-send the very same
+            # email to the same lead. A claim is written here BEFORE the send
+            # and rolled back only if the send itself raises; a hard crash
+            # leaves the claim standing, which fails safe (never double-send).
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seller_send_claims (
+                    person_id    INTEGER NOT NULL,
+                    email_number INTEGER NOT NULL,
+                    claimed_at   TEXT NOT NULL,
+                    PRIMARY KEY (person_id, email_number)
+                );
+                """
+            )
 
     def log(self, action: str, status: str, person_id: Optional[int] = None, details: Optional[dict] = None) -> None:
         with self.connect() as con:
@@ -551,6 +567,48 @@ class AuditDB:
                 """,
                 (person_id, now_iso(), now_iso(), property_address, neighborhood, subject, digest),
             )
+
+    def claim_seller_send(self, person_id: int, email_number: int) -> bool:
+        """Reserve (person_id, email_number) before sending. False = already claimed.
+
+        The PRIMARY KEY does the work: a second attempt at the same email for
+        the same lead — whether from a crash-resumed run or an accidental
+        re-dispatch — inserts 0 rows and is refused.
+        """
+        with self.connect() as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO seller_send_claims(person_id, email_number, claimed_at) "
+                "VALUES (?, ?, ?)",
+                (person_id, email_number, now_iso()),
+            )
+            return cur.rowcount > 0
+
+    def release_seller_send_claim(self, person_id: int, email_number: int) -> None:
+        """Undo a claim when the send raised — the email never left, so retry.
+
+        Only call this on a caught send exception. A hard crash deliberately
+        leaves the claim in place: skipping one email beats sending it twice.
+        """
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM seller_send_claims WHERE person_id=? AND email_number=?",
+                (person_id, email_number),
+            )
+
+    def count_seller_sends_since(self, since_iso: str) -> int:
+        """Seller nurture emails actually sent since `since_iso` (audit log).
+
+        Used for the daily ramp cap. A per-run counter is not a daily cap: a
+        manual workflow_dispatch, or a re-run of a failed job, would grant a
+        second full cap on the same calendar day.
+        """
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE action=? "
+                "AND status IN ('sent','dry_run_sent') AND created_at >= ?",
+                (SELLER_NURTURE_AUDIT_ACTION, since_iso),
+            ).fetchone()
+        return int(row[0] or 0)
 
     def get_seller_first_send_at(self) -> Optional[dt.datetime]:
         """Return the timestamp of the first seller nurture email ever sent.
@@ -1765,6 +1823,9 @@ NO_WINDOW"""
                     "reason": f"AI error: {exc}", "trigger_snippet": ""}
 
 
+SMTP_TIMEOUT_SECONDS = 60
+
+
 class EmailSender:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -1801,7 +1862,11 @@ class EmailSender:
         msg.set_content(body)
         if html_body:
             msg.add_alternative(html_body, subtype="html")
-        with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port) as smtp:
+        # timeout is REQUIRED: without it smtplib inherits the OS socket
+        # default, so a hung SMTP connection stalls the whole daily run until
+        # the 90-minute job timeout and every remaining lead goes unsent.
+        with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port,
+                          timeout=SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.starttls()
             smtp.login(self.settings.smtp_user, self.settings.smtp_password)
             smtp.send_message(msg)
@@ -2408,21 +2473,32 @@ class RuleEngine:
 
         LOGGER.info("Seller nurture: %s candidate(s) found with tag '%s' globally.", len(candidates), SELLER_LEAD_TAG)
 
-        sent_count = 0
         # Daily cap ramps weekly from rules.seller_daily_cap_ramp (e.g. [25,25,50,50]),
         # anchored to the first seller nurture send ever, then holds at the last value.
         first_send_at = self.db.get_seller_first_send_at()
         cap = ramp_daily_cap(self.rules.seller_daily_cap_ramp, first_send_at)
+        # Seed from what has ALREADY gone out today rather than starting at 0.
+        # A local per-run counter is not a daily cap — a manual dispatch or a
+        # re-run of a failed job would hand out a second full cap the same day.
+        day_start = dt.datetime.now(UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0).isoformat()
+        already_sent_today = self.db.count_seller_sends_since(day_start)
+        sent_count = already_sent_today
         LOGGER.info(
-            "Seller nurture: today's daily cap = %s (ramp %s, anchor %s)",
+            "Seller nurture: today's daily cap = %s (ramp %s, anchor %s, already sent today %s)",
             cap, self.rules.seller_daily_cap_ramp,
             first_send_at.isoformat() if first_send_at else "none (week 0)",
+            already_sent_today,
         )
 
         for person in candidates:
             if sent_count >= cap:
-                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "daily_cap_reached", None, {"cap": cap, "ramp": self.rules.seller_daily_cap_ramp})
-                LOGGER.info("Seller nurture: daily cap of %s reached.", cap)
+                self.db.log(SELLER_NURTURE_AUDIT_ACTION, "daily_cap_reached", None, {
+                    "cap": cap, "ramp": self.rules.seller_daily_cap_ramp,
+                    "already_sent_today": already_sent_today,
+                })
+                LOGGER.info("Seller nurture: daily cap of %s reached (%s already sent today).",
+                            cap, already_sent_today)
                 break
             try:
                 status = self.process_seller_nurture_candidate(person)
@@ -2432,7 +2508,8 @@ class RuleEngine:
                 LOGGER.exception("Seller nurture failed for person %s", person.get("id"))
                 self.db.log(SELLER_NURTURE_AUDIT_ACTION, "error", person.get("id"), {"error": str(exc)})
 
-        LOGGER.info("Seller nurture: completed. Sent=%s", sent_count)
+        LOGGER.info("Seller nurture: completed. Sent this run=%s (today total=%s, cap=%s)",
+                    sent_count - already_sent_today, sent_count, cap)
 
     def process_seller_nurture_candidate(self, person: dict) -> str:
         """Process a single seller lead for the nurture drip.
@@ -2586,15 +2663,33 @@ class RuleEngine:
         bcc_list = extra_bcc + (
             [self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else []
         )
-        self.email.send(
-            to_email,
-            subject,
-            seller_plaintext,
-            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
-            reply_to=self.rules.owner_email,
-            html_body=seller_html,
-            bcc=bcc_list,
-        )
+        # Claim this exact (lead, email #) BEFORE handing off to SMTP. The drip
+        # row is only bumped after the send returns, so without this a crash in
+        # between makes the next run re-send the same email to the same person.
+        if not self.db.claim_seller_send(person_id, emails_sent):
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {
+                "reason": f"email #{emails_sent + 1} already claimed — a previous run "
+                          "sent it (or crashed after sending); not re-sending",
+            })
+            LOGGER.warning(
+                "Seller nurture: email #%s for person %s already claimed — skipping "
+                "to avoid a duplicate send", emails_sent + 1, person_id)
+            return "skipped"
+        try:
+            self.email.send(
+                to_email,
+                subject,
+                seller_plaintext,
+                from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
+                reply_to=self.rules.owner_email,
+                html_body=seller_html,
+                bcc=bcc_list,
+            )
+        except Exception:
+            # The send raised, so nothing was delivered — release the claim so
+            # this email is retried. (A hard crash keeps the claim on purpose.)
+            self.db.release_seller_send_claim(person_id, emails_sent)
+            raise
 
         # ── Log FUB note ──
         try:

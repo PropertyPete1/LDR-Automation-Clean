@@ -4,4 +4,6 @@ requests==2.32.3
 PyYAML==6.0.2
 pydantic==2.10.4
 APScheduler==3.10.4
-anthropic>=0.34.0
+# Pinned (was >=0.34.0): Actions installs fresh every run, so an open floor
+# let an upstream release change LLM behaviour with no commit in this repo.
+anthropic==0.120.0

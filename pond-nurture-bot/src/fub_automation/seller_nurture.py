@@ -336,7 +336,11 @@ def generate_seller_email(
 # Buyer sequences remain unchanged.
 
 PETER_HEADSHOT_URL = "https://raw.githubusercontent.com/PropertyPete1/LDR-Automation-Clean/main/pond-nurture-bot/assets/peter_headshot.png"
-TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS-2024.pdf"
+# Verified 200 (application/pdf) 2026-07-24. The previous "IABS-2024.pdf"
+# returned 404 — a dead regulatory-disclosure link on every seller email.
+# If TREC renames it again, the stable landing page is
+# https://www.trec.texas.gov/forms/information-about-brokerage-services
+TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf"
 TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf"
 INSTAGRAM_URL = "https://www.instagram.com/lifestyledesignrealtytexas/"
 FACEBOOK_URL = "https://www.facebook.com/lifestyledesignrealty"
@@ -435,10 +439,12 @@ def build_seller_email_plaintext(body_text: str, rules) -> str:
 
     This is the plain-text fallback for email clients that don't render HTML.
     """
-    signature_plain = """
+    # Built from the same constants as the HTML signature so the two versions
+    # cannot drift apart (they had already drifted once on the IABS link).
+    signature_plain = f"""
 ---
-Information About Brokerage Services: https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS-2024.pdf
-TREC Consumer Protection Notice: https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf
+Information About Brokerage Services: {TREC_IABS_URL}
+TREC Consumer Protection Notice: {TREC_CONSUMER_PROTECTION_URL}
 
 Peter Allen
 Lifestyle Design Realty, LLC
