@@ -39,7 +39,7 @@ from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from anthropic import Anthropic
 from pydantic import BaseModel
 
-from fub_automation.seller_nurture import (
+from .seller_nurture import (
     SELLER_BOUNCE_ROTATION_ACTION,
     SELLER_LEAD_TAG,
     SELLER_MONTHLY_CADENCE_DAYS,
@@ -3579,10 +3579,7 @@ class RuleEngine:
             "I appreciate you taking care of these.",
         ], 29)
 
-        try:
-            from fub_automation.sms_helpers import get_upcoming_holiday, generate_personalized_sms, make_sms_uri
-        except ModuleNotFoundError:
-            from src.fub_automation.sms_helpers import get_upcoming_holiday, generate_personalized_sms, make_sms_uri
+        from .sms_helpers import get_upcoming_holiday, generate_personalized_sms, make_sms_uri
 
         local_date = dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()
         holiday = get_upcoming_holiday(local_date)
@@ -4095,10 +4092,7 @@ class RuleEngine:
         if recent_email_thread:
             LOGGER.info("Thread-aware mode: found email thread for person %s, will continue conversation", person_id)
         # Detect holiday for holiday-aware emails
-        try:
-            from fub_automation.sms_helpers import get_upcoming_holiday as _get_holiday
-        except ModuleNotFoundError:
-            from src.fub_automation.sms_helpers import get_upcoming_holiday as _get_holiday
+        from .sms_helpers import get_upcoming_holiday as _get_holiday
         _today_holiday = _get_holiday(dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()) or ""
         # ── Tier 3 Feature 2: Gather expanded context for deeper personalization ──
         last_angle_used = self.db.get_last_email_angle(person_id) or ""
@@ -4640,17 +4634,14 @@ class RuleEngine:
         examples: List[str] = []
         reassigned_leads_for_peter: List[dict] = []
         
-        # Load SMS helpers — try both import paths for compatibility
+        # Load SMS helpers (package-relative; degrades if unavailable)
         try:
-            from src.fub_automation.sms_helpers import generate_personalized_sms, make_sms_uri, get_upcoming_holiday
+            from .sms_helpers import generate_personalized_sms, make_sms_uri, get_upcoming_holiday
         except ModuleNotFoundError:
-            try:
-                from fub_automation.sms_helpers import generate_personalized_sms, make_sms_uri, get_upcoming_holiday
-            except ModuleNotFoundError:
-                # sms_helpers not available — skip SMS-specific summary content
-                generate_personalized_sms = None
-                make_sms_uri = None
-                def get_upcoming_holiday(d): return None
+            # sms_helpers not available — skip SMS-specific summary content
+            generate_personalized_sms = None
+            make_sms_uri = None
+            def get_upcoming_holiday(d): return None
         holiday = get_upcoming_holiday(dt.date.today())
 
         for row in rows:
