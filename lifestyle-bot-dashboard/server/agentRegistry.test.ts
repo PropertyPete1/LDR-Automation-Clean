@@ -129,7 +129,7 @@ describe("agentRegistry", () => {
   });
 
   describe("fubUsers", () => {
-    it("returns an array (admin procedure)", async () => {
+    it("returns an array (admin procedure)", { timeout: 15000 }, async () => {
       const caller = appRouter.createCaller(createAdminContext());
       const result = await caller.agentRegistry.fubUsers();
       expect(Array.isArray(result)).toBe(true);

@@ -188,6 +188,33 @@ describe("Temporal Reasoning — Date-Aware Prompts", () => {
 // ─── 5. Skip-Gate — 24h Agent Note Check ─────────────────────────────────────
 
 describe("Skip-Gate — 24h Agent Note Check", () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    // Mock fetch: FUB deals returns empty, Anthropic returns skip=false
+    global.fetch = vi.fn(async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes("followupboss.com")) {
+        return { ok: true, json: async () => ({ deals: [] }), text: async () => "{}" } as any;
+      }
+      if (urlStr.includes("anthropic.com")) {
+        return {
+          ok: true,
+          json: async () => ({
+            content: [{ type: "text", text: JSON.stringify({ skip: false, reason: "Lead seems engaged" }) }]
+          }),
+          text: async () => JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ skip: false }) }] }),
+        } as any;
+      }
+      return originalFetch(url);
+    }) as any;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
   it("skips a lead whose agent wrote a note within the last 24 hours", async () => {
     const recentNoteTime = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(); // 6 hours ago
     const lead: FubPerson = {
@@ -210,7 +237,7 @@ describe("Skip-Gate — 24h Agent Note Check", () => {
   });
 
   it("does NOT skip a lead whose last note is 48 hours old", { timeout: 15000 }, async () => {
-    // This test will actually call Anthropic (or fail gracefully if no key)
+    // This test will actually call Anthropic (or fail gracefully if WAF-blocked/no key)
     // The important thing is the 24h check doesn't fire
     const oldNoteTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // 48 hours ago
     const lead: FubPerson = {

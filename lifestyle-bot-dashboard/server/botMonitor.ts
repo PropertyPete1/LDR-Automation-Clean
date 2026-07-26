@@ -40,7 +40,8 @@ async function getAllBots(): Promise<Array<{ slug: string; name: string }>> {
     const db = await getDb();
     if (!db) return ALL_BOTS_FALLBACK;
     const { agentBots } = await import("../drizzle/schema");
-    const rows = await db.select().from(agentBots);
+    const { eq } = await import("drizzle-orm");
+    const rows = await db.select().from(agentBots).where(eq(agentBots.engineActive, true));
     return buildWatchedBotList(rows);
   } catch {
     return ALL_BOTS_FALLBACK;

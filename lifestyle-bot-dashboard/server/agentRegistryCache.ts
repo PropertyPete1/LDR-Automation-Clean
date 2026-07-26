@@ -110,11 +110,11 @@ export function isLeaderAgent(agentFirstName: string): boolean {
 
 /**
  * Get all bots for the Bot Monitor (replaces ALL_BOTS array).
- * Returns all registered agents regardless of engineActive status.
+ * Returns only ACTIVE agents (engineActive=true). Offboarded agents are excluded.
  */
 export async function getAllBotsForMonitor(): Promise<Array<{ slug: string; name: string }>> {
   const registry = await getAgentRegistry();
-  return registry.map(r => ({ slug: r.botSlug, name: r.botName }));
+  return registry.filter(r => r.engineActive).map(r => ({ slug: r.botSlug, name: r.botName }));
 }
 
 /**
@@ -131,7 +131,7 @@ export async function getPublicAgentList(): Promise<Array<{
   powerQueueName: string;
 }>> {
   const registry = await getAgentRegistry();
-  return registry.map(r => ({
+  return registry.filter(r => r.engineActive).map(r => ({
     slug: r.botSlug,
     firstName: r.agentFirstName,
     lastName: r.agentLastName,
