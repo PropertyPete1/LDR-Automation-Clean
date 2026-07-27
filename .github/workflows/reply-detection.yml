@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: ldr-state
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   DRY_RUN: "false"
