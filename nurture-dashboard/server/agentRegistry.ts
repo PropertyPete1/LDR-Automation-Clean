@@ -18,7 +18,7 @@ import { ENV } from "./_core/env";
 const FUB_BASE = "https://api.followupboss.com/v1";
 
 // Agents permanently removed from the active roster — never show in any UI
-const EXCLUDED_AGENTS = new Set(["luke", "bebe"]);
+const EXCLUDED_AGENTS = new Set(["luke", "bebe", "jason"]);
 
 // FUB user roles that indicate non-agent accounts
 const EXCLUDED_FUB_ROLES = new Set(["readonly"]);

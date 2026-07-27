@@ -58,6 +58,7 @@ excluded_user_ids:
   - 16
   - 34
   - 20  # Tiffany Proske — removed from all automation per owner request 2026-07-07
+  - 37  # Jason Casanova — left company, mailbox deleted 2026-07-27
 
 # Confirmed account stages from read-only probe:
 # Lead, Hot Prospect, Nurture, Active Client, Pending, Closed, Past Client, Sphere, Trash, Unresponsive.
