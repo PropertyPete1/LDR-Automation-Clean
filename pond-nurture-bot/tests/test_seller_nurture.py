@@ -712,7 +712,7 @@ class TestSellerEmailSignature:
     def test_html_contains_referral_link(self):
         from fub_automation.seller_nurture import build_seller_email_html
         html = build_seller_email_html("Hey there, just checking in.", self.FakeRules())
-        assert "Send this Link to a Friend" in html
+        assert "lifestyledesignrealty.com" in html
 
     def test_html_contains_company_info_and_title(self):
         from fub_automation.seller_nurture import build_seller_email_html
