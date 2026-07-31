@@ -23,6 +23,7 @@ export interface AgentRegistryEntry {
   accentColor: string;
   headerGradient: string;
   engineActive: boolean;
+  legacyRetired: boolean;
 }
 
 let _cache: AgentRegistryEntry[] | null = null;
@@ -55,6 +56,7 @@ export async function getAgentRegistry(): Promise<AgentRegistryEntry[]> {
       accentColor: r.accentColor,
       headerGradient: r.headerGradient,
       engineActive: r.engineActive,
+      legacyRetired: r.legacyRetired,
     }));
     _cacheTime = now;
     return _cache;
@@ -115,6 +117,18 @@ export function isLeaderAgent(agentFirstName: string): boolean {
 export async function getAllBotsForMonitor(): Promise<Array<{ slug: string; name: string }>> {
   const registry = await getAgentRegistry();
   return registry.filter(r => r.engineActive).map(r => ({ slug: r.botSlug, name: r.botName }));
+}
+
+/**
+ * Check if a bot slug is retired (legacyRetired=true).
+ * Used as a second-layer defense in legacy handlers to prevent stray heartbeats
+ * from sending clock-in/clock-off emails after migration.
+ */
+export async function isLegacyRetired(slug: string): Promise<boolean> {
+  const registry = await getAgentRegistry();
+  const match = registry.find(r => r.botSlug === slug);
+  // If no match found (orphan slug), treat as retired
+  return match ? match.legacyRetired : true;
 }
 
 /**

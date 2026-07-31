@@ -30,6 +30,7 @@ import { runAbbyBot, sendAbbyBotClockinEmail, sendAbbyBotClockoffEmail } from ".
 import { runIrmaBot, sendIrmaBotClockinEmail, sendIrmaBotClockoffEmail } from "./irmaBot";
 import { runLailaBot, sendLailaBotClockinEmail, sendLailaBotClockoffEmail } from "./lailaBot";
 import { runBotMonitor } from "./botMonitor";
+import { isLegacyRetired } from "./agentRegistryCache";
 import { runLeadReplyChecker } from "./leadReplyChecker";
 import {
   runAllEngineAgents,
@@ -86,6 +87,7 @@ async function withCrashObservation(
 
 export async function handleSpClockin(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("sp500")) { res.json({ ok: true, bot: "sp500", action: "clockin", skipped: "legacyRetired" }); return; }
   await withCrashObservation("sp500", "clockin", async () => {
     await sendSpBotClockinEmail();
     res.json({ ok: true, bot: "sp500", action: "clockin" });
@@ -94,6 +96,7 @@ export async function handleSpClockin(req: Request, res: Response): Promise<void
 
 export async function handleSpRun(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("sp500")) { res.json({ ok: true, bot: "sp500", action: "run", skipped: "legacyRetired" }); return; }
   await withCrashObservation("sp500", "run", async () => {
     const result = await runSpBot();
     // Clock-off email is sent at 6 PM by handleSpClockoff — not here.
@@ -121,6 +124,7 @@ export async function handleSpStevenRun(req: Request, res: Response): Promise<vo
 
 export async function handleSpClockoff(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("sp500")) { res.json({ ok: true, bot: "sp500", action: "clockoff", skipped: "legacyRetired" }); return; }
   await withCrashObservation("sp500", "clockoff", async () => {
     // Read today's real results from the DB (written by the 10:05am -run handler)
     const results = await getTodayBotRunResults("sp500");
@@ -133,6 +137,7 @@ export async function handleSpClockoff(req: Request, res: Response): Promise<voi
 
 export async function handleTiffanyClockin(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("tiffany")) { res.json({ ok: true, bot: "tiffany", action: "clockin", skipped: "legacyRetired" }); return; }
   await withCrashObservation("tiffany", "clockin", async () => {
     await sendTiffanyBotClockinEmail();
     res.json({ ok: true, bot: "tiffany", action: "clockin" });
@@ -141,6 +146,7 @@ export async function handleTiffanyClockin(req: Request, res: Response): Promise
 
 export async function handleTiffanyRun(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("tiffany")) { res.json({ ok: true, bot: "tiffany", action: "run", skipped: "legacyRetired" }); return; }
   await withCrashObservation("tiffany", "run", async () => {
     const result = await runTiffanyBot();
     // Clock-off email is sent at 6 PM by handleTiffanyClockoff — not here.
@@ -150,6 +156,7 @@ export async function handleTiffanyRun(req: Request, res: Response): Promise<voi
 
 export async function handleTiffanyClockoff(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("tiffany")) { res.json({ ok: true, bot: "tiffany", action: "clockoff", skipped: "legacyRetired" }); return; }
   await withCrashObservation("tiffany", "clockoff", async () => {
     const results = await getTodayBotRunResults("tiffany");
     await sendTiffanyBotClockoffEmail(results.sent, results.errored, results.skipped);
@@ -161,6 +168,7 @@ export async function handleTiffanyClockoff(req: Request, res: Response): Promis
 
 export async function handleStefanieClockin(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("stefanie")) { res.json({ ok: true, bot: "stefanie", action: "clockin", skipped: "legacyRetired" }); return; }
   await withCrashObservation("stefanie", "clockin", async () => {
     await sendStefanieBotClockinEmail();
     res.json({ ok: true, bot: "stefanie", action: "clockin" });
@@ -169,6 +177,7 @@ export async function handleStefanieClockin(req: Request, res: Response): Promis
 
 export async function handleStefanieRun(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("stefanie")) { res.json({ ok: true, bot: "stefanie", action: "run", skipped: "legacyRetired" }); return; }
   await withCrashObservation("stefanie", "run", async () => {
     const result = await runStefanieBot();
     // Clock-off email is sent at 6 PM by handleStefanieClockoff — not here.
@@ -178,6 +187,7 @@ export async function handleStefanieRun(req: Request, res: Response): Promise<vo
 
 export async function handleStefanieClockoff(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("stefanie")) { res.json({ ok: true, bot: "stefanie", action: "clockoff", skipped: "legacyRetired" }); return; }
   await withCrashObservation("stefanie", "clockoff", async () => {
     const results = await getTodayBotRunResults("stefanie");
     await sendStefanieBotClockoffEmail(results.sent, results.errored, results.skipped);
@@ -189,6 +199,7 @@ export async function handleStefanieClockoff(req: Request, res: Response): Promi
 
 export async function handleAbbyClockin(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("abby")) { res.json({ ok: true, bot: "abby", action: "clockin", skipped: "legacyRetired" }); return; }
   await withCrashObservation("abby", "clockin", async () => {
     await sendAbbyBotClockinEmail();
     res.json({ ok: true, bot: "abby", action: "clockin" });
@@ -197,6 +208,7 @@ export async function handleAbbyClockin(req: Request, res: Response): Promise<vo
 
 export async function handleAbbyRun(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("abby")) { res.json({ ok: true, bot: "abby", action: "run", skipped: "legacyRetired" }); return; }
   await withCrashObservation("abby", "run", async () => {
     const result = await runAbbyBot();
     // Clock-off email is sent at 6 PM by handleAbbyClockoff — not here.
@@ -206,6 +218,7 @@ export async function handleAbbyRun(req: Request, res: Response): Promise<void> 
 
 export async function handleAbbyClockoff(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("abby")) { res.json({ ok: true, bot: "abby", action: "clockoff", skipped: "legacyRetired" }); return; }
   await withCrashObservation("abby", "clockoff", async () => {
     const results = await getTodayBotRunResults("abby");
     await sendAbbyBotClockoffEmail(results.sent, results.errored, results.skipped);
@@ -217,6 +230,7 @@ export async function handleAbbyClockoff(req: Request, res: Response): Promise<v
 
 export async function handleIrmaClockin(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("irma")) { res.json({ ok: true, bot: "irma", action: "clockin", skipped: "legacyRetired" }); return; }
   await withCrashObservation("irma", "clockin", async () => {
     await sendIrmaBotClockinEmail();
     res.json({ ok: true, bot: "irma", action: "clockin" });
@@ -225,6 +239,7 @@ export async function handleIrmaClockin(req: Request, res: Response): Promise<vo
 
 export async function handleIrmaRun(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("irma")) { res.json({ ok: true, bot: "irma", action: "run", skipped: "legacyRetired" }); return; }
   await withCrashObservation("irma", "run", async () => {
     const result = await runIrmaBot();
     // Clock-off email is sent at 6 PM by handleIrmaClockoff — not here.
@@ -234,6 +249,7 @@ export async function handleIrmaRun(req: Request, res: Response): Promise<void> 
 
 export async function handleIrmaClockoff(req: Request, res: Response): Promise<void> {
   if (!(await requireCron(req, res))) return;
+  if (await isLegacyRetired("irma")) { res.json({ ok: true, bot: "irma", action: "clockoff", skipped: "legacyRetired" }); return; }
   await withCrashObservation("irma", "clockoff", async () => {
     const results = await getTodayBotRunResults("irma");
     await sendIrmaBotClockoffEmail(results.sent, results.errored, results.skipped);
