@@ -330,3 +330,103 @@ The security hardening is genuinely thorough and its tests exercise the real rou
 2. **Run the migration for Laila via the admin tRPC call** (do NOT bare-flip a single DB column — only the atomic `migrateAgentToEngine`), then confirm within one run cycle: `laila` legacy file logs `legacyRetired=true — exiting` and the engine processes Laila (one `bot_run_logs` row from the engine, none from the legacy file).
 3. **Missing `agentRegistryCache.ts`** — confirm it exists in the live deployment (or add it); otherwise `agents.list` and `powerQueue.getLiveCount` throw at runtime.
 4. Optional pre-pilot: spot-check one Laila lead's FUB note post-migration — expect `"[Laila's Lifestyle Bot] Follow-up email sent by Laila Maria …"` (the harmless internal "email sent" wording), and an identical lead email vs. the legacy path.
+
+---
+
+# Full System 10/10 + Mission Review (Session 6, 2026-07-31)
+
+**Baseline:** main @ `e4a3549` · **audit-fix commits:** `e1f5ad2`, `61b5e52`, `79b45f6`, `f83856e`
+
+## Verdict: **8.5/10** — the machine is sound and now honestly instrumented; it loses points because the funnel it exists to drive is unmeasured and warmth is defined by a single signal.
+
+Test state went from **26 chronic failures to 0** across both TS projects. None of the 26 indicated a code defect — but two of them were hiding one, and one had never tested anything at all.
+
+## Findings first
+
+### F1 — Lease/landlord leads had no suppression (FIXED `e1f5ad2`)
+The only lease protection was deal-based "Rule C": silence someone holding a **closed** Residential Lease Listing deal (pipeline 5). A fresh lead off the `/lease` page has no deal yet, so it fell straight through into buyer nurture. Added `landlord` + `lease listing inquiry` tags and the `Lease Listing Inquiry` source.
+
+### F2 — `not now - 30 day pause` was honored on one side only (FIXED `e1f5ad2`)
+`06234ba` added it to nurture-dashboard's JSON and fallback. `pond-nurture-bot` and `lifestyle-bot-dashboard` kept the old 20-tag list. The reply handler **sets** that tag; the agent bots that actually email leads never **read** it. Live gap for ~9 days.
+
+### F3 — the sync test had a blind spot exactly where the drift happened (FIXED `e1f5ad2`)
+`test_cross_system.py` guarded 2 of 3 JSON copies and 1 of 2 `botHelpers.ts` fallbacks. The unguarded pair is the one that diverged. Also `zillow rentals` was in every JSON and **no** fallback — a failed JSON load silently re-enabled mail to Zillow Rentals leads. Now every copy is guarded; verified the new tests fail against the drifted state.
+
+### F4 — the 4am monitor cried wolf every night (FIXED `61b5e52`)
+Staleness was "did this bot run since midnight?". Monitor fires 4:00 AM CT, bots run ~10:00 AM CT — so on a **healthy** night every bot scored `ranToday=false` → `warning`, and the subject line read `⚠️ 4am Bot Health Check — 8 Bot(s) Need Attention`. Every night. Now measured against the ~24h cadence (`STALE_AFTER_HOURS = 26`, matching what `routers.ts` already used). `ranToday` deliberately untouched — it feeds "N bots ran today" display counters where calendar-day is the right question.
+
+### F5 — deal-protection parity was never actually verified (FIXED `f83856e`)
+`dealProtection.test.ts` read the Python `main.py` from the hardcoded absolute path `/tmp/ldr-clean/...` — a scratch checkout on one machine. Everywhere else the read threw, a `try/catch` substituted `""`, and all nine assertions failed as `expect("").toContain(...)`. **The cross-language parity of a send-blocking safety check has never been tested.** Path now repo-relative and the catch removed: swallowing the error is what let a broken path look like a failing assertion — and would equally let a *stale* copy pass silently.
+
+### F6 — 5 chronic reds in lifestyle, 12 in nurture (FIXED `79b45f6`, `f83856e`)
+Env-dependent suites that failed instead of skipping, plus one genuinely stale guard asserting the **pre-migration** roster (`exactly one engine-active row: jason`). Rewritten as the invariant it exists to protect — *no row may be `engineActive && !legacyRetired`*, i.e. never two motors — plus a literal state assertion whose failure message says "update this test WITH the migration."
+
+## State verification (drift check)
+
+| Claim | Verdict |
+|---|---|
+| 5 agents on engine (1/1), laila 0/0, abby+jason offboarded | **CONFIRMED** — snapshot matches exactly, 8 rows |
+| Exactly-one-motor invariant | **CONFIRMED** — no row is `engineActive && !legacyRetired` |
+| 15 legacy handlers gated | **CONFIRMED** — 15 gated, laila's 3 correctly ungated (still legacy) |
+| 5 separate concurrency groups, cancel only on speed-to-lead + reply-detection | **CONFIRMED** — also resolves the shared-`ldr-state` throttle flagged in Session 5 |
+| Models: claude-haiku-4-5, Anthropic-direct, zero Forge in send paths | **CONFIRMED** — Forge remains isolated to non-sending copilot features |
+| **"Known gap: legacy clock-in/off has no legacyRetired gate"** | **STALE — already fixed.** `e4a3549` (3h before this audit) gated all 15. Now belt-and-suspenders: schedules deleted *and* handlers gated |
+| **"the 44-test suite"** | **STALE** — Python suite is 203 (now 207) |
+| 9 heartbeat schedules | **UNVERIFIABLE from repo** — they live in the Manus console. `e4a3549`'s message documents the 9 + the 14 deleted |
+
+## PART 0 — Mission review: cold → warm → handoff
+
+```
+COLD INTAKE                    WARMING                      WARM?              HANDOFF
+───────────                    ───────                      ─────              ───────
+new lead ──> speed-to-lead ──> agent bot 3-19d ──> pond 20d+ ──> replied ──> Power Queue
+             30m warn/60m      (LLM email,          (14d cadence,   = "warm"    hot-pinned
+             reassign          angle rotation)      tier 10/14/21)              top of list
+             [business hrs]                                          │
+                                                                     └─> Replied-Paused
+   ┌─ GAPS ────────────────────────────────────────────────┐             + digest count
+   │ • 20+ days but never ponded → NO coverage             │
+   │ • unassigned leads → speed-to-lead only, then silence │
+   │ • excluded stages → excluded EVERYWHERE, permanently  │
+   │ • opens/clicks → not collected at all                 │
+   └───────────────────────────────────────────────────────┘
+```
+
+| Stage | Grade | Why |
+|---|---|---|
+| **0a Intake** | **7/10** | Three entry paths cover the common case well. But coverage is defined by *windows*, and anything outside every window is silent: a lead that ages past 19 days without being ponded has no owner, and excluded stages are excluded everywhere with no re-entry path. |
+| **0b Warming** | **8/10** | Better than expected. The **Python pond bot genuinely acts on engagement**: `cadence_days = {engaged:10, standard:14, cold:21}` *and* the tier is injected into the prompt to steer angle ("keep momentum" vs "re-spark interest"). Not just logged. |
+| **0c Warm detection** | **5/10** | Warm = replied. That is the *only* signal. `engagement_tier` in the **TS** Power Queue is display-only — a coloured label, read by nothing. It's also computed by a **different definition** than Python's, so the two systems disagree about who is "engaged". No opens, no clicks, no timeline-window-arriving. |
+| **0d Handoff** | **7/10** | One ranked view exists — the Power Queue, sorted hot-reply → priority(14-20d) → most-overdue. Good. But it ranks on *recency and staleness*, not warmth, so a lead who opened five emails ranks below one who is merely old. |
+| **0e Production metrics** | **3/10** | The digest counts **activity** (total_sends, replies_detected, hot_lead_alerts, speed_to_lead misses, engagement tiers). It cannot answer *"how many cold leads became warm this month"* — there is no cohort/funnel counter anywhere. |
+
+### Ranked upgrades (spec only — not built)
+
+| # | Upgrade | Effort | Production impact |
+|---|---|---|---|
+| **1** ⭐ | **Funnel counters in the weekly digest.** Five integers per week — entered / contacted / engaged / replied / handed-off — from the `audit_log` rows already written. No new collection. | ~half day | **Highest.** You cannot improve what you cannot see; every upgrade below is unmeasurable without it. |
+| **2** ⭐ | **Warmth score replacing "replied".** `w = 3·replied + 2·inbound_text + 2·timeline_window_within_60d + 1·engaged_tier + 1·multi_touch_no_optout`. Rank the Power Queue by `w`, not `days_stale`. Uses only data already collected. | ~1 day | **High.** Surfaces the lead who is warming *before* they reply — today they're invisible until they write back. |
+| **3** ⭐ | **Unify the two engagement_tier definitions.** One shared function, same inputs, both languages — then make the TS one actually drive PQ ranking instead of painting a label. | ~half day | **High.** Removes a live disagreement about who is engaged, and converts a cosmetic field into a working signal. |
+| 4 | **Open/click capture.** No open data exists because bot mail goes out via Gmail SMTP, outside FUB. Needs a tracking pixel or a link-wrapper domain. | ~2 days | Medium-high — unlocks the strongest pre-reply warmth signal, but new infrastructure. |
+| 5 | **"Warm Handoff" PQ view** — a dedicated tab of `w >= threshold`, with a daily digest section. | ~half day | Medium — mostly presentation once (2) lands. |
+| 6 | **Orphan sweep** — nightly job listing leads in no window and no pond, so nothing ages out silently. | ~half day | Medium — closes the 0a gap. |
+
+**Build next: 1 → 3 → 2.** (1) makes everything measurable, (3) is a prerequisite for (2) being trustworthy, and (2) is the actual production lever.
+
+## Bugs found, NOT fixed (ranked)
+
+1. **`/api/scheduled/pond-nurture` duplicate-send hazard.** nurture-dashboard still exposes a TS route shelling out to the same `run_approved_daily_automation.py` the Actions workflow runs. If any Manus cron hits it, pond leads are emailed twice. Not visible from the repo. **Human verification.** (Open since Session 3.)
+2. **Healthchecks cover 2 of 5 workflows.** `speed-to-lead` (runs your 30/60-min response timers), `reply-detection` (sets Replied-Paused), and `weekly-digest` have **no** dead-man's switch. Open since my first audit.
+3. **Deal protection fails OPEN** in both languages — an FUB hiccup silently disables the strongest do-not-email guard. Documented Session 1, still open. ~30 min.
+4. **Bounce detector is a no-op for all bot mail** — scans FUB `emEvents`, but bot mail goes via Gmail SMTP and never appears there. Documented Session 1, still open.
+5. **`npm install` fails on a clean clone** (both projects) — `vite@7` vs `@builder.io/vite-plugin-jsx-loc` peer conflict; needs `--legacy-peer-deps`. CI-hostile.
+6. **`nightlyHealer.ts`: 19 tsc errors** — pre-existing mirror drift, never executes from this repo.
+7. **`excluded_sources` matches on exact equality**, so `"Lease Listing Inquiry - Web"` would not match. Substring or normalized matching would be more robust.
+8. **`ranToday` uses server-local midnight** while the monitor email renders America/Chicago — mixed basis, cosmetic.
+
+## Requires human verification
+1. **The 9 heartbeat schedules** — confirm in the Manus console that exactly `engine-clockin`, `engine-clockoff`, `sp-peter-run`, `sp-steven-run`, `bot-monitor`, `lead-reply-check`, `laila-clockin/run/clockoff` exist and no others. Not visible from the repo.
+2. **No cron hits `/api/scheduled/pond-nurture`** (item 1 above) — the duplicate-send check.
+3. **Tomorrow's clock-in verification** before deleting the legacy bot files (left untouched, as instructed).
+4. **Confirm tonight's 4am email is quiet** — first live proof of the `61b5e52` fix.
+5. **Live DB vs snapshot** — the 8-row `agent_bots_snapshot.json` matches production.
