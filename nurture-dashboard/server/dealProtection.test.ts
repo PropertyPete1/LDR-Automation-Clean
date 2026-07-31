@@ -329,15 +329,24 @@ describe("Deal-Based Pond Protection — Unit Tests (mocked FUB)", () => {
 });
 
 describe("Deal-Based Pond Protection — Python Pond Bot (Static Analysis)", () => {
-  const pondBotPath = "/tmp/ldr-clean/pond-nurture-bot/src/fub_automation/main.py";
+  // Was hardcoded to "/tmp/ldr-clean/pond-nurture-bot/..." — an absolute path to
+  // a scratch checkout that existed on exactly one machine. Everywhere else the
+  // read threw, the catch substituted "", and all nine assertions failed as
+  // expect("").toContain(...). So this block has been red since it was written,
+  // and the cross-language deal-protection parity it exists to prove — a
+  // send-blocking safety check — was never actually verified.
+  //
+  // Now resolved relative to the repo. The catch is also gone: swallowing the
+  // read error is what let a broken path masquerade as a failing assertion, and
+  // would equally let a STALE copy pass silently. A missing file must be loud.
+  const pondBotPath = path.resolve(
+    __dirname,
+    "../../pond-nurture-bot/src/fub_automation/main.py",
+  );
   let pondBotSrc: string;
 
   beforeEach(() => {
-    try {
-      pondBotSrc = fs.readFileSync(pondBotPath, "utf-8");
-    } catch {
-      pondBotSrc = "";
-    }
+    pondBotSrc = fs.readFileSync(pondBotPath, "utf-8");
   });
 
   it("defines _has_any_deal method (Rule A)", () => {
