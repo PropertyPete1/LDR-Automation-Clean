@@ -392,7 +392,7 @@ def build_seller_email_html(body_text: str, rules) -> str:
       <br>
       C: <a href="tel:5203737839" style="color:#1a5276;text-decoration:none;">520.373.7839</a><br>
       E: <a href="mailto:Peter@lifestyledesignrealty.com" style="color:#1a5276;text-decoration:none;">Peter@lifestyledesignrealty.com</a><br>
-      <a href="{REFERRAL_URL}" style="color:#1a5276;text-decoration:none;">lifestyledesignrealty.com</a><br>
+      W: <a href="{REFERRAL_URL}" style="color:#1a5276;text-decoration:none;">lifestyledesignrealty.com</a><br>
       <br>
       1212 Chicon St, Suite 101<br>
       Austin, TX 78702
@@ -456,7 +456,7 @@ Army Veteran at your service
 
 C: 520.373.7839
 E: Peter@lifestyledesignrealty.com
-Website: https://lifestyledesignrealty.com
+W: https://lifestyledesignrealty.com
 
 1212 Chicon St, Suite 101
 Austin, TX 78702
