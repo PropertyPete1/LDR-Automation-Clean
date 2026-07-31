@@ -1304,9 +1304,9 @@ export async function sendLeadFollowUpEmail(opts: {
   // Use the context-aware subject from the LLM, or fall back to a generic one.
   const subject = opts.subject ?? `Following up — ${agentFirstName} ${agentLastName}, Lifestyle Design Realty`;
 
-  const LDR_LOGO_URL = "https://raw.githubusercontent.com/PropertyPete1/ldr-public-assets/main/ldr_logo.png";
   const TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf";
   const TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf";
+  const COMPANY_ADDRESS = "1212 Chicon St, Suite 101, Austin, TX 78702";
 
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; line-height: 1.6; color: #333;">
@@ -1315,23 +1315,33 @@ export async function sendLeadFollowUpEmail(opts: {
         .filter(line => line.trim())
         .map(line => `<p style="margin: 0 0 12px 0;">${line}</p>`)
         .join("")}
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top: 24px; border-top: 1px solid #eee; padding-top: 16px;">
+      <!-- Signature block -->
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 28px;">
+        <!-- Divider 1 -->
+        <tr><td style="border-top: 1px solid #e0e0e0; font-size: 0; line-height: 0; height: 1px;">&nbsp;</td></tr>
+        <!-- Wordmark (styled text, no image dependency) -->
         <tr>
-          <td style="padding-bottom: 12px;">
-            <img src="${LDR_LOGO_URL}" alt="Lifestyle Design Realty" width="140" style="display:block;width:140px;height:auto;" />
+          <td style="padding-top: 16px; padding-bottom: 12px;">
+            <span style="font-family: Georgia, 'Times New Roman', serif; font-size: 17px; letter-spacing: 2px; color: #333;">LIFESTYLE DESIGN</span><!--
+            --><span style="font-family: Georgia, 'Times New Roman', serif; font-size: 17px; letter-spacing: 2px; color: #a3793f;"> REALTY</span>
           </td>
         </tr>
+        <!-- Agent info -->
         <tr>
-          <td style="font-size: 13px; color: #555;">
-            <strong>${agentFirstName} ${agentLastName}</strong><br/>
-            Lifestyle Design Realty<br/>
-            <a href="https://lifestyledesignrealty.com" style="color: #2c5f2e; text-decoration: none;">lifestyledesignrealty.com</a>
+          <td style="font-size: 13px; color: #555; line-height: 1.5; padding-bottom: 14px;">
+            <strong style="color: #333;">${agentFirstName} ${agentLastName}</strong><br/>
+            <span style="color: #a3793f;">Lifestyle Design Realty</span><br/>
+            <a href="https://lifestyledesignrealty.com" style="color: #555; text-decoration: none;">lifestyledesignrealty.com</a>
           </td>
         </tr>
+        <!-- Divider 2 -->
+        <tr><td style="border-top: 1px solid #e0e0e0; font-size: 0; line-height: 0; height: 1px;">&nbsp;</td></tr>
+        <!-- TREC compliance + address -->
         <tr>
-          <td style="padding-top: 12px; font-size: 11px; color: #999;">
-            <a href="${TREC_IABS_URL}" style="color: #666; text-decoration: none;">Information About Brokerage Services</a> |
-            <a href="${TREC_CONSUMER_PROTECTION_URL}" style="color: #666; text-decoration: none;">TREC Consumer Protection Notice</a>
+          <td style="padding-top: 10px; font-size: 10.5px; color: #999; line-height: 1.6;">
+            <a href="${TREC_IABS_URL}" style="color: #999; text-decoration: none;">Information About Brokerage Services</a> |
+            <a href="${TREC_CONSUMER_PROTECTION_URL}" style="color: #999; text-decoration: none;">TREC Consumer Protection Notice</a><br/>
+            ${COMPANY_ADDRESS}
           </td>
         </tr>
       </table>

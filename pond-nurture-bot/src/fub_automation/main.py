@@ -5858,7 +5858,6 @@ def infer_city(person: dict, target_cities: List[str]) -> str:
 
 
 # ── Shared branding constants for pond nurture emails ──
-LDR_LOGO_URL = "https://raw.githubusercontent.com/PropertyPete1/ldr-public-assets/main/ldr_logo.png"
 TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf"
 TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf"
 
@@ -5868,19 +5867,26 @@ def append_email_footer(body: str, rules: Rules) -> str:
     return f"""{body.strip()}
 
 --
-{rules.company_name}
+LIFESTYLE DESIGN REALTY
+
+The Lifestyle Design Realty Team
 team@lifestyledesignrealty.com
-{rules.company_address}
+lifestyledesignrealty.com
 
 Information About Brokerage Services: {TREC_IABS_URL}
 TREC Consumer Protection Notice: {TREC_CONSUMER_PROTECTION_URL}
+{rules.company_address}
 
 If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
 """
 
 
 def build_pond_email_html(body: str, rules: Rules) -> str:
-    """HTML version of pond nurture emails with logo, TREC links, and team branding."""
+    """HTML version of pond nurture emails with styled-text wordmark, TREC links, and team branding.
+
+    Uses pure styled text for the wordmark (no image) so it renders correctly
+    even when email clients block images. TREC compliance links are never hidden.
+    """
     # Convert plain-text body paragraphs to HTML
     paragraphs = [p.strip() for p in body.strip().split("\n") if p.strip()]
     body_html = "\n".join(f'<p style="margin:0 0 12px 0;">{p}</p>' for p in paragraphs)
@@ -5891,28 +5897,38 @@ def build_pond_email_html(body: str, rules: Rules) -> str:
 <body style="margin:0;padding:0;font-family:Arial,sans-serif;color:#333;line-height:1.6;">
   <div style="max-width:600px;margin:0 auto;padding:20px;">
     {body_html}
-    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px;border-top:1px solid #e5e5e5;padding-top:20px;">
+    <!-- Signature block -->
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
+      <!-- Divider 1 -->
+      <tr><td style="border-top:1px solid #e0e0e0;font-size:0;line-height:0;height:1px;" colspan="1">&nbsp;</td></tr>
+      <!-- Wordmark (styled text, no image dependency) -->
       <tr>
-        <td style="padding-bottom:12px;">
-          <img src="{LDR_LOGO_URL}" alt="Lifestyle Design Realty" width="140" style="display:block;width:140px;height:auto;" />
+        <td style="padding-top:16px;padding-bottom:12px;">
+          <span style="font-family:Georgia,'Times New Roman',serif;font-size:17px;letter-spacing:2px;color:#333;">LIFESTYLE DESIGN</span><!--
+          --><span style="font-family:Georgia,'Times New Roman',serif;font-size:17px;letter-spacing:2px;color:#a3793f;"> REALTY</span>
         </td>
       </tr>
+      <!-- Contact info -->
       <tr>
-        <td style="font-size:13px;color:#555;">
-          <strong>{rules.company_name}</strong><br/>
-          <a href="mailto:team@lifestyledesignrealty.com" style="color:#2c5f2e;text-decoration:none;">team@lifestyledesignrealty.com</a><br/>
-          <a href="https://lifestyledesignrealty.com" style="color:#2c5f2e;text-decoration:none;">lifestyledesignrealty.com</a><br/>
+        <td style="font-size:13px;color:#555;line-height:1.5;padding-bottom:14px;">
+          <strong style="color:#333;">The Lifestyle Design Realty Team</strong><br/>
+          <a href="mailto:team@lifestyledesignrealty.com" style="color:#555;text-decoration:none;">team@lifestyledesignrealty.com</a><br/>
+          <a href="https://lifestyledesignrealty.com" style="color:#a3793f;text-decoration:none;">lifestyledesignrealty.com</a>
+        </td>
+      </tr>
+      <!-- Divider 2 -->
+      <tr><td style="border-top:1px solid #e0e0e0;font-size:0;line-height:0;height:1px;">&nbsp;</td></tr>
+      <!-- TREC compliance + address -->
+      <tr>
+        <td style="padding-top:10px;font-size:10.5px;color:#999;line-height:1.6;">
+          <a href="{TREC_IABS_URL}" style="color:#999;text-decoration:none;">Information About Brokerage Services</a> |
+          <a href="{TREC_CONSUMER_PROTECTION_URL}" style="color:#999;text-decoration:none;">TREC Consumer Protection Notice</a><br/>
           {rules.company_address}
         </td>
       </tr>
+      <!-- Unsubscribe -->
       <tr>
-        <td style="padding-top:12px;font-size:11px;color:#999;">
-          <a href="{TREC_IABS_URL}" style="color:#666;text-decoration:none;">Information About Brokerage Services</a> |
-          <a href="{TREC_CONSUMER_PROTECTION_URL}" style="color:#666;text-decoration:none;">TREC Consumer Protection Notice</a>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding-top:12px;font-size:11px;color:#999;">
+        <td style="padding-top:10px;font-size:10.5px;color:#bbb;">
           If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
         </td>
       </tr>
