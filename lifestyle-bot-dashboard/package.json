@@ -113,5 +113,10 @@
     "overrides": {
       "tailwindcss>nanoid": "3.3.7"
     }
+  },
+  "overrides": {
+    "@builder.io/vite-plugin-jsx-loc": {
+      "vite": "$vite"
+    }
   }
 }
