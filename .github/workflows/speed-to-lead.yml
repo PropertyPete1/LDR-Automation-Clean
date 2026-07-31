@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ldr-state
+  group: ldr-speed-to-lead
   cancel-in-progress: true
 
 env:

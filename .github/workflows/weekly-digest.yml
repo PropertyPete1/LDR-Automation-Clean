@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ldr-state
+  group: ldr-weekly-digest
   cancel-in-progress: false
 
 env:

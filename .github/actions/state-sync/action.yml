@@ -66,5 +66,23 @@ runs:
         cp /tmp/fub_automation.sqlite3.enc pond-nurture-bot/data/fub_automation.sqlite3.enc
         git add pond-nurture-bot/data/fub_automation.sqlite3.enc
         git commit -m "state: update encrypted SQLite DB [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --allow-empty
-        git push origin state
-        echo "✅ Encrypted state DB pushed to 'state' branch"
+        # Retry push up to 3 times in case another workflow pushed concurrently
+        for attempt in 1 2 3; do
+          if git push origin state; then
+            echo "✅ Encrypted state DB pushed to 'state' branch (attempt $attempt)"
+            break
+          else
+            echo "⚠️ Push failed (attempt $attempt), rebasing and retrying..."
+            git fetch origin state
+            git rebase origin/state || git rebase --abort
+            # Re-apply our encrypted file on top
+            mkdir -p pond-nurture-bot/data
+            cp /tmp/fub_automation.sqlite3.enc pond-nurture-bot/data/fub_automation.sqlite3.enc
+            git add pond-nurture-bot/data/fub_automation.sqlite3.enc
+            git commit --amend --no-edit
+            if [ $attempt -eq 3 ]; then
+              echo "❌ State push failed after 3 attempts — forcing push"
+              git push origin state --force
+            fi
+          fi
+        done

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ldr-state
+  group: ldr-reply-detection
   cancel-in-progress: true
 
 env:
