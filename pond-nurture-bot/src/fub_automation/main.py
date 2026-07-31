@@ -1230,8 +1230,8 @@ NO_WINDOW"""
                 f"HOLIDAY CONTEXT: Today is {holiday}! This is a holiday, so the email should "
                 f"warmly acknowledge {holiday} in the opening or subject line. Wish them a happy {holiday} "
                 f"and keep the tone celebratory and festive. The email should still be about real estate "
-                f"and their home search, but lead with the holiday greeting. Make it feel like Peter is "
-                f"sending a quick personal holiday note to a friend, not a mass blast."
+                f"and their home search, but lead with the holiday greeting. Make it feel like "
+                f"the team is sending a quick personal holiday note to a friend, not a mass blast."
             )
 
         # Thread-aware email generation: if there's a recent email thread, prioritize continuing it
@@ -1269,7 +1269,7 @@ NO_WINDOW"""
         safe_full_notes = full_note_history or safe_lead_context
 
         prompt = f"""
-        You are writing as Peter Allen from {self.rules.company_name}.
+        You are writing on behalf of the Lifestyle Design Realty team.
         Draft a warm, personal two-week nurture email to a real estate lead in a Follow Up Boss pond.
 
         Lead first name: {first_name}
@@ -1294,7 +1294,7 @@ NO_WINDOW"""
         NEVER write a generic "just checking in" — every stretched-cadence email must deliver tangible value.''' if is_value_led else ''}
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
-        - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, campaign, or transactional automation.
+        - Make this feel like a one-off email someone on the team just wrote on their phone, not a drip, newsletter, campaign, or transactional automation.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor talking to a friend, not marketing copywriter.
         - Avoid run-on sentences. Break the text into very short, punchy, engaging paragraphs, maximum 2 to 3 sentences per paragraph.
         - Use emojis naturally throughout the email to make it visually engaging and friendly, aim for 2 to 4 emojis.
@@ -1320,7 +1320,7 @@ NO_WINDOW"""
         - Keep it concise, 120 to 190 words, plain text, friendly, and specific enough to invite a reply.
         - Ask exactly one simple question that makes it easy for the lead to respond.
         - Never end with any question about automating an agent's workflow or anything internal. This is a client email only.
-        - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
+        - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
         content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
@@ -1376,7 +1376,7 @@ NO_WINDOW"""
         )
 
         prompt = f"""
-        You are writing as Peter Allen from {self.rules.company_name}.
+        You are writing on behalf of the Lifestyle Design Realty team.
         Draft a warm, personal quarterly check-in email to a past real estate client.
 
         Client first name: {first_name}
@@ -1385,7 +1385,7 @@ NO_WINDOW"""
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
-        - Make this feel like a one-off email Peter just wrote on his phone, not a drip or newsletter.
+        - Make this feel like a one-off email someone on the team just wrote on their phone, not a drip or newsletter.
         - Write in a highly personal, warm, casual, and human tone. Think "real estate advisor checking in on a friend," not "marketing copywriter."
         - Avoid run-on sentences. Break up the text into very short, punchy paragraphs (maximum 2-3 sentences per paragraph).
         - Use emojis naturally (aim for 2 to 4 emojis such as 🏡, ☕, 🍕, 🌮, 🎉, ✨, etc.).
@@ -1394,7 +1394,7 @@ NO_WINDOW"""
         - Open with a genuine "how's the home?" style question.
         - Naturally mention 1-2 of the local spots near their home (new restaurants, bars, coffee shops, parks). Make it feel like a neighbor tip, not a list.
         - Include a warm, low-pressure referral ask: something like "If you ever know anyone looking to buy or sell, I'd love to help them the way I helped you."
-        - End with EXACTLY: "Truly,\nPeter" — no company name, no last name, no title, no address, no unsubscribe language (the system adds the footer separately).
+        - End with EXACTLY: "Warmly,\nThe Lifestyle Design Realty Team" — no individual name, no address, no unsubscribe language (the system adds the footer separately).
         - Keep it concise: 130 to 200 words.
         - Return strict JSON with keys: subject, email_body.
         """
@@ -1418,14 +1418,14 @@ NO_WINDOW"""
         )
 
         prompt = f"""
-        You are writing as Peter Allen from {self.rules.company_name}.
+        You are writing on behalf of the Lifestyle Design Realty team.
         Draft a warm, personal congratulations email to a client who just closed on their home today.
 
         Client first name: {first_name}
         Context: {address_context}
 
         Requirements:
-        - This is a genuine celebration email — make it feel like Peter just heard the news and grabbed his phone.
+        - This is a genuine celebration email — make it feel like the team just heard the news and is genuinely excited.
         - Warm, casual, human tone. Short punchy paragraphs (2-3 sentences max).
         - Use 2-3 emojis naturally (🏡 🎉 🥂 ✨ 🔑 are all great).
         - CRITICAL: Do NOT use dashes (- or --) anywhere.
@@ -1434,7 +1434,7 @@ NO_WINDOW"""
         - If the address is provided, reference it naturally (e.g. "your new place on Oak Ave").
         - One warm line about being there for them if they ever need anything — repairs, recommendations, anything.
         - Soft, natural close: "And when you're ready — or if any friends are thinking about buying or selling — I'd love to be the first call."
-        - End with EXACTLY: "Truly,\nPeter" — no company name, no last name, no title, no unsubscribe language.
+        - End with EXACTLY: "Warmly,\nThe Lifestyle Design Realty Team" — no individual name, no title, no unsubscribe language.
         - Keep it concise: 100 to 160 words.
         - Return strict JSON with keys: subject, email_body.
         """
@@ -1451,7 +1451,7 @@ NO_WINDOW"""
             else "Speak broadly about helping them find the right home anywhere in Texas."
         )
         prompt = f"""
-        You are writing as Peter Allen from {self.rules.company_name}.
+        You are writing on behalf of the Lifestyle Design Realty team.
         Draft a warm, personal, and highly engaging welcome email to a new real estate lead who just registered or arrived in our system.
 
         Lead first name: {first_name}
@@ -1459,7 +1459,7 @@ NO_WINDOW"""
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
-        - Make this feel like a one-off email Peter just wrote on his phone, not a drip, newsletter, or transactional welcome.
+        - Make this feel like a one-off email someone on the team just wrote on their phone, not a drip, newsletter, or transactional welcome.
         - Write in a highly personal, warm, casual, and human tone. Think "real estate advisor welcoming a friend," not "marketing copywriter."
         - Avoid run-on sentences. Break up the text into very short, punchy, and engaging paragraphs (maximum 2-3 sentences per paragraph).
         - Use emojis naturally throughout the email to make it visually engaging and friendly (aim for 2 to 4 emojis per email, such as 👋, 🏡, ✨, ☕, etc.).
@@ -1468,7 +1468,7 @@ NO_WINDOW"""
         - Tailor to the detected city when known. If no city is known, emphasize that we help clients across Texas and can narrow the right city together.
         - Keep it concise: 100 to 150 words, plain text, friendly, and specific enough to invite a reply.
         - Ask exactly one simple question that makes it easy for the lead to respond (e.g., about their timeline, must-have priorities, or if they are looking for a specific neighborhood).
-        - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language; the system adds the compliance footer separately.
+        - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language; the system adds the compliance footer separately.
         - Email must include a subject and body.
         - Return strict JSON with keys: subject, email_body.
         """
@@ -1550,7 +1550,7 @@ NO_WINDOW"""
         safe_trigger = trigger_snippet or "They mentioned they’re not quite ready yet."
 
         prompt = f"""
-        You are writing as Peter Allen from {self.rules.company_name}.
+        You are writing on behalf of the Lifestyle Design Realty team.
         Draft a warm, personal long-term nurture email to a real estate lead who has indicated they are
         planning to move but are not ready yet.
 
@@ -1562,7 +1562,7 @@ NO_WINDOW"""
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
-        - Make this feel like a one-off email Peter just wrote on his phone, not a drip or newsletter.
+        - Make this feel like a one-off email someone on the team just wrote on their phone, not a drip or newsletter.
         - Write in a highly personal, warm, casual, and human tone. Think real estate advisor staying in touch with a friend.
         - Avoid run-on sentences. Break the text into very short, punchy paragraphs (maximum 2-3 sentences per paragraph).
         - Use emojis naturally (aim for 2 to 4 emojis such as 🏡, ✨, ☕, 💪, 🙌, etc.).
@@ -1574,7 +1574,7 @@ NO_WINDOW"""
         - The subject line must be specific and personal. Do not use generic subjects like "Checking in" or "Just following up".
         - Keep it concise: 100 to 160 words, plain text, friendly, and specific enough to invite a reply.
         - Ask exactly one simple, low-pressure question that makes it easy for them to respond.
-        - End with Peter's first name only. Do not add the company name, business address, legal disclaimer, or unsubscribe language.
+        - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
         content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
@@ -2083,15 +2083,15 @@ class RuleEngine:
             self.db.log("closed_congrats", "error", person_id, {"reason": "empty LLM response"})
             return "error"
         full_body = append_email_footer(email_body, self.rules)
-        from_display = f"Peter | Lifestyle Design Realty <{self.rules.team_email}>"
+        from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
         self.email.send(
             to_email=to_email,
             subject=subject,
             body=full_body,
             from_email=from_display,
             reply_to=self.rules.owner_email,
+            html_body=build_pond_email_html(email_body, self.rules),
         )
-
         # Log the note in FUB
         note_body = f"Congratulations email sent to {to_email}"
         if deal_address:
@@ -2266,8 +2266,9 @@ class RuleEngine:
             to_email,
             generated["subject"],
             append_email_footer(generated["email_body"], self.rules),
-            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
+            from_email=f"Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
+            html_body=build_pond_email_html(generated["email_body"], self.rules),
         )
         # Log a note in FUB
         try:
@@ -2412,8 +2413,9 @@ class RuleEngine:
             to_email,
             subject,
             append_email_footer(email_body, self.rules),
-            from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
+            from_email=f"Lifestyle Design Realty <{self.rules.team_email}>",
             reply_to=self.rules.owner_email,
+            html_body=build_pond_email_html(email_body, self.rules),
         )
         # Log a FUB note
         try:
@@ -2686,7 +2688,7 @@ class RuleEngine:
                 to_email,
                 subject,
                 seller_plaintext,
-                from_email=f"Peter | Lifestyle Design Realty <{self.rules.team_email}>",
+                from_email=f"Lifestyle Design Realty <{self.rules.team_email}>",
                 reply_to=self.rules.owner_email,
                 html_body=seller_html,
                 bcc=bcc_list,
@@ -4124,7 +4126,7 @@ class RuleEngine:
         )
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
-            from_display = f"Peter | Lifestyle Design Realty <{self.rules.team_email}>"
+            from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
             to_email = emails[0].get("value") or emails[0].get("email")
             if to_email:
                 self.email.send(
@@ -4133,6 +4135,7 @@ class RuleEngine:
                     append_email_footer(generated["email_body"], self.rules),
                     from_email=from_display,
                     reply_to=self.rules.owner_email,
+                    html_body=build_pond_email_html(generated["email_body"], self.rules),
                 )
                 sent_channels.append("email")
         if self.rules.pond_nurture_sms_enabled and not self.has_any_tag(person, self.rules.sms_opt_out_tags):
@@ -5337,8 +5340,8 @@ class RuleEngine:
             if _assigned_uid:
                 _agent_user = self.user_cache_by_id().get(int(_assigned_uid), {})
                 _agent_name = _agent_user.get("name") or _agent_user.get("firstName") or ""
-                _agent_first = str(_agent_name).strip().split()[0] if str(_agent_name).strip() else "Peter"
-            from_display = f"{_agent_first} | Lifestyle Design Realty <{self.rules.team_email}>"
+                _agent_first = str(_agent_name).strip().split()[0] if str(_agent_name).strip() else ""
+            from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
             if to_email:
                 self.email.send(
                     to_email,
@@ -5346,9 +5349,9 @@ class RuleEngine:
                     append_email_footer(generated["email_body"], self.rules),
                     from_email=from_display,
                     reply_to=self.rules.owner_email,
+                    html_body=build_pond_email_html(generated["email_body"], self.rules),
                     bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
                 )
-                
                 # Log a note in FUB so agents can see the welcome email went out
                 # Peter requested notes on EVERYTHING to lead by example
                 try:
@@ -5854,15 +5857,69 @@ def infer_city(person: dict, target_cities: List[str]) -> str:
     return target_cities[0] if target_cities else "your area"
 
 
+# ── Shared branding constants for pond nurture emails ──
+LDR_LOGO_URL = "https://raw.githubusercontent.com/PropertyPete1/ldr-public-assets/main/ldr_logo.png"
+TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf"
+TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf"
+
+
 def append_email_footer(body: str, rules: Rules) -> str:
+    """Plain-text footer for pond nurture emails (team-branded, TREC compliant)."""
     return f"""{body.strip()}
 
 --
 {rules.company_name}
+team@lifestyledesignrealty.com
 {rules.company_address}
+
+Information About Brokerage Services: {TREC_IABS_URL}
+TREC Consumer Protection Notice: {TREC_CONSUMER_PROTECTION_URL}
 
 If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
 """
+
+
+def build_pond_email_html(body: str, rules: Rules) -> str:
+    """HTML version of pond nurture emails with logo, TREC links, and team branding."""
+    # Convert plain-text body paragraphs to HTML
+    paragraphs = [p.strip() for p in body.strip().split("\n") if p.strip()]
+    body_html = "\n".join(f'<p style="margin:0 0 12px 0;">{p}</p>' for p in paragraphs)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;font-family:Arial,sans-serif;color:#333;line-height:1.6;">
+  <div style="max-width:600px;margin:0 auto;padding:20px;">
+    {body_html}
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:32px;border-top:1px solid #e5e5e5;padding-top:20px;">
+      <tr>
+        <td style="padding-bottom:12px;">
+          <img src="{LDR_LOGO_URL}" alt="Lifestyle Design Realty" width="140" style="display:block;width:140px;height:auto;" />
+        </td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#555;">
+          <strong>{rules.company_name}</strong><br/>
+          <a href="mailto:team@lifestyledesignrealty.com" style="color:#2c5f2e;text-decoration:none;">team@lifestyledesignrealty.com</a><br/>
+          <a href="https://lifestyledesignrealty.com" style="color:#2c5f2e;text-decoration:none;">lifestyledesignrealty.com</a><br/>
+          {rules.company_address}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top:12px;font-size:11px;color:#999;">
+          <a href="{TREC_IABS_URL}" style="color:#666;text-decoration:none;">Information About Brokerage Services</a> |
+          <a href="{TREC_CONSUMER_PROTECTION_URL}" style="color:#666;text-decoration:none;">TREC Consumer Protection Notice</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding-top:12px;font-size:11px;color:#999;">
+          If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
+        </td>
+      </tr>
+    </table>
+  </div>
+</body>
+</html>"""
 
 
 def verify_fub_signature(raw_body: bytes, system_key: str, provided_signature: str) -> bool:

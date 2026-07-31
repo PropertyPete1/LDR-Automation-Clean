@@ -1304,6 +1304,10 @@ export async function sendLeadFollowUpEmail(opts: {
   // Use the context-aware subject from the LLM, or fall back to a generic one.
   const subject = opts.subject ?? `Following up — ${agentFirstName} ${agentLastName}, Lifestyle Design Realty`;
 
+  const LDR_LOGO_URL = "https://raw.githubusercontent.com/PropertyPete1/ldr-public-assets/main/ldr_logo.png";
+  const TREC_IABS_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf";
+  const TREC_CONSUMER_PROTECTION_URL = "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf";
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; line-height: 1.6; color: #333;">
       ${messageBody
@@ -1311,11 +1315,26 @@ export async function sendLeadFollowUpEmail(opts: {
         .filter(line => line.trim())
         .map(line => `<p style="margin: 0 0 12px 0;">${line}</p>`)
         .join("")}
-      <p style="margin-top: 24px; color: #666; font-size: 0.85em; border-top: 1px solid #eee; padding-top: 12px;">
-        ${agentFirstName} ${agentLastName}<br/>
-        Lifestyle Design Realty<br/>
-        <a href="https://lifestyledesignrealty.com" style="color: #2c5f2e;">lifestyledesignrealty.com</a>
-      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top: 24px; border-top: 1px solid #eee; padding-top: 16px;">
+        <tr>
+          <td style="padding-bottom: 12px;">
+            <img src="${LDR_LOGO_URL}" alt="Lifestyle Design Realty" width="140" style="display:block;width:140px;height:auto;" />
+          </td>
+        </tr>
+        <tr>
+          <td style="font-size: 13px; color: #555;">
+            <strong>${agentFirstName} ${agentLastName}</strong><br/>
+            Lifestyle Design Realty<br/>
+            <a href="https://lifestyledesignrealty.com" style="color: #2c5f2e; text-decoration: none;">lifestyledesignrealty.com</a>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding-top: 12px; font-size: 11px; color: #999;">
+            <a href="${TREC_IABS_URL}" style="color: #666; text-decoration: none;">Information About Brokerage Services</a> |
+            <a href="${TREC_CONSUMER_PROTECTION_URL}" style="color: #666; text-decoration: none;">TREC Consumer Protection Notice</a>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 

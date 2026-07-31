@@ -45,16 +45,16 @@ def test_from_dict_loads_team_email():
 
 
 def test_pond_nurture_send_uses_team_email():
-    """The pond nurture outreach email must use team_email in From display."""
+    """The pond nurture outreach email must use team_email in From display (team-branded, no individual name)."""
     main_path = os.path.join(os.path.dirname(__file__), "..", "src", "fub_automation", "main.py")
     with open(main_path) as f:
         source = f.read()
     # Find the pond nurture send block (around the "sent_channels = []" area)
-    # It should have: from_display = f"Peter | Lifestyle Design Realty <{self.rules.team_email}>"
-    pond_pattern = r'from_display\s*=\s*f"Peter \| Lifestyle Design Realty <\{self\.rules\.team_email\}>"'
+    # It should have: from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
+    pond_pattern = r'from_display\s*=\s*f"Lifestyle Design Realty <\{self\.rules\.team_email\}>"'
     matches = re.findall(pond_pattern, source)
     assert len(matches) >= 1, \
-        "Pond nurture send must use: Peter | Lifestyle Design Realty <{self.rules.team_email}>"
+        "Pond nurture send must use: Lifestyle Design Realty <{self.rules.team_email}> (no individual name)"
 
 
 def test_closed_congrats_uses_team_email():
