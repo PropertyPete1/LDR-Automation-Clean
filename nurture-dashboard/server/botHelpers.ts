@@ -59,8 +59,9 @@ export function getSharedSuppressionTags(): string[] {
     "email opt out", "opt out", "opt-out", "opt-out-auto-trash",
     "dnc", "realtor", "agent", "spam", "annual nurture only",
     "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
+    "landlord", "lease listing inquiry",
   ];
-  _sharedExcludedSources = ["new agent inquiry", "botm newsletter"];
+  _sharedExcludedSources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"];
   return _sharedSuppressionTags;
 }
 

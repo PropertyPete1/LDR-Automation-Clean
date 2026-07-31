@@ -214,7 +214,7 @@ class Rules:
             except Exception as e:
                 LOGGER.warning("Failed to load excluded_sources from suppression_tags.json: %s", e)
         if not shared_excluded_sources:
-            shared_excluded_sources = ["new agent inquiry", "botm newsletter"]
+            shared_excluded_sources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"]
         return cls(
             stale_stages=data.get("stale_stages", ["Stale", "Cold", "Long Term Nurture"]),
             stale_tags=data.get("stale_tags", ["stale", "cold", "long-term"]),

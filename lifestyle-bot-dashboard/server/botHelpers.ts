@@ -62,7 +62,8 @@ export function getSharedSuppressionTags(): string[] {
     "manual review", "bounced", "unsubscribe", "unsubscribed",
     "email opt out", "opt out", "opt-out", "opt-out-auto-trash",
     "dnc", "realtor", "agent", "spam", "annual nurture only",
-    "replied - paused", "bot_suppress", "soi",
+    "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
+    "landlord", "lease listing inquiry",
   ];
   return _sharedSuppressionTags;
 }
@@ -74,7 +75,7 @@ export function getSharedExcludedSources(): string[] {
   getSharedSuppressionTags();
   if (_sharedExcludedSources) return _sharedExcludedSources;
   // Fallback
-  _sharedExcludedSources = ["new agent inquiry", "botm newsletter"];
+  _sharedExcludedSources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"];
   return _sharedExcludedSources;
 }
 

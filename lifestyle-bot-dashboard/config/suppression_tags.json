@@ -1,8 +1,8 @@
 {
-  "_description": "SHARED SUPPRESSION CONFIG — Single source of truth for all LDR automation systems. Both the Python pond-nurture-bot and the TypeScript lifestyle-bot-dashboard read this file. Adding a tag or source here protects leads across ALL systems instantly.",
-  "_updated": "2026-07-18",
+  "_description": "SHARED SUPPRESSION CONFIG \u2014 Single source of truth for all LDR automation systems. Both the Python pond-nurture-bot and the TypeScript lifestyle-bot-dashboard read this file. Adding a tag or source here protects leads across ALL systems instantly.",
+  "_updated": "2026-07-31",
   "_usage": {
-    "python": "Loaded by main.py via Rules.load() — merged into excluded_tags, excluded_sources, and is_excluded()",
+    "python": "Loaded by main.py via Rules.load() \u2014 merged into excluded_tags, excluded_sources, and is_excluded()",
     "typescript": "Fetched by botHelpers.ts via loadSharedSuppressionConfig() from /api/suppression-tags endpoint or fallback to bundled copy"
   },
   "tags": [
@@ -24,12 +24,16 @@
     "spam",
     "annual nurture only",
     "replied - paused",
+    "not now - 30 day pause",
     "bot_suppress",
-    "SOI"
+    "SOI",
+    "landlord",
+    "lease listing inquiry"
   ],
   "excluded_sources": [
     "New Agent Inquiry",
     "BOTM Newsletter",
-    "Zillow Rentals"
+    "Zillow Rentals",
+    "Lease Listing Inquiry"
   ]
 }
