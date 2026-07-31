@@ -139,3 +139,66 @@ def test_weekly_digest_consumes_matching_stats_fields():
         server_src += f.read_text()
     missing = [f for f in set(stats_fields) if f not in server_src]
     assert not missing, f"weekly_digest.py reads fields the dashboard never returns: {missing}"
+
+
+# ── excluded_sources: CONTAINS matching (audit-fix) ────────────────────────
+
+class _FakeRules:
+    def __init__(self, sources):
+        self.excluded_sources = [s.lower() for s in sources]
+
+
+class _Matcher:
+    """Bind the real _is_excluded_source to a stub carrying only .rules."""
+    def __init__(self, sources):
+        self.rules = _FakeRules(sources)
+
+    def match(self, source):
+        import sys as _sys
+        _sys.path.insert(0, str(ROOT / "pond-nurture-bot" / "src"))
+        from fub_automation.main import RuleEngine
+        return RuleEngine._is_excluded_source(self, {"source": source})
+
+
+CANON_SOURCES = ["New Agent Inquiry", "BOTM Newsletter", "Zillow Rentals", "Lease Listing Inquiry"]
+
+
+def test_excluded_source_matches_suffixed_variants():
+    """FUB appends channel/campaign suffixes; exact matching let them all through."""
+    m = _Matcher(CANON_SOURCES)
+    for variant in (
+        "Lease Listing Inquiry - Web",
+        "lease listing inquiry",
+        "LEASE LISTING INQUIRY (Website Form)",
+        "Zillow Rentals - Austin",
+        "New Agent Inquiry 2026",
+        "  BOTM Newsletter  ",
+    ):
+        assert m.match(variant), f"{variant!r} should be suppressed"
+
+
+def test_legit_buyer_sources_never_false_match():
+    """The direction guard: `excluded in source`, never the reverse. A plain
+    Zillow buyer lead must NOT be caught by the 'Zillow Rentals' entry."""
+    m = _Matcher(CANON_SOURCES)
+    for legit in (
+        "Zillow",
+        "Zillow Premier Agent",
+        "Zillow Flex",
+        "Realtor.com",
+        "Website Form",
+        "Open House",
+        "Referral",
+        "Agent Referral",       # must not be caught by "New Agent Inquiry"
+        "Newsletter Signup",    # must not be caught by "BOTM Newsletter"
+        "Lease",                # shorter than the excluded entry
+    ):
+        assert m.match(legit) is None, f"{legit!r} must NOT be suppressed"
+
+
+def test_excluded_source_empty_and_missing_are_safe():
+    m = _Matcher(CANON_SOURCES)
+    assert m.match("") is None
+    assert m.match(None) is None
+    # An empty entry in config must never match everything.
+    assert _Matcher(["", "Zillow Rentals"]).match("Website Form") is None

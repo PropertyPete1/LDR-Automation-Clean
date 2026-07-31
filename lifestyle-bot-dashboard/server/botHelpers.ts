@@ -89,7 +89,7 @@ export function reloadSharedSuppressionTags(): string[] {
 const PETER_USER_ID = 2;
 
 /**
- * Check if a lead's source is in the excluded_sources list (case-insensitive exact match).
+ * Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
  * Returns the matched source string or null.
  */
 export function isExcludedSource(person: FubPerson): string | null {
@@ -97,7 +97,16 @@ export function isExcludedSource(person: FubPerson): string | null {
   if (!source) return null;
   const excludedSources = getSharedExcludedSources();
   for (const excluded of excludedSources) {
-    if (source === excluded) return person.source ?? person.leadSource ?? source;
+    // CONTAINS, not equality. FUB sources carry channel/campaign suffixes
+    // ("Lease Listing Inquiry - Web", "Zillow Rentals - Austin"), and exact
+    // matching silently let every one of those variants through.
+    //
+    // Direction is load-bearing: source.includes(excluded), never the reverse.
+    // "zillow" does NOT contain "zillow rentals", so the legit Zillow buyer
+    // source stays unsuppressed, while "Zillow Rentals - Austin" is caught.
+    if (excluded && source.includes(excluded)) {
+      return person.source ?? person.leadSource ?? source;
+    }
   }
   return null;
 }

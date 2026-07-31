@@ -5192,13 +5192,22 @@ class RuleEngine:
         return self.has_any_tag(person, all_excluded_tags)
 
     def _is_excluded_source(self, person: dict) -> Optional[str]:
-        """Check if a lead's source is in the excluded_sources list (case-insensitive).
+        """Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
+
+        CONTAINS, not equality. FUB sources carry channel/campaign suffixes
+        ("Lease Listing Inquiry - Web", "Zillow Rentals - Austin"), and exact
+        matching silently let every one of those variants through.
+
+        Direction is load-bearing: `excluded in source`, never the reverse.
+        "zillow" does NOT contain "zillow rentals", so the legit Zillow buyer
+        source stays unsuppressed, while "Zillow Rentals - Austin" is caught.
+
         Returns the matched source string or None."""
         source = str(person.get("source") or person.get("leadSource") or "").lower().strip()
         if not source:
             return None
         for excluded in self.rules.excluded_sources:
-            if source == excluded:
+            if excluded and excluded in source:
                 return person.get("source") or person.get("leadSource") or source
         return None
 
