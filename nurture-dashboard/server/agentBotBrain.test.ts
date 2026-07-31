@@ -244,7 +244,17 @@ describe("Skip gate distinguishes bot notes from human notes (spec 5)", () => {
   });
 
   it("fails open (send) when the LLM call errors", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+    // Only the LLM call fails. Blanket-rejecting every fetch would ALSO trip
+    // the deal check, which now fails CLOSED (skips the lead) — so a blanket
+    // stub would assert the wrong thing: the skip would come from the deal
+    // check, not from the LLM path this test is about.
+    vi.stubGlobal("fetch", vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes("/deals")) {
+        return { ok: true, status: 200, json: async () => ({ deals: [] }) } as unknown as Response;
+      }
+      throw new Error("network down");
+    }));
     const person: FubPerson = {
       id: 103,
       notes: [{ body: "Some note", createdAt: daysAgoIso(6) }],

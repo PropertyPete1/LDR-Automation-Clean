@@ -580,7 +580,26 @@ def main():
         LOGGER.info("Weekly digest delivered successfully.")
     else:
         LOGGER.error("Weekly digest delivery failed.")
+    _ping_healthcheck("weekly_digest", fail=not success)
     return success
+
+
+def _ping_healthcheck(check: str, *, fail: bool = False) -> None:
+    """Dead-man's switch ping. No-op unless the check's env var is set.
+
+    weekly_digest.py runs standalone (no sys.path insert of its own), so the
+    src/ path is added here rather than at module import time.
+    """
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _src = str(_Path(__file__).resolve().parent / "src")
+        if _src not in _sys.path:
+            _sys.path.insert(0, _src)
+        from fub_automation.healthcheck import ping
+        ping(check, fail=fail)
+    except Exception as exc:  # noqa: BLE001 — monitoring must never break the run
+        LOGGER.warning("healthcheck ping skipped: %s", exc)
 
 
 if __name__ == "__main__":

@@ -1489,6 +1489,22 @@ def send_morning_email(
     now_ct = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-5)))
     date_str = now_ct.strftime("%A, %B %-d, %Y")
 
+    # Fail-closed deal checks in the last 24h — leads deliberately not touched
+    # because FUB's deals API was unreachable. A silent outage must not read as
+    # a quiet night.
+    deal_failed_closed_24h = 0
+    try:
+        import sqlite3 as _sq
+        _dbp = os.environ.get("DATABASE_PATH", "data/fub_automation.sqlite3")
+        if Path(_dbp).exists():
+            with _sq.connect(_dbp) as _con:
+                deal_failed_closed_24h = _con.execute(
+                    "SELECT COUNT(*) FROM audit_log WHERE action='deal_check_failed_closed' "
+                    "AND created_at >= datetime('now','-1 day')"
+                ).fetchone()[0]
+    except Exception as _exc:  # noqa: BLE001 — reporting must never break the run
+        log.warning("Could not count deal_check_failed_closed rows: %s", _exc)
+
     lines = [
         f"Good morning, Peter.",
         f"",
@@ -1497,6 +1513,10 @@ def send_morning_email(
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"  {status_emoji}  AUDIT SCORE: {post_pass}/{total} ({post_score:.1f}%)",
         f"  {status_line}",
+    ] + ([
+        f"  ⚠️  {deal_failed_closed_24h} lead(s) skipped — FUB deals API unavailable "
+        f"(deal check failed CLOSED, nothing sent)."
+    ] if deal_failed_closed_24h else []) + [
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"",
     ]

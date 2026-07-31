@@ -1912,6 +1912,20 @@ class MarketContextProvider:
         return self.data.get(city, self.data.get(city.lower(), ""))
 
 
+class DealCheckUnavailable(RuntimeError):
+    """FUB deals API could not be reached after retry.
+
+    Send-blocking deal checks resolve this in the DO-NOT-SEND direction rather
+    than assuming the person has no deals. Mirrors DealCheckUnavailable in
+    botHelpers.ts so both languages fail the same way.
+    """
+
+
+_DEAL_FETCH_ATTEMPTS = 2          # initial try + one retry
+_DEAL_RETRY_BACKOFF_SECONDS = 1.5
+_DEAL_FETCH_FAILED = object()     # cache sentinel — never confuse with []
+
+
 class RuleEngine:
     def __init__(self, settings: Settings, rules: Rules, fub: FollowUpBossClient, db: AuditDB):
         self.settings = settings
@@ -4014,8 +4028,7 @@ class RuleEngine:
         # Only checked for leads that pass all cheap conditions above.
         # Rule A: ANY deal in FUB deal room → total protection from pond nurture
         if self._has_any_deal(person_id):
-            deals = self._get_person_deals(person_id)
-            deal_info = ", ".join(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals[:3])
+            deal_info = self._describe_deals(person_id)
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": f"has deal in FUB deal room ({deal_info}) — protected from all automation"})
             return "suppressed"
         # Rule C: Lease listing silenced leads get TOTAL SILENCE — no pond nurture
@@ -4383,8 +4396,7 @@ class RuleEngine:
             return "soi_protected"
         # CRITICAL: Never reassign leads that have ANY deal in any pipeline (Deal Room)
         if self._has_any_deal(person_id):
-            deals = self._get_person_deals(person_id)
-            deal_info = ", ".join(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals[:3])
+            deal_info = self._describe_deals(person_id)
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": f"suppressed: has deal ({deal_info})"})
             return "suppressed"
             
@@ -4425,26 +4437,81 @@ class RuleEngine:
     PURCHASE_PIPELINE_IDS = {1, 2}  # Buyers, Sellers
     LEASE_LISTING_PIPELINE_ID = 5   # Residential Lease Listings
 
-    def _get_person_deals(self, person_id: int) -> List[dict]:
-        """Fetch and cache all deals for a person. Cache lasts for the entire run."""
+    def _get_person_deals(self, person_id: int, _attempt: int = 1) -> List[dict]:
+        """Fetch and cache all deals for a person. Cache lasts for the entire run.
+
+        FAIL-CLOSED. This used to swallow the error and return [] — which every
+        caller reads as "this person has no deals", silently disabling the
+        strongest do-not-email guard in the system. One FUB hiccup and a lead
+        mid-transaction gets a nurture email.
+
+        Now: retry once after a short backoff, and if it still fails, raise
+        DealCheckUnavailable. Each rule catches it and resolves in whichever
+        direction means DO NOT SEND (see _has_any_deal / _has_closed_purchase_deal
+        / _is_lease_listing_silenced). A delayed nurture email is cheap; emailing
+        someone mid-deal is not.
+        """
         if not hasattr(self, "_deal_cache"):
             self._deal_cache: dict = {}
         if person_id in self._deal_cache:
-            return self._deal_cache[person_id]
+            cached = self._deal_cache[person_id]
+            if cached is _DEAL_FETCH_FAILED:
+                # Already failed this run — don't re-hit the API per rule.
+                raise DealCheckUnavailable(f"deals unavailable for person {person_id} (cached failure)")
+            return cached
         try:
             resp = self.fub._request("GET", "/deals", params={"personId": person_id, "limit": 25})
             deals = resp.get("deals", resp.get("data", []))
             self._deal_cache[person_id] = deals
             return deals
         except Exception as exc:  # noqa: BLE001
-            LOGGER.warning("Could not fetch deals for person %s: %s", person_id, exc)
-            self._deal_cache[person_id] = []
-            return []
+            if _attempt < _DEAL_FETCH_ATTEMPTS:
+                LOGGER.warning("Deals fetch failed for person %s (attempt %d/%d): %s — retrying",
+                               person_id, _attempt, _DEAL_FETCH_ATTEMPTS, exc)
+                time.sleep(_DEAL_RETRY_BACKOFF_SECONDS)
+                return self._get_person_deals(person_id, _attempt + 1)
+            # Exhausted. Cache the FAILURE (never []) so the other rules in this
+            # run fail closed too instead of seeing a false "no deals".
+            LOGGER.error("Deals fetch FAILED for person %s after %d attempts: %s — failing CLOSED",
+                         person_id, _DEAL_FETCH_ATTEMPTS, exc)
+            self._deal_cache[person_id] = _DEAL_FETCH_FAILED
+            self._deal_check_failed_closed = getattr(self, "_deal_check_failed_closed", 0) + 1
+            try:
+                self.db.log("deal_check_failed_closed", "suppressed", person_id,
+                            {"reason": "FUB deals API unavailable after retry — treating as HAS-DEAL",
+                             "attempts": _DEAL_FETCH_ATTEMPTS, "error": str(exc)[:200]})
+            except Exception:  # noqa: BLE001 — logging must never mask the raise
+                pass
+            raise DealCheckUnavailable(
+                f"deals unavailable for person {person_id} after {_DEAL_FETCH_ATTEMPTS} attempts"
+            ) from exc
+
+    def _describe_deals(self, person_id: int) -> str:
+        """Human-readable deal summary for a suppression log line.
+
+        Safe to call after a fail-closed block: _has_any_deal may have returned
+        True *because* the fetch failed, in which case re-fetching would raise
+        and abort the run. Never raises — the description is cosmetic, the
+        suppression decision has already been made."""
+        try:
+            deals = self._get_person_deals(person_id)
+        except DealCheckUnavailable:
+            return "deal check unavailable — failed closed"
+        return ", ".join(
+            d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals[:3]
+        ) or "unknown"
 
     def _has_any_deal(self, person_id: int) -> bool:
         """Rule A: Person has ANY deal (any pipeline, any stage, open or closed).
-        If True, suppress pond reassignment entirely."""
-        deals = self._get_person_deals(person_id)
+        If True, suppress pond reassignment entirely.
+
+        Fail-closed: if the deals API is unavailable, treat the person as HAVING
+        a deal so nothing is sent."""
+        try:
+            deals = self._get_person_deals(person_id)
+        except DealCheckUnavailable:
+            LOGGER.warning("Person %s: deal check unavailable — failing CLOSED (treating as has-deal)", person_id)
+            return True
         if deals:
             pipelines = ", ".join(set(d.get("pipelineName", "?") + "/" + d.get("stageName", "?") for d in deals))
             LOGGER.info("Person %s has %d deal(s) [%s] — protected from pond reassignment", person_id, len(deals), pipelines)
@@ -4452,8 +4519,16 @@ class RuleEngine:
 
     def _has_closed_purchase_deal(self, person_id: int) -> bool:
         """Rule B: Person has a CLOSED deal in Buyers (1) or Sellers (2) pipeline.
-        These leads get Phase 3 quarterly drip."""
-        deals = self._get_person_deals(person_id)
+        These leads get Phase 3 quarterly drip.
+
+        Fail-closed here means returning FALSE, not True: this rule grants
+        ELIGIBILITY to send, so an unknown answer must withhold it. (The other
+        two rules block by returning True — all three converge on DO NOT SEND.)"""
+        try:
+            deals = self._get_person_deals(person_id)
+        except DealCheckUnavailable:
+            LOGGER.warning("Person %s: deal check unavailable — failing CLOSED (not Phase-3 eligible)", person_id)
+            return False
         for deal in deals:
             pipeline_id = int(deal.get("pipelineId") or 0)
             is_closed = bool(deal.get("closedStage")) or str(deal.get("stageName", "")).lower() == "closed"
@@ -4465,8 +4540,14 @@ class RuleEngine:
         """Rule C: Person has a closed deal in Residential Lease Listings (pipeline 5)
         AND does NOT have a closed purchase deal. Total silence — no pond, no reassignment,
         no Phase 3, no agent-bot emails, no pond nurture.
-        If they have BOTH a closed lease listing AND a closed purchase deal, purchase wins."""
-        deals = self._get_person_deals(person_id)
+        If they have BOTH a closed lease listing AND a closed purchase deal, purchase wins.
+
+        Fail-closed: unavailable deals API means SILENCE."""
+        try:
+            deals = self._get_person_deals(person_id)
+        except DealCheckUnavailable:
+            LOGGER.warning("Person %s: deal check unavailable — failing CLOSED (silencing)", person_id)
+            return True
         has_closed_lease = False
         has_closed_purchase = False
         for deal in deals:
@@ -4637,7 +4718,12 @@ class RuleEngine:
         _local_today_start = dt.datetime.now(_ct).replace(hour=0, minute=0, second=0, microsecond=0)
         since = _local_today_start.astimezone(UTC)
         rows = self.db.recent_audit_rows(["pond_nurture", "stale_agent_pond_reassignment"], since)
-        if not rows:
+        # Leads skipped today because the FUB deals API was unreachable and the
+        # send-blocking check failed CLOSED. Without this line a FUB outage looks
+        # like a quiet day rather than a suppressed run.
+        deal_failed_rows = self.db.recent_audit_rows(["deal_check_failed_closed"], since)
+        deal_failed_closed_today = len(deal_failed_rows)
+        if not rows and not deal_failed_closed_today:
             return
         counts: Dict[Tuple[str, str], int] = {}
         examples: List[str] = []
@@ -4717,7 +4803,16 @@ class RuleEngine:
             *counts_formatted,
             "",
         ]
-        
+        # Fail-closed deal checks: leads we deliberately did NOT touch today
+        # because FUB's deals API was unreachable. Surfaced so a silent outage
+        # reads as "suppressed", not as "quiet day".
+        if deal_failed_closed_today:
+            lines += [
+                f"⚠️  {deal_failed_closed_today} lead(s) skipped — FUB deals API unavailable "
+                "(deal check failed CLOSED, so nothing was sent).",
+                "",
+            ]
+
         # HTML lines
         html_lines = [
             "<p>Hi Peter! 👋</p>",
@@ -4728,6 +4823,10 @@ class RuleEngine:
         for c_fmt in counts_formatted:
             html_lines.append(f"<li>{c_fmt}</li>")
         html_lines.append("</ul>")
+        if deal_failed_closed_today:
+            html_lines.append(
+                f'<p style="color:#b45309;"><strong>⚠️ {deal_failed_closed_today} lead(s) skipped</strong> — '
+                "FUB deals API unavailable (deal check failed CLOSED, so nothing was sent).</p>")
 
         # Add Peter's direct Tap-to-Text section if we have reassigned leads
         if reassigned_leads_for_peter:
@@ -5647,6 +5746,15 @@ class RuleEngine:
                 LOGGER.exception("Reply detection: error processing lead %s: %s", person_id, exc)
                 self.db.log("reply_detected", "error", person_id, {"error": str(exc)})
         LOGGER.info("Reply detection scan complete. Alerts sent: %s", alerts_sent)
+        # Dead-man's switch. The reply-detection workflow runs an inline
+        # `python3 -c` block rather than a script file, so there is no entrypoint
+        # to hang the ping on — it lives at the end of the scan itself.
+        # No-op unless HEALTHCHECK_URL_REPLY_DETECTION is set.
+        try:
+            from .healthcheck import ping as _hc_ping
+            _hc_ping("reply_detection")
+        except Exception as _hc_exc:  # noqa: BLE001 — never break the scan
+            LOGGER.warning("healthcheck ping skipped: %s", _hc_exc)
 
 class WebhookPayload(BaseModel):
     eventId: str

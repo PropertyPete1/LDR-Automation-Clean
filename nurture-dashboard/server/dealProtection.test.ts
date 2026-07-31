@@ -410,10 +410,12 @@ describe("Deal-Based Pond Protection — Python Pond Bot (Static Analysis)", () 
   });
 
   it("_is_lease_listing_silenced implements purchase-deal-wins exception", () => {
-    const section = pondBotSrc.slice(
-      pondBotSrc.indexOf("def _is_lease_listing_silenced"),
-      pondBotSrc.indexOf("def _is_lease_listing_silenced") + 600
-    );
+    // Slice to the NEXT def rather than a fixed byte count. The old
+    // +600-character window broke the moment the function grew a docstring,
+    // reporting a false "rule missing" when the rule was intact.
+    const start = pondBotSrc.indexOf("def _is_lease_listing_silenced");
+    const nextDef = pondBotSrc.indexOf("\n    def ", start + 1);
+    const section = pondBotSrc.slice(start, nextDef === -1 ? undefined : nextDef);
     expect(section).toContain("has_closed_purchase");
     expect(section).toContain("has_closed_lease");
   });

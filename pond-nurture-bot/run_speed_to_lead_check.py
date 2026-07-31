@@ -104,9 +104,22 @@ def main() -> int:
         LOGGER.info("Speed-to-lead check complete at %s CT", datetime.datetime.now(CT).strftime("%H:%M:%S"))
     except Exception as exc:
         LOGGER.error("Speed-to-lead check failed: %s", exc, exc_info=True)
+        # Mark the switch DOWN immediately rather than waiting for the grace
+        # period — this job drives the 30/60-minute lead-response timers.
+        _ping_healthcheck("speed_to_lead", fail=True)
         return 1
 
+    _ping_healthcheck("speed_to_lead")
     return 0
+
+
+def _ping_healthcheck(check: str, *, fail: bool = False) -> None:
+    """Dead-man's switch ping. No-op unless the check's env var is set."""
+    try:
+        from fub_automation.healthcheck import ping
+        ping(check, fail=fail)
+    except Exception as exc:  # noqa: BLE001 — monitoring must never break the run
+        LOGGER.warning("healthcheck ping skipped: %s", exc)
 
 
 if __name__ == "__main__":

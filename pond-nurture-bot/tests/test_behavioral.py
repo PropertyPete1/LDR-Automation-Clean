@@ -6,6 +6,7 @@ These tests assert what the code DOES: exact URLs called, payloads sent,
 rows written — so that class of defect fails a test instead of production.
 """
 import datetime as dt
+import pytest
 import json
 import re
 from datetime import timezone
@@ -151,19 +152,59 @@ class TestDealProtection:
         ])
         assert engine._is_lease_listing_silenced(1006) is False
 
-    def test_api_error_fails_open_documented(self, engine, fake_http):
-        """DOCUMENTED CURRENT BEHAVIOR: deals API failure → [] → protection OFF.
+    def test_api_error_fails_CLOSED(self, engine, fake_http, m):
+        """Deals API failure must NOT be read as "this person has no deals".
 
-        This is fail-open. If FUB /deals errors for a person, that lead is
-        treated as having no deals and automation proceeds. Recommendation in
-        AUDIT_REPORT_FULL_SYSTEM.md: fail CLOSED for send-blocking checks
-        (skip the lead on API error) since a missed send is cheaper than
-        emailing a lead who has an active deal.
+        Was fail-OPEN: the fetch swallowed the error and returned [], so one FUB
+        hiccup silently disabled the strongest do-not-email guard and a lead
+        mid-transaction could receive a nurture email. Now it retries once and
+        then raises, and every rule resolves in the DO-NOT-SEND direction.
         """
         engine._deal_cache = {}
-        fake_http.responses = [(500, {})] * 10  # every retry fails
-        assert engine._get_person_deals(1007) == []
-        assert engine._has_any_deal(1007) is False  # fails OPEN
+        fake_http.responses = [(500, {})] * 10  # every attempt fails
+        with pytest.raises(m.DealCheckUnavailable):
+            engine._get_person_deals(1007)
+
+    def test_every_rule_resolves_to_do_not_send_on_api_error(self, engine, fake_http):
+        """Each rule fails closed in its OWN direction — they are not the same
+        boolean. A and C block by returning True; B grants Phase-3 eligibility,
+        so it must withhold by returning False. All three mean: send nothing."""
+        engine._deal_cache = {}
+        fake_http.responses = [(500, {})] * 20
+        assert engine._has_any_deal(1008) is True             # blocks
+        assert engine._is_lease_listing_silenced(1008) is True  # silences
+        assert engine._has_closed_purchase_deal(1008) is False  # withholds drip
+
+    def test_failure_is_cached_so_rules_do_not_each_retry(self, engine, fake_http):
+        """The failure — not [] — is cached, so the other rules in the same run
+        fail closed too instead of seeing a false 'no deals', and we don't hit a
+        struggling API once per rule per lead."""
+        engine._deal_cache = {}
+        fake_http.responses = [(500, {})] * 20
+        assert engine._has_any_deal(1009) is True
+        calls_after_first = len(fake_http.calls)
+        assert engine._has_any_deal(1009) is True
+        assert len(fake_http.calls) == calls_after_first, "cached failure should not re-hit the API"
+
+    def test_failure_is_counted_and_logged_for_the_reports(self, engine, fake_http):
+        """The count has to reach the daily/4am report, or a silent FUB outage
+        looks like a quiet day rather than a suppressed run."""
+        engine._deal_cache = {}
+        engine._deal_check_failed_closed = 0
+        fake_http.responses = [(500, {})] * 20
+        engine._has_any_deal(1010)
+        assert engine._deal_check_failed_closed == 1
+        rows = engine.db.recent_audit_rows(
+            ["deal_check_failed_closed"], dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1))
+        assert any(r["person_id"] == 1010 for r in rows), "must log deal_check_failed_closed"
+
+    def test_transient_error_recovers_on_retry(self, engine, fake_http):
+        """One blip must not suppress the lead — retry first, fail closed only
+        if the retry also fails."""
+        engine._deal_cache = {}
+        fake_http.responses = [(500, {}), (200, {"deals": []})]
+        assert engine._get_person_deals(1011) == []
+        assert engine._has_any_deal(1011) is False  # recovered — normal send path
 
 
 # ═══ 5. Timeline cadence ══════════════════════════════════════════════════════

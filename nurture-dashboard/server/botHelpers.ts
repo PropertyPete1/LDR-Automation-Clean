@@ -436,20 +436,79 @@ const dealCache = new Map<number, FubDeal[]>();
 /**
  * Fetch all deals for a person from FUB API. Cached per-run.
  */
-export async function getPersonDeals(personId: number): Promise<FubDeal[]> {
-  if (dealCache.has(personId)) return dealCache.get(personId)!;
-  try {
-    const resp = await fubRequest<{ deals?: FubDeal[] }>(
-      `/deals?personId=${personId}&limit=25`
-    );
-    const deals = resp.deals ?? [];
-    dealCache.set(personId, deals);
-    return deals;
-  } catch (err) {
-    console.warn(`[DealCheck] Could not fetch deals for person ${personId}:`, err);
-    dealCache.set(personId, []);
-    return [];
+/**
+ * FUB deals API could not be reached after retry.
+ *
+ * Send-blocking deal checks resolve this in the DO-NOT-SEND direction rather
+ * than assuming the person has no deals. Mirrors DealCheckUnavailable in
+ * pond-nurture-bot main.py so both languages fail the same way.
+ */
+export class DealCheckUnavailable extends Error {
+  constructor(personId: number, attempts: number) {
+    super(`deals unavailable for person ${personId} after ${attempts} attempts`);
+    this.name = "DealCheckUnavailable";
   }
+}
+
+const DEAL_FETCH_ATTEMPTS = 2; // initial try + one retry
+const DEAL_RETRY_BACKOFF_MS = 1500;
+/** Cache marker for a failed fetch — must never be confused with []. */
+const DEAL_FETCH_FAILED = Symbol("deal-fetch-failed");
+
+/** Count of leads skipped this run because the deal check failed closed. */
+let dealCheckFailedClosed = 0;
+export function getDealCheckFailedClosedCount(): number {
+  return dealCheckFailedClosed;
+}
+export function resetDealCheckFailedClosedCount(): void {
+  dealCheckFailedClosed = 0;
+}
+
+/**
+ * FAIL-CLOSED. This used to swallow the error and cache [] — which every caller
+ * reads as "this person has no deals", silently disabling the strongest
+ * do-not-email guard in the system. One FUB hiccup and a lead mid-transaction
+ * gets a nurture email.
+ *
+ * Now: retry once after a short backoff, then throw DealCheckUnavailable. Each
+ * rule resolves it in whichever direction means DO NOT SEND.
+ */
+export async function getPersonDeals(personId: number): Promise<FubDeal[]> {
+  if (dealCache.has(personId)) {
+    const cached = dealCache.get(personId)! as unknown;
+    if (cached === DEAL_FETCH_FAILED) {
+      // Already failed this run — don't re-hit the API once per rule.
+      throw new DealCheckUnavailable(personId, DEAL_FETCH_ATTEMPTS);
+    }
+    return cached as FubDeal[];
+  }
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= DEAL_FETCH_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fubRequest<{ deals?: FubDeal[] }>(
+        `/deals?personId=${personId}&limit=25`
+      );
+      const deals = resp.deals ?? [];
+      dealCache.set(personId, deals);
+      return deals;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < DEAL_FETCH_ATTEMPTS) {
+        console.warn(
+          `[DealCheck] deals fetch failed for person ${personId} ` +
+            `(attempt ${attempt}/${DEAL_FETCH_ATTEMPTS}) — retrying:`, err);
+        await new Promise(r => setTimeout(r, DEAL_RETRY_BACKOFF_MS));
+      }
+    }
+  }
+  // Exhausted. Cache the FAILURE (never []) so the other rules in this run fail
+  // closed too instead of seeing a false "no deals".
+  console.error(
+    `[DealCheck] deals fetch FAILED for person ${personId} after ` +
+      `${DEAL_FETCH_ATTEMPTS} attempts — failing CLOSED:`, lastErr);
+  dealCache.set(personId, DEAL_FETCH_FAILED as unknown as FubDeal[]);
+  dealCheckFailedClosed++;
+  throw new DealCheckUnavailable(personId, DEAL_FETCH_ATTEMPTS);
 }
 
 /**
@@ -457,8 +516,18 @@ export async function getPersonDeals(personId: number): Promise<FubDeal[]> {
  * Used to block pond reassignment.
  */
 export async function hasAnyDeal(personId: number): Promise<boolean> {
-  const deals = await getPersonDeals(personId);
-  return deals.length > 0;
+  // Fail-closed: an unavailable deals API must not be read as 'no deals'.
+  // Returning true here means treating as has-deal — all three rules converge on DO NOT SEND.
+  try {
+    const deals = await getPersonDeals(personId);
+    return deals.length > 0;
+  } catch (err) {
+    if (err instanceof DealCheckUnavailable) {
+      console.warn(`[DealCheck] person ${personId}: deal check unavailable — failing CLOSED (treating as has-deal)`);
+      return true;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -466,11 +535,21 @@ export async function hasAnyDeal(personId: number): Promise<boolean> {
  * These leads qualify for Phase 3 quarterly drip.
  */
 export async function hasClosedPurchaseDeal(personId: number): Promise<boolean> {
-  const deals = await getPersonDeals(personId);
-  return deals.some(d => {
-    const isClosed = d.closedStage || d.stageName?.toLowerCase() === "closed";
-    return PURCHASE_PIPELINE_IDS.has(d.pipelineId) && isClosed;
-  });
+  // Fail-closed: an unavailable deals API must not be read as 'no deals'.
+  // Returning false here means not Phase-3 eligible — all three rules converge on DO NOT SEND.
+  try {
+    const deals = await getPersonDeals(personId);
+    return deals.some(d => {
+      const isClosed = d.closedStage || d.stageName?.toLowerCase() === "closed";
+      return PURCHASE_PIPELINE_IDS.has(d.pipelineId) && isClosed;
+    });
+  } catch (err) {
+    if (err instanceof DealCheckUnavailable) {
+      console.warn(`[DealCheck] person ${personId}: deal check unavailable — failing CLOSED (not Phase-3 eligible)`);
+      return false;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -480,24 +559,34 @@ export async function hasClosedPurchaseDeal(personId: number): Promise<boolean> 
  * If they have BOTH a closed lease listing AND a closed purchase deal, purchase wins.
  */
 export async function isLeaseListingSilenced(personId: number): Promise<boolean> {
-  const deals = await getPersonDeals(personId);
-  let hasClosedLease = false;
-  let hasClosedPurchase = false;
-  for (const deal of deals) {
-    const isClosed = deal.closedStage || ["closed", "lease listing - closed"].includes(deal.stageName?.toLowerCase() ?? "");
-    if (deal.pipelineId === LEASE_LISTING_PIPELINE_ID && isClosed) {
-      hasClosedLease = true;
+  // Fail-closed: an unavailable deals API must not be read as 'no deals'.
+  // Returning true here means silencing — all three rules converge on DO NOT SEND.
+  try {
+    const deals = await getPersonDeals(personId);
+    let hasClosedLease = false;
+    let hasClosedPurchase = false;
+    for (const deal of deals) {
+      const isClosed = deal.closedStage || ["closed", "lease listing - closed"].includes(deal.stageName?.toLowerCase() ?? "");
+      if (deal.pipelineId === LEASE_LISTING_PIPELINE_ID && isClosed) {
+        hasClosedLease = true;
+      }
+      if (PURCHASE_PIPELINE_IDS.has(deal.pipelineId) && isClosed) {
+        hasClosedPurchase = true;
+      }
     }
-    if (PURCHASE_PIPELINE_IDS.has(deal.pipelineId) && isClosed) {
-      hasClosedPurchase = true;
+    // Purchase deal wins over lease listing
+    if (hasClosedLease && !hasClosedPurchase) {
+      console.log(`[DealCheck] Person ${personId} is LEASE LISTING SILENCED (closed lease, no purchase deal)`);
+      return true;
     }
+    return false;
+  } catch (err) {
+    if (err instanceof DealCheckUnavailable) {
+      console.warn(`[DealCheck] person ${personId}: deal check unavailable — failing CLOSED (silencing)`);
+      return true;
+    }
+    throw err;
   }
-  // Purchase deal wins over lease listing
-  if (hasClosedLease && !hasClosedPurchase) {
-    console.log(`[DealCheck] Person ${personId} is LEASE LISTING SILENCED (closed lease, no purchase deal)`);
-    return true;
-  }
-  return false;
 }
 
 /** Clear the deal cache (call at start of each bot run) */
