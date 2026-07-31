@@ -56,16 +56,34 @@ export interface BotHealthResult {
   errored: number;
   skipped: number;
   status: "ok" | "warning" | "error" | "not_run";
+  /** Calendar-day flag, for the "N bots ran today" DISPLAY counters only. */
   ranToday: boolean;
+  /** Ran within STALE_AFTER_HOURS. This — not ranToday — drives alerting. */
+  ranRecently: boolean;
+  /** Hours since the last run, so the alert email can say why it fired. */
+  hoursSinceLastRun: number | null;
 }
+
+/**
+ * A bot is "stale" only after missing more than a full daily cycle.
+ *
+ * The monitor runs at 4:00 AM CT; the bots run at ~10:00 AM CT. So "did it run
+ * since midnight?" is false for EVERY bot at 4am on a perfectly healthy night —
+ * which is exactly what produced the nightly "8 Bot(s) Need Attention" false
+ * alarm. Staleness has to be measured against the ~24h run cadence, not the
+ * calendar day. 26h gives two hours of slack for jitter and DST, and matches
+ * the threshold routers.ts already uses for the same judgement.
+ */
+export const STALE_AFTER_HOURS = 26;
 
 export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
   const db = await getDb();
   const allBots = await getAllBots();
-  if (!db) return allBots.map(b => ({ ...b, lastRanAt: null, sent: 0, errored: 0, skipped: 0, status: "not_run" as const, ranToday: false }));
+  if (!db) return allBots.map(b => ({ ...b, lastRanAt: null, sent: 0, errored: 0, skipped: 0, status: "not_run" as const, ranToday: false, ranRecently: false, hoursSinceLastRun: null }));
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  const staleCutoff = new Date(Date.now() - STALE_AFTER_HOURS * 3_600_000);
 
   const results: BotHealthResult[] = [];
 
@@ -81,10 +99,17 @@ export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
     const ranToday = lastRun
       ? new Date(lastRun.ranAt) >= todayStart
       : false;
+    const ranRecently = lastRun
+      ? new Date(lastRun.ranAt) >= staleCutoff
+      : false;
+    const hoursSinceLastRun = lastRun
+      ? (Date.now() - new Date(lastRun.ranAt).getTime()) / 3_600_000
+      : null;
 
     let status: BotHealthResult["status"] = "not_run";
     if (lastRun) {
-      if (!ranToday) {
+      // Staleness is judged on ranRecently, NOT ranToday — see STALE_AFTER_HOURS.
+      if (!ranRecently) {
         status = "warning";
       } else {
         status = lastRun.status as "ok" | "warning" | "error";
@@ -100,6 +125,8 @@ export async function checkAllBotHealth(): Promise<BotHealthResult[]> {
       skipped: lastRun?.skipped ?? 0,
       status,
       ranToday,
+      ranRecently,
+      hoursSinceLastRun,
     });
   }
 
@@ -133,7 +160,13 @@ export async function runBotMonitor(): Promise<void> {
           <td style="padding: 8px;">${lastRan} CT</td>
           <td style="padding: 8px;">${r.sent}</td>
           <td style="padding: 8px;">${r.errored}</td>
-          <td style="padding: 8px;">${r.ranToday ? "Yes" : "⚠️ No"}</td>
+          <td style="padding: 8px;">${
+            r.hoursSinceLastRun === null
+              ? "Never"
+              : r.ranRecently
+                ? `${r.hoursSinceLastRun.toFixed(1)}h ago`
+                : `⚠️ ${r.hoursSinceLastRun.toFixed(1)}h ago (> ${STALE_AFTER_HOURS}h)`
+          }</td>
         </tr>`;
     })
     .join("");
@@ -153,7 +186,7 @@ export async function runBotMonitor(): Promise<void> {
             <th style="padding: 8px; text-align: left;">Last Run</th>
             <th style="padding: 8px; text-align: left;">Sent</th>
             <th style="padding: 8px; text-align: left;">Errors</th>
-            <th style="padding: 8px; text-align: left;">Ran Today?</th>
+            <th style="padding: 8px; text-align: left;">Last Run Age</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
