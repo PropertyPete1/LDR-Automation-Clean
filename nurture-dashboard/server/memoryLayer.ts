@@ -216,7 +216,7 @@ export async function autoExtractAndStore(
       await storeMemory(personId, agentName, m.memoryText, m.category, m.importanceScore);
     }
     if (memories.length > 0) {
-      console.log(`[memoryLayer] Stored ${memories.length} memories for lead ${personId} (${leadName})`);
+      console.log(`[memoryLayer] Stored ${memories.length} memories for lead ${personId}`);
     }
   } catch (err) {
     console.warn("[memoryLayer] autoExtractAndStore failed:", err);

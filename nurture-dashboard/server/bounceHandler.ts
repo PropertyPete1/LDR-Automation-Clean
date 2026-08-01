@@ -23,6 +23,20 @@ import { writeObservation } from "./db";
 import { suppressLead } from "./compliance";
 
 const FUB_BASE = "https://api.followupboss.com/v1";
+
+/**
+ * Mask a lead email for logging. Server stdout is the widest, least
+ * access-controlled sink in the system, so lead addresses do not go into it
+ * verbatim — but a bounce is unchaseable without knowing WHICH address, so the
+ * domain and first character survive.
+ */
+function maskEmail(addr: string | null | undefined): string {
+  if (!addr) return "(none)";
+  const [local, domain] = String(addr).split("@");
+  if (!domain) return "***";
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
 const FUB_REQUEST_TIMEOUT_MS = 15_000;
 
 // ── FUB helpers ───────────────────────────────────────────────────────────────
@@ -238,7 +252,7 @@ async function findLeadByEmail(email: string): Promise<FubPerson | null> {
     if (people.length === 0) return null;
     return people[0] as FubPerson;
   } catch (e) {
-    console.warn(`[bounceHandler] FUB lookup failed for ${email}:`, e);
+    console.warn(`[bounceHandler] FUB lookup failed for ${maskEmail(email)}:`, e);
     return null;
   }
 }
@@ -348,7 +362,7 @@ export async function runBounceHandler(): Promise<BounceHandlerResult> {
         if (!lead) {
           result.leadsNotFound++;
           result.details.push(`NOT FOUND in FUB: ${email}`);
-          console.log(`[bounceHandler] No FUB lead found for ${email}`);
+          console.log(`[bounceHandler] No FUB lead found for ${maskEmail(email)}`);
           continue;
         }
 
@@ -392,7 +406,7 @@ export async function runBounceHandler(): Promise<BounceHandlerResult> {
         result.errors++;
         const msg = leadErr instanceof Error ? leadErr.message : String(leadErr);
         result.details.push(`ERROR processing ${email}: ${msg}`);
-        console.error(`[bounceHandler] Error processing ${email}:`, leadErr);
+        console.error(`[bounceHandler] Error processing ${maskEmail(email)}:`, leadErr);
 
         await writeObservation({
           source: "bounce_handler",

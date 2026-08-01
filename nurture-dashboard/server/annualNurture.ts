@@ -319,7 +319,7 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
         result.errors++;
         const msg = leadErr instanceof Error ? leadErr.message : String(leadErr);
         result.details.push(`ERROR: ${lead.leadName} — ${msg}`);
-        console.error(`[annualNurture] Error for ${lead.leadName}:`, leadErr);
+        console.error(`[annualNurture] Error for lead ${lead.id}:`, leadErr);
       }
     }
 

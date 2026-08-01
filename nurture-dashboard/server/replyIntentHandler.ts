@@ -41,6 +41,20 @@ import { replyIntentProcessed, annualNurtureLeads } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 const FUB_BASE = "https://api.followupboss.com/v1";
+
+/**
+ * Mask a lead email for logging. Server stdout is the widest, least
+ * access-controlled sink in the system, so lead addresses do not go into it
+ * verbatim — but a bounce is unchaseable without knowing WHICH address, so the
+ * domain and first character survive.
+ */
+function maskEmail(addr: string | null | undefined): string {
+  if (!addr) return "(none)";
+  const [local, domain] = String(addr).split("@");
+  if (!domain) return "***";
+  return `${local.slice(0, 1)}***@${domain}`;
+}
+
 const FUB_REQUEST_TIMEOUT_MS = 15_000;
 
 // ── FUB helpers (same pattern as bounceHandler.ts) ────────────────────────────
@@ -159,7 +173,7 @@ async function findLeadByEmail(email: string): Promise<FubPerson | null> {
     if (people.length === 0) return null;
     return people[0] as FubPerson;
   } catch (e) {
-    console.warn(`[replyIntent] FUB lookup failed for ${email}:`, e);
+    console.warn(`[replyIntent] FUB lookup failed for ${maskEmail(email)}:`, e);
     return null;
   }
 }
@@ -427,7 +441,7 @@ async function enrollAnnualNurture(
     source: "reply_intent",
   });
 
-  console.log(`[replyIntent] Annual nurture enrolled: ${person.name} (${email})`);
+  console.log(`[replyIntent] Annual nurture enrolled: lead ${person.id}`);
 }
 
 // ── IMAP scanner ──────────────────────────────────────────────────────────────
@@ -712,15 +726,15 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
           }
 
           result.repliesPaused++;
-          console.log(`[replyIntent] \u2705 Reply protection applied for ${lead.name} (${candidate.fromEmail}) — note written + Replied-Paused tag`);
+          console.log(`[replyIntent] \u2705 Reply protection applied for lead ${lead.id} — note written + Replied-Paused tag`);
         } catch (protectErr) {
           // Non-fatal: log but continue to classification
-          console.warn(`[replyIntent] \u26a0\ufe0f Failed to apply reply protection for ${lead.name}:`, protectErr);
+          console.warn(`[replyIntent] \u26a0\ufe0f Failed to apply reply protection for lead ${lead.id}:`, protectErr);
         }
         // ═══ END UNIVERSAL REPLY PROTECTION ═══════════════════════════════════════
 
         // 2d. Classify reply intent with LLM
-        console.log(`[replyIntent] Classifying reply from ${lead.name} (${candidate.fromEmail})...`);
+        console.log(`[replyIntent] Classifying reply from lead ${lead.id}...`);
         const classification = await classifyReplyIntent(candidate.bodyText, candidate.fromEmail);
 
         console.log(
@@ -824,7 +838,7 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
               await fubPut(`/people/${lead.id}`, { tags: mergedTags });
             }
           } catch (notNowErr) {
-            console.warn(`[replyIntent] Failed to apply not-now pause for ${lead.name}:`, notNowErr);
+            console.warn(`[replyIntent] Failed to apply not-now pause for lead ${lead.id}:`, notNowErr);
           }
 
           result.notNowPaused++;
@@ -883,7 +897,7 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
               runId,
             });
           } else if (classification.highIntent && classification.confidence >= 0.70) {
-            console.log(`[replyIntent] Skipping duplicate high-intent alert for ${lead.name} (ID ${lead.id}) — already alerted this run`);
+            console.log(`[replyIntent] Skipping duplicate high-intent alert for lead ${lead.id} — already alerted this run`);
           }
 
           // No opt-out intent (or low confidence) — record as no_intent
@@ -905,7 +919,7 @@ export async function runReplyIntentHandler(): Promise<ReplyIntentResult> {
         result.errors++;
         const msg = msgErr instanceof Error ? msgErr.message : String(msgErr);
         result.details.push(`ERROR processing ${candidate.fromEmail}: ${msg}`);
-        console.error(`[replyIntent] Error processing ${candidate.fromEmail}:`, msgErr);
+        console.error(`[replyIntent] Error processing ${maskEmail(candidate.fromEmail)}:`, msgErr);
 
         await writeObservation({
           source: "reply_intent",

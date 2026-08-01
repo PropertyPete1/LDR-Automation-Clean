@@ -215,7 +215,7 @@ async function main() {
   for (const c of candidates) {
     const dealInfo = c.deals.map(d => `${d.pipelineName}/${d.stageName} (${d.status})`).join(", ");
     // Default reassignment to Peter (ID:2) since we can't reliably determine original agent
-    console.log(`  • ${c.name} (ID:${c.personId})`);
+    console.log(`  • lead ${c.personId}`);
     console.log(`    Deals: ${dealInfo}`);
     console.log(`    → Will reassign to Peter Allen (ID:2)`);
     console.log("");
@@ -252,11 +252,11 @@ async function main() {
       });
 
       reversed++;
-      console.log(`  ✅ ${c.name} (ID:${c.personId}) → Peter Allen`);
+      console.log(`  ✅ lead ${c.personId} → Peter Allen`);
       await new Promise(r => setTimeout(r, 500)); // Rate limit
     } catch (err: any) {
       errors++;
-      console.error(`  ❌ ${c.name} (ID:${c.personId}): ${err.message}`);
+      console.error(`  ❌ lead ${c.personId}: ${err.message}`);
     }
   }
 
