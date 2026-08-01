@@ -1,0 +1,21 @@
+# Repo-root ignores. Each project also has its own .gitignore; this one exists
+# because the root had none, so a stray `git add -A` at the top level would
+# happily stage a root-level node_modules/ and any scratch clone sitting in the
+# tree (including embedded git repos, which commit as unusable gitlinks).
+
+node_modules/
+dist/
+.env
+*.log
+
+# Local audit/scratch checkouts of this repo — working copies, never committed.
+ldr-audit/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store

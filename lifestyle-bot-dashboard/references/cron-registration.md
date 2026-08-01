@@ -3,174 +3,148 @@
 Run these commands **after publishing the site**. All times are UTC (CT = UTC-5 winter / UTC-6 summer).
 The schedule below uses UTC-5 (winter/standard time). Adjust to UTC-6 in summer if needed.
 
+> **Rewritten after the engine migration.** This file used to list one clock-in /
+> run / clock-off trio per agent (`/api/scheduled/tiffany-run`, `sp-run`, …).
+> Every one of those endpoints was deleted along with the per-agent bot files —
+> registering them now creates heartbeats that 404 daily. All agents run on the
+> data-driven engine, so **one** trio covers the whole roster.
+
 ---
 
 ## Schedule Overview
 
 | Time (CT) | Time (UTC) | Action |
 |---|---|---|
-| 10:00 AM | 15:00 | Clock-in emails sent |
-| 10:05 AM | 15:05 | Bots run follow-ups |
-| 6:00 PM | 23:00 | Clock-off summary emails |
+| 10:00 AM | 15:00 | Clock-in emails sent (all engine agents) |
+| 10:05 AM | 15:05 | Peter + Steven runs (staggered, see note) |
+| 10:10 AM | 15:10 | Engine run — all remaining agents |
+| 6:00 PM | 23:00 | Clock-off summary emails (all engine agents) |
+| 3:50 AM | 08:50 | Lead reply check |
 | 4:00 AM | 09:00 | Bot monitor / nightly health check |
 
 ---
 
-## S&P500 Lifestyle Bot (Steven + Peter)
+## Engine — clock-in, run, clock-off (covers every agent)
+
+Agents are read from the `agent_bots` table at run time (`engineActive=true`).
+Adding or removing an agent needs **no cron change**.
 
 ```bash
-# Clock-in (10am CT = 15:00 UTC)
+# Clock-in for ALL engine agents (10am CT = 15:00 UTC)
 manus-heartbeat create \
-  --name "sp500-clockin" \
+  --name "engine-clockin" \
   --cron "0 0 15 * * *" \
-  --path /api/scheduled/sp-clockin \
-  --description "S&P500 Lifestyle Bot clock-in email at 10am CT"
+  --path /api/scheduled/engine-clockin \
+  --description "Clock-in emails for all engine agents at 10am CT"
 
-# Main run + clock-off (10:05am CT = 15:05 UTC)
+# Follow-up run for ALL engine agents (10:10am CT = 15:10 UTC)
 manus-heartbeat create \
-  --name "sp500-run" \
-  --cron "0 5 15 * * *" \
-  --path /api/scheduled/sp-run \
-  --description "S&P500 Lifestyle Bot daily follow-up run at 10:05am CT"
+  --name "engine-run" \
+  --cron "0 10 15 * * *" \
+  --path /api/scheduled/engine-run \
+  --description "Follow-up run for all engine agents at 10:10am CT"
 
-# Standalone clock-off (6pm CT = 23:00 UTC)
+# Clock-off for ALL engine agents (6pm CT = 23:00 UTC)
 manus-heartbeat create \
-  --name "sp500-clockoff" \
+  --name "engine-clockoff" \
   --cron "0 0 23 * * *" \
-  --path /api/scheduled/sp-clockoff \
-  --description "S&P500 Lifestyle Bot clock-off summary email at 6pm CT"
+  --path /api/scheduled/engine-clockoff \
+  --description "Clock-off summary emails for all engine agents at 6pm CT"
 ```
 
 ---
 
-## Tiffany's Lifestyle Bot
+## S&P500 split runs (Peter / Steven)
+
+These two keep their own endpoints purely to spread load — each is a thin
+wrapper over `runEngineForAgent(...)`, not a separate motor.
 
 ```bash
 manus-heartbeat create \
-  --name "tiffany-clockin" \
-  --cron "0 0 15 * * *" \
-  --path /api/scheduled/tiffany-clockin \
-  --description "Tiffany's Lifestyle Bot clock-in email at 10am CT"
-
-manus-heartbeat create \
-  --name "tiffany-run" \
+  --name "sp500-peter-run" \
   --cron "0 5 15 * * *" \
-  --path /api/scheduled/tiffany-run \
-  --description "Tiffany's Lifestyle Bot daily follow-up run at 10:05am CT"
+  --path /api/scheduled/sp-peter-run \
+  --description "Peter's engine run at 10:05am CT (split to avoid heartbeat timeout)"
 
 manus-heartbeat create \
-  --name "tiffany-clockoff" \
-  --cron "0 0 23 * * *" \
-  --path /api/scheduled/tiffany-clockoff \
-  --description "Tiffany's Lifestyle Bot clock-off summary email at 6pm CT"
+  --name "sp500-steven-run" \
+  --cron "0 7 15 * * *" \
+  --path /api/scheduled/sp-steven-run \
+  --description "Steven's engine run at 10:07am CT (split to avoid heartbeat timeout)"
+```
+
+> **Overlap note.** `engine-run` iterates *every* engine-active agent, which
+> includes `sp500_peter` and `sp500_steven` — so with all three registered those
+> two agents are processed twice a day. No lead is emailed twice (the
+> `recordSmsSentToday` dedup makes the second pass a no-op), but the work and
+> the run-log rows are duplicated. If you want them handled once, keep the two
+> split crons and drop them from the engine sweep, or drop the split crons and
+> let `engine-run` cover all six.
+
+---
+
+## Intro emails (new agents only)
+
+Sends the one-time introduction email to any engine agent that has not received
+one. `engine-clockin` already calls this, so register it only if you want a
+separate manual trigger.
+
+```bash
+manus-heartbeat create \
+  --name "engine-intro" \
+  --cron "0 30 15 * * *" \
+  --path /api/scheduled/engine-intro \
+  --description "One-time intro emails for newly added engine agents"
 ```
 
 ---
 
-## Rue Lifestyle Bot
+## Lead Reply Check + Bot Monitor
 
 ```bash
 manus-heartbeat create \
-  --name "stefanie-clockin" \
-  --cron "0 0 15 * * *" \
-  --path /api/scheduled/stefanie-clockin \
-  --description "Rue Lifestyle Bot clock-in email at 10am CT"
+  --name "lead-reply-check" \
+  --cron "0 50 8 * * *" \
+  --path /api/scheduled/lead-reply-check \
+  --description "Scan for lead replies at 3:50am CT — 10 min before the healer report"
 
-manus-heartbeat create \
-  --name "stefanie-run" \
-  --cron "0 5 15 * * *" \
-  --path /api/scheduled/stefanie-run \
-  --description "Rue Lifestyle Bot daily follow-up run at 10:05am CT"
-
-manus-heartbeat create \
-  --name "stefanie-clockoff" \
-  --cron "0 0 23 * * *" \
-  --path /api/scheduled/stefanie-clockoff \
-  --description "Rue Lifestyle Bot clock-off summary email at 6pm CT"
-```
-
----
-
-## Abby's Lifestyle Bot
-
-```bash
-manus-heartbeat create \
-  --name "abby-clockin" \
-  --cron "0 0 15 * * *" \
-  --path /api/scheduled/abby-clockin \
-  --description "Abby's Lifestyle Bot clock-in email at 10am CT"
-
-manus-heartbeat create \
-  --name "abby-run" \
-  --cron "0 5 15 * * *" \
-  --path /api/scheduled/abby-run \
-  --description "Abby's Lifestyle Bot daily follow-up run at 10:05am CT"
-
-manus-heartbeat create \
-  --name "abby-clockoff" \
-  --cron "0 0 23 * * *" \
-  --path /api/scheduled/abby-clockoff \
-  --description "Abby's Lifestyle Bot clock-off summary email at 6pm CT"
-```
-
----
-
-## Irma's Lifestyle Bot
-
-```bash
-manus-heartbeat create \
-  --name "irma-clockin" \
-  --cron "0 0 15 * * *" \
-  --path /api/scheduled/irma-clockin \
-  --description "Irma's Lifestyle Bot clock-in email at 10am CT"
-
-manus-heartbeat create \
-  --name "irma-run" \
-  --cron "0 5 15 * * *" \
-  --path /api/scheduled/irma-run \
-  --description "Irma's Lifestyle Bot daily follow-up run at 10:05am CT"
-
-manus-heartbeat create \
-  --name "irma-clockoff" \
-  --cron "0 0 23 * * *" \
-  --path /api/scheduled/irma-clockoff \
-  --description "Irma's Lifestyle Bot clock-off summary email at 6pm CT"
-```
-
----
-
-## Laila's Lifestyle Bot
-
-```bash
-manus-heartbeat create \
-  --name "laila-clockin" \
-  --cron "0 0 15 * * *" \
-  --path /api/scheduled/laila-clockin \
-  --description "Laila's Lifestyle Bot clock-in email at 10am CT"
-
-manus-heartbeat create \
-  --name "laila-run" \
-  --cron "0 5 15 * * *" \
-  --path /api/scheduled/laila-run \
-  --description "Laila's Lifestyle Bot daily follow-up run at 10:05am CT"
-
-manus-heartbeat create \
-  --name "laila-clockoff" \
-  --cron "0 0 23 * * *" \
-  --path /api/scheduled/laila-clockoff \
-  --description "Laila's Lifestyle Bot clock-off summary email at 6pm CT"
-```
-
----
-
-## Bot Monitor (Nightly Health Check)
-
-```bash
 manus-heartbeat create \
   --name "bot-monitor" \
   --cron "0 0 9 * * *" \
   --path /api/scheduled/bot-monitor \
   --description "Nightly bot health check at 4am CT — surfaces missed runs in morning summary"
+```
+
+---
+
+## Single-agent run (manual / debugging)
+
+Not a scheduled job — takes the slug as a query param:
+
+```bash
+POST /api/scheduled/engine-run-single?slug=tiffany
+```
+
+---
+
+## Retiring the old per-agent heartbeats
+
+If this deployment still has heartbeats from the pre-engine layout, they now
+point at deleted routes. List and remove them:
+
+```bash
+manus-heartbeat list
+```
+
+Delete any heartbeat whose `--path` is one of:
+
+```
+/api/scheduled/sp-clockin        /api/scheduled/sp-run         /api/scheduled/sp-clockoff
+/api/scheduled/tiffany-clockin   /api/scheduled/tiffany-run    /api/scheduled/tiffany-clockoff
+/api/scheduled/stefanie-clockin  /api/scheduled/stefanie-run   /api/scheduled/stefanie-clockoff
+/api/scheduled/abby-clockin      /api/scheduled/abby-run       /api/scheduled/abby-clockoff
+/api/scheduled/irma-clockin      /api/scheduled/irma-run       /api/scheduled/irma-clockoff
+/api/scheduled/laila-clockin     /api/scheduled/laila-run      /api/scheduled/laila-clockoff
 ```
 
 ---

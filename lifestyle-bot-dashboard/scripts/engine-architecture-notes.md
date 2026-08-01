@@ -56,7 +56,8 @@ export async function sendClockoffEmail(opts: {
 
 ### sendBotIntroEmail(botSlug)
 - Uses hardcoded BOT_INTRO_COPY[botSlug] — only supports: sp500, tiffany, stefanie, abby, irma, laila
-- For engine agents, we need a new `sendEngineIntroEmail(agent: AgentBot)` that generates copy dynamically
+- DONE: engine agents get dynamically-generated copy via `botEngineIntro.ts`
+  (`sendAllPendingIntroEmails()`), wired to `/api/scheduled/engine-intro`.
 
 ### Constants:
 - OLD_DASHBOARD_BASE = "https://fub-nurture-phfprjui.manus.space" (Power Queue)
@@ -64,7 +65,7 @@ export async function sendClockoffEmail(opts: {
 - PETER_EMAIL = "peter@lifestyledesignrealty.com"
 - STEVEN_EMAIL = "steven@lifestyledesignrealty.com"
 
-## Bot Run Loop (from tiffanyBot.ts — the template):
+## Bot Run Loop (now `runEngineForAgent` in botEngine.ts; tiffanyBot.ts was the original template and has been deleted):
 1. writeObservation(run_start)
 2. getSmsSentTodayIds()
 3. fetchLeadsForAgent(AGENT_FUB_ID)

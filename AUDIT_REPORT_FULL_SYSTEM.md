@@ -430,3 +430,83 @@ new lead ──> speed-to-lead ──> agent bot 3-19d ──> pond 20d+ ──>
 3. **Tomorrow's clock-in verification** before deleting the legacy bot files (left untouched, as instructed).
 4. **Confirm tonight's 4am email is quiet** — first live proof of the `61b5e52` fix.
 5. **Live DB vs snapshot** — the 8-row `agent_bots_snapshot.json` matches production.
+
+---
+
+# Session 7 — Post-Deletion Cleanup & Certification (2026-08-01)
+
+Corrections to earlier sessions in this file. Prior text is left intact as the
+dated record; these supersede it.
+
+## Superseded statements
+
+- **Line ~130 and ~185 — "legacy per-agent bot files … still run today", "Not
+  dead."** No longer true. All six (`tiffanyBot.ts`, `stefanieBot.ts`,
+  `abbyBot.ts`, `irmaBot.ts`, `lailaBot.ts`, `spBot.ts`) were deleted in
+  `7b57e7e` once Laila migrated. `botEngine.ts` is the only execution path.
+  `sp-peter-run` / `sp-steven-run` survive as endpoints but are thin wrappers
+  over `runEngineForAgent(...)`, not a second motor.
+- **Line ~317 — the equivalence harness "tests copies" and misses the
+  `lailaBot.ts` note-string divergence.** The finding was correct; it is now
+  moot rather than fixed. Both sides of the comparison no longer exist — the
+  legacy files are gone, so there is nothing left to diverge from. The harness
+  is now a historical record of the cutover, not a live guard.
+- **Open item 6 — "`nightlyHealer.ts`: 19 tsc errors, pre-existing mirror
+  drift, never executes from this repo."** Resolved. The diagnosis was right:
+  it never executed. The lifestyle copy was unreachable dead code and was
+  deleted; lifestyle `tsc` is now 0 errors. The real healer in
+  nurture-dashboard is untouched.
+- **Open item 7 — "`excluded_sources` matches on exact equality."** Already
+  fixed in `cb605e2` (case-insensitive contains, direction-pinned).
+- **Open item 5 — "`npm install` fails on a clean clone."** Already fixed in
+  `97d179f` (npm `overrides`).
+- **Human-verification item 3 — "verify before deleting the legacy bot
+  files."** Superseded by the deletion itself.
+
+## New findings this session
+
+1. **`botEngine.test.ts` regressed** (`b5fe5c3`) — lost both the
+   `skipIf(!DATABASE_URL)` gate and the DB-free snapshot block that `79b45f6`
+   had added, returning two chronic reds. Restored, plus two invariants that
+   only matter post-deletion: no agent left with **zero** motors, and no legacy
+   bot file reappearing.
+2. **`agent_bots_snapshot.json` was stale** — still recorded `laila` as `0/0`.
+   Now `1/1`; active set is the six.
+3. **`dealFailClosed.test.ts` was intermittently red in both projects** — fake
+   timers advancing from real elapsed time raced the production 1.5s retry
+   backoff. Clock is now driven explicitly. Teeth confirmed by mutation.
+4. **A live-looking `HEALER_SECRET` was committed to this public repo** in
+   `healer.api.test.ts` (64-hex literal). Replaced with a dummy. **Rotate the
+   secret — rewriting it here does not remove it from git history.**
+5. **`POST /api/brain/ask` was unauthenticated** — an open LLM endpoint billed
+   to `ANTHROPIC_API_KEY` whose system prompt carried the agent roster,
+   lead-lifecycle caps and live dashboard URLs. Deleted with the rest of the
+   Company Brain dashboard (superseded).
+6. **`references/cron-registration.md` documented 18 deleted endpoints** — a
+   reader following it would have registered heartbeats that 404 daily, and it
+   omitted every engine endpoint. Rewritten.
+7. **`healer.api.test.ts` slug-mapping test was tautological** — it asserted
+   against its own inline copy of the map and could never fail; its roster was
+   also stale. Now reads the real map and drives the roster from the snapshot.
+8. **`engine-run` overlaps `sp-peter-run` / `sp-steven-run`** — both cover
+   `sp500_peter` and `sp500_steven`, so those two are processed twice daily if
+   all three heartbeats are registered. No lead is double-emailed (the
+   `recordSmsSentToday` dedup makes the second pass a no-op) but the work and
+   run-log rows are duplicated. Documented in the rewritten cron reference;
+   resolving it is a console decision, not a code change.
+
+## Requires human verification
+
+1. **Rotate `HEALER_SECRET`** (finding 4) — assume disclosed.
+2. **Retire the old per-agent heartbeats.** Laila's were deleted at migration;
+   confirm none remain for `sp-*`, `tiffany-*`, `stefanie-*`, `abby-*`,
+   `irma-*`. Each now targets a deleted route. See the deletion list in
+   `references/cron-registration.md`.
+3. **Decide the `engine-run` / split-run overlap** (finding 8).
+4. **Live DB vs snapshot** — confirm `laila` is `engineActive=1`,
+   `legacyRetired=1` in production, and that the live table has exactly the six
+   active plus `abby`/`jason` offboarded.
+5. **`/brain` and `/api/brain/ask` removal is repo-side.** If the deployed
+   build is not redeployed from this commit, the live endpoints stay up.
+6. **No cron hits `/api/scheduled/pond-nurture`** — carried forward from
+   Session 6, still unverified from the repo.

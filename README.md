@@ -120,7 +120,7 @@ The dashboard also receives health observations from all agent bots via a secure
 **URL:** `lifestyledash-wpnl8v84.manus.space`
 **Hosting:** Manus WebDev (unchanged by cutover)
 
-Runs one AI bot per agent, driven by the `agent_bots` registry table. The original agents run via their per-agent bot files; newer agents (e.g. Jason) run on the data-driven engine (`engineActive=true`) — adding an agent needs no code change. Each bot sends up to 15 lifestyle emails per run. The emails are AI-written, reference the lead's most recent FUB note, and are personalized to each lead's context.
+Runs one AI bot per agent, driven by the `agent_bots` registry table. Every agent runs on the data-driven engine (`engineActive=true`) — adding an agent needs no code change. The per-agent bot files (`tiffanyBot.ts`, `spBot.ts`, …) were deleted once the last agent migrated; the engine is now the only execution path. Each bot sends up to 15 lifestyle emails per run. The emails are AI-written, reference the lead's most recent FUB note, and are personalized to each lead's context.
 
 ---
 

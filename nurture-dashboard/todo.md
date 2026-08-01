@@ -878,12 +878,11 @@
 - [x] Fix duplicate sign-off bug on the Clean Pipeline email (closing + "Best, Peter Allen" appears twice)
 - [x] Fix TypeScript errors in botHelpers.ts (resolved field, contactedLeads table, sentAt vs sentDate, botRunLogs vs botRunLog)
 
-## Company Brain Graph Mind Dashboard
-- [x] Host the single-file HTML dashboard at /brain route
-- [x] Build POST /api/brain/ask LLM endpoint with full company context system prompt
-- [x] Set ASK_ENDPOINT to '/api/brain/ask' in the HTML (only allowed edit)
-- [x] Verify boot sequence, voice assistant, and LLM integration work
-- [x] Fix Brain JS syntax error: missing `]` in Promise.all on line 865 (linkGithub function)
+## Company Brain Graph Mind Dashboard — REMOVED (superseded)
+Deleted in the post-migration cleanup: the /brain static dashboard, its
+single-file HTML, and the POST /api/brain/ask LLM endpoint. The endpoint was
+unauthenticated and its system prompt carried the agent roster, lead-lifecycle
+caps and live dashboard URLs.
 
 ## Bot Monitor — Fix False "Zero Pond Emails" Alerts (Jul 13)
 - [x] Rewrite pond-nurture checks to read from bot_observations (source='pond_nurture', category='daily_run') instead of stale pond_nurture_log table

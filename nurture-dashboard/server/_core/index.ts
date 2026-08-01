@@ -686,48 +686,9 @@ async function startServer() {
     }
   });
 
-  // ===== Company Brain LLM Voice Assistant =====
-  app.post("/api/brain/ask", async (req, res) => {
-    try {
-      const { question } = req.body;
-      if (!question || typeof question !== "string") {
-        res.status(400).json({ error: "question is required" });
-        return;
-      }
-      const { invokeLLM } = await import("./llm");
-      const result = await invokeLLM({
-        messages: [
-          {
-            role: "system",
-            content: `You are the Company Brain voice assistant for Lifestyle Design Realty. You answer questions about the business in a confident, conversational, spoken-friendly tone. Keep answers to 1-4 sentences. No markdown, no bullet lists, no URLs read aloud.
-
-COMPANY: Lifestyle Design Realty. Peter Allen is broker/owner. Agents: Steven, Tiffany, Stefanie, Abby, Irma, Laila. Target markets: San Antonio, New Braunfels, Austin, Dallas, Fort Worth, Houston.
-
-CONTENT SIDE (repo: lifestyle-design-studio): IG Daily Reels app. Asset Library indexes and fingerprints Google Drive originals and always posts true 4K source files to avoid IG duplicate detection. Strategy Team scores candidates with source cooldowns and performance-analyst feedback. Copywriting refreshes captions with dedup checks and a hook optimizer for the first 3 seconds. Market Research geo-classifies clips to Austin/San Antonio/Dallas posting calendars. Marketing Team publishes on schedule via Metricool, syncs IG history, and drafts LinkedIn variants.
-
-SALES SIDE (repo: FUB-Automations): Lead lifecycle — day 0 a new lead is assigned to an agent with a 30-min personal reach-out expected and 60-min reassign to Peter. Days 1 to 20 is the agent window worked via the Power Queue with Click-to-Text. Days 14 to 20 are priority tier. Day 21 plus with no activity triggers Database Hygiene which reassigns the lead to the Lead Pond (Pond ID 2) and to Peter, capped 100 per run. Nurture Team emails pond leads every 14 days with AI-written emails that reference the lead's most recent FUB note, dynamic subject line that never says "Checking in", sent from peter@lifestyledesignrealty.com, capped 100 per run. Five checks before sending: LLM skip gate at 80 percent confidence for no longer a buyer or working with another agent or asked not to be contacted or relocated permanently and writes an FUB note when it skips, 3-day contact gap, stage and tag suppression for Trash and Do Not Contact and Do Not Email and No AI Email and Manual Review and bounced and unsubscribe and email opt out, valid email required, 14-day cadence. Outreach Team equals 7 bots one per agent, each sends up to 15 personalized lifestyle emails per day, logs run_start and run_complete to bot_observations. IT and Maintenance runs nightly_health.py at 4am CT which reads SQLite errors plus bot observations, auto-fixes known issues, emails Peter plus Steven a report, and posts a heartbeat to clear the dashboard monitor.
-
-LIVE SYSTEMS: FUB Nurture Dashboard at fub-nurture-phfprjui.manus.space. Lifestyle Bot Dashboard at lifestyledash-wpnl8v84.manus.space.
-
-If a question is outside company scope, answer briefly with general knowledge and steer back to business.`
-          },
-          { role: "user", content: question }
-        ],
-        max_tokens: 300,
-      });
-      const answer = result?.choices?.[0]?.message?.content || "I'm not sure about that. Try asking about our lead nurture system, content pipeline, or agent workflow.";
-      res.json({ answer: typeof answer === "string" ? answer : String(answer) });
-    } catch (error) {
-      console.error("[Brain Ask] LLM error:", error);
-      res.status(500).json({ error: "Brain temporarily offline" });
-    }
-  });
-
-  // Serve Company Brain static HTML at /brain
-  const brainPath = process.env.NODE_ENV === "development"
-    ? path.resolve(import.meta.dirname, "../../client/public/brain")
-    : path.resolve(import.meta.dirname, "public/brain");
-  app.use("/brain", express.static(brainPath));
+  // The Company Brain graph-mind dashboard (/brain + POST /api/brain/ask) was
+  // removed here — superseded. Both are gone, not disabled: the static bundle
+  // client/public/brain/index.html is deleted too.
 
   // tRPC API
   app.use(

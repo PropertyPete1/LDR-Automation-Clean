@@ -172,7 +172,10 @@ def main() -> int:
     engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
     engine.send_phase2_daily_summary()
     
-    # Auto-refresh the dashboard data (only on Cloud Computer where script exists)
+    # Auto-refresh the dashboard data. refresh_dashboard.sh now lives in this
+    # repo (it used to exist only on the retired Cloud Computer), so this runs
+    # in GitHub Actions too — the exists() check is a leftover guard, not a
+    # host discriminator.
     refresh_script = Path(os.environ.get('AUTO_DIR', str(Path(__file__).resolve().parent))) / 'refresh_dashboard.sh'
     if refresh_script.exists() and not settings.dry_run:
         try:

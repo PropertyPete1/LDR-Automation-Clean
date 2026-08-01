@@ -76,19 +76,36 @@ describe("/api/healer/observations auth guard", () => {
     expect(secret?.length).toBeGreaterThan(10);
   });
 
-  it("slug-to-healer-slug mapping covers all 6 bots", () => {
-    const slugToHealerSlug: Record<string, string> = {
-      sp500: "lifestyle_bot",
-      tiffany: "tiffany_bot",
-      stefanie: "rue_bot",
-      abby: "abby_bot",
-      irma: "irma_bot",
-      laila: "laila_bot",
-    };
-    const expectedBots = ["sp500", "tiffany", "stefanie", "abby", "irma", "laila"];
-    for (const slug of expectedBots) {
-      expect(slugToHealerSlug[slug]).toBeDefined();
-      expect(slugToHealerSlug[slug]).toContain("_bot");
+  it("slug-to-healer-slug mapping covers every agent the engine runs", async () => {
+    // This used to declare its OWN copy of slugToHealerSlug and assert against
+    // that copy — it could never fail, and its roster had gone stale (combined
+    // "sp500", no sp500_peter/sp500_steven). Read the REAL map instead, and
+    // drive the expected roster from the committed snapshot so it tracks
+    // migrations instead of rotting.
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = path.dirname(fileURLToPath(import.meta.url));
+
+    const indexSrc = fs.readFileSync(path.join(here, "_core/index.ts"), "utf-8");
+    const mapBlock = indexSrc.slice(
+      indexSrc.indexOf("const slugToHealerSlug"),
+      indexSrc.indexOf("}", indexSrc.indexOf("const slugToHealerSlug")),
+    );
+    expect(mapBlock, "slugToHealerSlug not found in _core/index.ts").toContain("slugToHealerSlug");
+
+    const snapshot = JSON.parse(
+      fs.readFileSync(path.join(here, "../agent_bots_snapshot.json"), "utf-8"),
+    ) as Array<{ botSlug: string; engineActive: boolean }>;
+    const activeSlugs = snapshot.filter(r => r.engineActive).map(r => r.botSlug);
+    expect(activeSlugs.length).toBeGreaterThan(0);
+
+    for (const slug of activeSlugs) {
+      // Every running agent must map to a healer slug, or its runs and
+      // observations surface under a raw slug the 4am report doesn't recognise.
+      expect(mapBlock, `${slug} missing from slugToHealerSlug`).toMatch(
+        new RegExp(`\\b${slug}\\s*:\\s*"[a-z0-9_]+_bot"`),
+      );
     }
   });
 });
