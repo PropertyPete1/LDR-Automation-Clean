@@ -510,3 +510,99 @@ dated record; these supersede it.
    build is not redeployed from this commit, the live endpoints stay up.
 6. **No cron hits `/api/scheduled/pond-nurture`** — carried forward from
    Session 6, still unverified from the repo.
+
+---
+
+## Upgrade Recommendations (Session 7) — specs only, nothing built
+
+Ranked by expected value. Each is a recommendation, not a change.
+
+### 1. Run the TypeScript suites in CI — highest value, smallest effort
+
+`.github/workflows/` runs Python only. **659 TS tests across the two dashboards
+never run in CI**, and nothing else runs them on a schedule either.
+
+This is the root cause of most of what the last several audit sessions found.
+Chronic reds (`botEngine.test.ts` twice, `dealFailClosed.test.ts` flake, 21
+env-gated nurture failures, the 19-error `tsc` drift) survived for weeks
+precisely because no automated run ever went red in front of anyone. Every one
+was found by a human-initiated audit.
+
+Spec: one workflow, `push` + `pull_request`, matrix over the two projects,
+`npm ci && npx tsc --noEmit && npx vitest run`. No secrets needed — the suites
+already skip cleanly when `DATABASE_URL` / `ANTHROPIC_API_KEY` / `SMTP_HOST`
+are absent, which is exactly the convention `79b45f6` and `f83856e` established.
+Expect it to stay green from this commit.
+
+(Not built here: `.github/workflows/` was explicitly out of scope this session.)
+
+### 2. Move the two remaining healthcheck UUIDs out of the repo
+
+`pond-nurture-bot/config/healthchecks.json` still commits live ping URLs:
+
+    nightly_health    hc-ping.com/419cef9f-…
+    daily_automation  hc-ping.com/10005b64-…
+
+An hc-ping UUID is effectively a write credential: anyone holding it can keep a
+check green while the automation is dead — the exact failure the dead-man's
+switch exists to catch. `6b8652f` moved the three newer checks to per-check env
+vars and flagged these two rather than changing them. Same treatment:
+`HEALTHCHECK_NIGHTLY_URL`, `HEALTHCHECK_DAILY_URL`, silent no-op when unset.
+Rotate both UUIDs when moving them — they are in public history.
+
+### 3. Add a secret scanner to pre-commit or CI
+
+Three credential-shaped literals have now been found in committed files across
+sessions (`HEALER_SECRET`, `ldr2026admin`, the two hc-ping UUIDs). That is a
+pattern, not bad luck, and this repo is public. `gitleaks` or
+`trufflehog --only-verified` as a CI step would have caught all four at the
+commit that introduced them.
+
+### 4. Retire `equivalenceHarness.test.ts`
+
+It compared legacy-vs-engine behaviour during the cutover. Both sides no longer
+exist — the legacy files are deleted — so it can no longer detect anything.
+Session 6 had already flagged that it tested hand-maintained copies rather than
+real call paths. Recommend deleting it, or moving it to `references/` as a
+record of the cutover. Left in place this session because deleting a passing
+test to make a number look tidier is not a cleanup.
+
+### 5. Decide the `engine-run` / split-run overlap
+
+`engine-run` iterates every engine-active agent, which includes `sp500_peter`
+and `sp500_steven`; the two split endpoints cover them again. Duplicate work and
+duplicate run-log rows daily, though no duplicate email (the `recordSmsSentToday`
+dedup absorbs it). Either drop the two split crons and let the sweep cover all
+six, or keep them and give the sweep an exclusion. A console decision.
+
+### 6. Close the `/api/scheduled/pond-nurture` duplicate-send path
+
+The route is still registered (`_core/index.ts:482`) and shells to the same
+pond-nurture run GitHub Actions owns. `heartbeatBootstrap.ts` documents that the
+scheduler will never call it and must not re-register it — but a heartbeat
+created by hand before that decision would still fire, and pond leads would be
+emailed twice. Either delete the route or gate it behind an explicit env flag.
+Whether such a cron exists is not visible from the repo.
+
+### 7. Fix the bounce detector's blind spot
+
+Carried forward, still open. It scans FUB `emEvents`, but bot mail is sent via
+Gmail SMTP and never appears there — so for the mail this system actually sends,
+the detector is a no-op. `bounceHandler.ts` already reads bounces over IMAP;
+the gap is that the FUB-event path is the one wired to suppression.
+
+### 8. Drive `queueAccessControl.test.ts` through the real procedure
+
+It reimplements `resolveAccess()` inline and says so, so it cannot catch drift
+in `routers.ts`. Low urgency — `queueAccess.test.ts` drives the real tRPC
+procedures through `caller()` for 78 cases, so the behaviour is covered. Worth
+folding in when that file is next touched.
+
+### 9. Consider routing the ancillary LLM calls to Anthropic directly
+
+The autonomous send path calls `api.anthropic.com` directly in both projects.
+But `invokeLLM()` in nurture's `_core/llm.ts` routes to `forge.manus.im`, and
+reply classification, SMS drafting and the lead memory layer use it — so lead
+reply text and lead context reach Manus's proxy. Not a defect and not a send
+path; flagged as a data-flow decision worth making deliberately rather than by
+default.
