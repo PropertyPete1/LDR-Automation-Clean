@@ -353,12 +353,6 @@ describe("Engine wiring + zero Forge references (launch guard)", () => {
       "botHelpers.ts",
       "botEngine.ts",
       "botEngineIntro.ts",
-      "spBot.ts",
-      "tiffanyBot.ts",
-      "stefanieBot.ts",
-      "abbyBot.ts",
-      "irmaBot.ts",
-      "lailaBot.ts",
       "botMonitor.ts",
       "scheduledHandlers.ts",
       "_core/llm.ts",
@@ -374,68 +368,13 @@ describe("Engine wiring + zero Forge references (launch guard)", () => {
     expect(llmSrc).toContain("claude-haiku-4-5");
   });
 
-  it("agent_bots_snapshot.json: exactly-one-motor invariant holds for every row", () => {
-    // This guard used to assert the literal pre-migration roster ("exactly one
-    // engine-active row: jason, fubUserId 37"). Five agents have since migrated
-    // and jason was offboarded, so it asserted a world that no longer exists and
-    // sat permanently red. Re-expressed as the INVARIANT the guard actually
-    // exists to protect, so it survives the next migration instead of rotting.
-    const snapshot = JSON.parse(
-      fs.readFileSync(path.join(__dirname_, "../agent_bots_snapshot.json"), "utf-8")
-    ) as Array<{ botSlug: string; fubUserId: number; engineActive: boolean; legacyRetired: boolean }>;
-
-    expect(snapshot.length).toBeGreaterThan(0);
-
-    for (const row of snapshot) {
-      // THE safety invariant: a row may never be driven by both motors. Engine
-      // takes over only once legacy has retired; the dual-flag write in
-      // migrateAgentToEngine is what makes this atomic.
+  it("all legacy bot files have been deleted — engine is the sole execution path", () => {
+    const deletedFiles = ["spBot.ts", "tiffanyBot.ts", "stefanieBot.ts", "abbyBot.ts", "irmaBot.ts", "lailaBot.ts"];
+    for (const file of deletedFiles) {
       expect(
-        row.engineActive && !row.legacyRetired,
-        `${row.botSlug}: engineActive=true with legacyRetired=false means BOTH the ` +
-          `legacy file and the engine would run it — duplicate sends`,
+        fs.existsSync(path.join(__dirname_, file)),
+        `${file} must be deleted (legacy code removed)`
       ).toBe(false);
     }
-
-    // Any slug that a hardcoded legacy file can still drive MUST appear in
-    // LEGACY_BOT_SLUGS, or isBlockedLegacy can't gate it and both motors could
-    // run it. Derived from the legacy files themselves rather than hardcoded, so
-    // adding or retiring a file keeps this honest. (jason is deliberately absent
-    // — he was engine-native and never had a legacy file.)
-    const engineSrc = fs.readFileSync(path.join(__dirname_, "botEngine.ts"), "utf-8");
-    const legacyFileSlugs = fs
-      .readdirSync(__dirname_)
-      .filter(f => /Bot\.ts$/.test(f) && !f.includes(".test."))
-      .flatMap(f => {
-        const m = fs.readFileSync(path.join(__dirname_, f), "utf-8").match(/BOT_SLUG\s*=\s*"([^"]+)"/);
-        return m ? [m[1]] : [];
-      });
-    expect(legacyFileSlugs.length).toBeGreaterThan(0);
-    for (const slug of legacyFileSlugs) {
-      expect(engineSrc, `${slug} has a legacy bot file so it must be in LEGACY_BOT_SLUGS`)
-        .toContain(`"${slug}"`);
-    }
-  });
-
-  it("agent_bots_snapshot.json: matches the documented migration state", () => {
-    // A deliberately literal companion to the invariant above — this one is
-    // EXPECTED to need updating at each migration, and its failure message says
-    // so, rather than masquerading as a code regression.
-    const snapshot = JSON.parse(
-      fs.readFileSync(path.join(__dirname_, "../agent_bots_snapshot.json"), "utf-8")
-    ) as Array<{ botSlug: string; engineActive: boolean; legacyRetired: boolean }>;
-    const state = Object.fromEntries(
-      snapshot.map(r => [r.botSlug, `${r.engineActive ? 1 : 0}/${r.legacyRetired ? 1 : 0}`]),
-    );
-    expect(state, "snapshot drifted from documented state — update this test WITH the migration").toEqual({
-      tiffany: "1/1",
-      stefanie: "1/1",
-      irma: "1/1",
-      sp500_peter: "1/1",
-      sp500_steven: "1/1",
-      laila: "0/0", // still legacy — the only bot the engine must refuse
-      abby: "0/1", // offboarded — runs nowhere
-      jason: "0/1", // offboarded — runs nowhere
-    });
   });
 });

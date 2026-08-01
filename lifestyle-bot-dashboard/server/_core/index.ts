@@ -9,13 +9,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import {
-  handleSpClockin, handleSpRun, handleSpClockoff,
   handleSpPeterRun, handleSpStevenRun,
-  handleTiffanyClockin, handleTiffanyRun, handleTiffanyClockoff,
-  handleStefanieClockin, handleStefanieRun, handleStefanieClockoff,
-  handleAbbyClockin, handleAbbyRun, handleAbbyClockoff,
-  handleIrmaClockin, handleIrmaRun, handleIrmaClockoff,
-  handleLailaClockin, handleLailaRun, handleLailaClockoff,
   handleBotMonitor,
   handleLeadReplyCheck,
   handleEngineClockin,
@@ -56,26 +50,8 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   // ─── Scheduled bot endpoints (must be before Vite/static fallthrough) ───────
-  app.post("/api/scheduled/sp-clockin", handleSpClockin);
-  app.post("/api/scheduled/sp-run", handleSpRun);
   app.post("/api/scheduled/sp-peter-run", handleSpPeterRun);
   app.post("/api/scheduled/sp-steven-run", handleSpStevenRun);
-  app.post("/api/scheduled/sp-clockoff", handleSpClockoff);
-  app.post("/api/scheduled/tiffany-clockin", handleTiffanyClockin);
-  app.post("/api/scheduled/tiffany-run", handleTiffanyRun);
-  app.post("/api/scheduled/tiffany-clockoff", handleTiffanyClockoff);
-  app.post("/api/scheduled/stefanie-clockin", handleStefanieClockin);
-  app.post("/api/scheduled/stefanie-run", handleStefanieRun);
-  app.post("/api/scheduled/stefanie-clockoff", handleStefanieClockoff);
-  app.post("/api/scheduled/abby-clockin", handleAbbyClockin);
-  app.post("/api/scheduled/abby-run", handleAbbyRun);
-  app.post("/api/scheduled/abby-clockoff", handleAbbyClockoff);
-  app.post("/api/scheduled/irma-clockin", handleIrmaClockin);
-  app.post("/api/scheduled/irma-run", handleIrmaRun);
-  app.post("/api/scheduled/irma-clockoff", handleIrmaClockoff);
-  app.post("/api/scheduled/laila-clockin", handleLailaClockin);
-  app.post("/api/scheduled/laila-run", handleLailaRun);
-  app.post("/api/scheduled/laila-clockoff", handleLailaClockoff);
   app.post("/api/scheduled/bot-monitor", handleBotMonitor);
   app.post("/api/scheduled/lead-reply-check", handleLeadReplyCheck);
   app.post("/api/scheduled/engine-clockin", handleEngineClockin);

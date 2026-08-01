@@ -84,7 +84,7 @@ describe("Bug 1: Bot persona names never appear in lead-facing email output", ()
       notes: [{ body: "Sent 3 listings near Alamo Heights", createdAt: daysAgoIso(5) }],
     };
 
-    // This is how stefanieBot.ts NOW calls it — with the real human name
+    // This is how the engine calls it — with the real human name from DB
     const result = await generateFollowUpMessage({
       agentFirstName: "Stefanie",
       agentLastName: "Graham",
@@ -114,31 +114,18 @@ describe("Bug 1: Bot persona names never appear in lead-facing email output", ()
     }
   });
 
-  it("stefanieBot.ts source uses AGENT_FIRST='Stefanie' for all lead-email calls, not 'Rue'", () => {
-    const src = fs.readFileSync(path.join(__dirname_, "stefanieBot.ts"), "utf-8");
-
-    // AGENT_FIRST must be "Stefanie"
-    expect(src).toMatch(/AGENT_FIRST\s*=\s*"Stefanie"/);
-
-    // "Rue" must NOT appear as AGENT_FIRST
-    expect(src).not.toMatch(/AGENT_FIRST\s*=\s*"Rue"/);
-
-    // generateFollowUpMessage must be called with AGENT_FIRST (which is "Stefanie")
-    expect(src).toContain("agentFirstName: AGENT_FIRST");
-
-    // sendLeadFollowUpEmail must be called with AGENT_FIRST
-    expect(src).toContain("agentFirstName: AGENT_FIRST");
-  });
-
-  it("no legacy bot file passes a persona name to generateFollowUpMessage or sendLeadFollowUpEmail", () => {
-    const botFiles = ["stefanieBot.ts", "abbyBot.ts", "irmaBot.ts", "lailaBot.ts", "tiffanyBot.ts", "spBot.ts"];
-    for (const file of botFiles) {
-      const src = fs.readFileSync(path.join(__dirname_, file), "utf-8");
-      for (const persona of KNOWN_PERSONAS) {
-        // Check that persona names are never passed as agentFirstName in lead-email calls
-        expect(src, `${file} must not pass "${persona}" as agentFirstName`)
-          .not.toMatch(new RegExp(`agentFirstName:\\s*"${persona}"`));
-      }
+  it("legacy bot files have been deleted — engine uses DB agentFirstName (never persona)", () => {
+    // Legacy bot files no longer exist — all agents run through botEngine.ts
+    const deletedFiles = ["stefanieBot.ts", "abbyBot.ts", "irmaBot.ts", "lailaBot.ts", "tiffanyBot.ts", "spBot.ts"];
+    for (const file of deletedFiles) {
+      expect(fs.existsSync(path.join(__dirname_, file)), `${file} must be deleted`).toBe(false);
+    }
+    // Engine uses agent.agentFirstName from DB — never a persona
+    const engineSrc = fs.readFileSync(path.join(__dirname_, "botEngine.ts"), "utf-8");
+    expect(engineSrc).toContain("agentFirstName: agent.agentFirstName");
+    for (const persona of KNOWN_PERSONAS) {
+      expect(engineSrc, `Engine must not hardcode persona "${persona}"`)
+        .not.toMatch(new RegExp(`agentFirstName:\\s*"${persona}"`));
     }
   });
 
@@ -183,12 +170,10 @@ describe("Bug 2: Engine clock-in template renders exactly one dynamic dashboard 
     expect(src).toContain("botSlug: agent.botSlug");
   });
 
-  it("all legacy bots pass botSlug to sendClockinEmail", () => {
-    const botFiles = ["stefanieBot.ts", "abbyBot.ts", "irmaBot.ts", "lailaBot.ts", "tiffanyBot.ts", "spBot.ts"];
-    for (const file of botFiles) {
-      const src = fs.readFileSync(path.join(__dirname_, file), "utf-8");
-      expect(src, `${file} must pass botSlug to sendClockinEmail`).toContain("botSlug: BOT_SLUG");
-    }
+  it("legacy bot files deleted — engine passes botSlug to sendClockinEmail", () => {
+    // Legacy bot files no longer exist; engine handles all clock-ins
+    const engineSrc = fs.readFileSync(path.join(__dirname_, "botEngine.ts"), "utf-8");
+    expect(engineSrc).toContain("botSlug: agent.botSlug");
   });
 
   it("agentDashboardUrl always resolves to a non-null value (no fallback to dual-button)", () => {

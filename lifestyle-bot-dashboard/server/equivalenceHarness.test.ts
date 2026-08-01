@@ -469,7 +469,7 @@ describe("EQUIVALENCE HARNESS — Code Path Equivalence", () => {
         const legacy = LEGACY_CONFIGS[slug];
         const engine = ENGINE_CONFIGS[slug];
 
-        // Legacy spBot: logContactedLead({ botName: `${BOT_NAME} (${agent.firstName})` })
+        // Legacy pattern (now deleted): logContactedLead({ botName: `${BOT_NAME} (${agent.firstName})` })
         // Engine: logContactedLead({ botName: agent.botName })
         const legacyLogBotName = (legacy as any).LEGACY_LOG_BOT_NAME;
         expect(engine.botName).toBe(legacyLogBotName);

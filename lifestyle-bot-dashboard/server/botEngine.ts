@@ -2,8 +2,8 @@
  * botEngine.ts — Data-Driven Agent Bot Engine
  *
  * Generic engine that processes ALL agents where engineActive=true in the agent_bots table.
- * Reuses the same proven pipeline as the hardcoded bot files (tiffanyBot, abbyBot, etc.)
- * but is entirely data-driven — no code changes needed to add a new agent.
+ * The sole execution path for ALL agent bots (legacy files deleted Aug 2026).
+ * Entirely data-driven — no code changes needed to add a new agent.
  *
  * Zero-overlap guarantee:
  *   - This engine ONLY processes rows with engineActive=true
@@ -45,12 +45,11 @@ import {
 // ─── Legacy Safeguard ───────────────────────────────────────────────────────────
 
 /**
- * LEGACY_BOT_SLUGS — These slugs have dedicated hardcoded bot files
- * (tiffanyBot.ts, abbyBot.ts, etc.) that already run via their own heartbeat schedules.
- * The engine MUST NEVER process these agents UNLESS legacyRetired=true in their DB row.
- * When legacyRetired=true, the legacy file exits immediately and the engine takes over.
- *
- * This is a code-level safeguard against double-sending.
+ * LEGACY_BOT_SLUGS — These slugs originally had dedicated hardcoded bot files
+ * (now deleted). All have legacyRetired=true in their DB row.
+ * Retained as a safeguard: the engine refuses to process any slug in this set
+ * unless legacyRetired=true, preventing accidental double-sends if a stray
+ * schedule ever re-appears.
  */
 export const LEGACY_BOT_SLUGS = new Set([
   "sp500",
@@ -99,7 +98,7 @@ async function getAgentBySlug(slug: string): Promise<AgentBot | null> {
 
 /**
  * Run the follow-up email pipeline for a single engine agent.
- * This is the exact same logic as tiffanyBot/abbyBot/etc., but parameterized.
+ * The unified follow-up pipeline for all agents (formerly split across per-agent files).
  */
 export async function runEngineForAgent(botSlug: string): Promise<{
   sent: number;
