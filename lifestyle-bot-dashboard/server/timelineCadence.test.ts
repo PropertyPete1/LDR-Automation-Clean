@@ -75,13 +75,11 @@ describe("Timeline-Aware Cadence — Static Analysis", () => {
     expect(botHelpersSrc).toContain("VALUE-LED EMAIL");
   });
 
-  it("nightly health report includes timeline-adjusted section", () => {
-    const healerPath = path.resolve(__dirname, "nightlyHealer.ts");
-    const healerSrc = fs.readFileSync(healerPath, "utf-8");
-    expect(healerSrc).toContain("TIMELINE-AWARE CADENCE");
-    expect(healerSrc).toContain("Timeline-adjusted leads:");
-    expect(healerSrc).toContain("purchaseWindow");
-  });
+  // The nightly healer lives in nurture-dashboard, which is where it is actually
+  // wired and run. This project used to carry an unreachable copy of it, and
+  // this assertion read that copy — so it was verifying dead code. The identical
+  // assertion in nurture-dashboard/server/timelineCadence.test.ts covers the
+  // real file; the copy and this duplicate are gone.
 
   it("clock-off email includes timelineAdjusted parameter", () => {
     expect(botHelpersSrc).toContain("timelineAdjusted");

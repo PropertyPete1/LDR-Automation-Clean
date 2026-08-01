@@ -33,7 +33,11 @@ vi.mock("drizzle-orm", () => ({
 // ─── Test the auth guard logic directly ───────────────────────────────────────
 
 describe("/api/healer/observations auth guard", () => {
-  const VALID_SECRET = "66b21c228c18dc5f8b6c73f8adadc1720768ffce3b033c865fb3678616ca824c";
+  // A DUMMY value. This slot used to hold a real-looking 64-hex token committed
+  // to a public repo; the guard under test is `secret && token === secret`, so
+  // the literal never needed to be the deployed one. Never paste a live secret
+  // here — the deployed value comes from process.env.HEALER_SECRET.
+  const VALID_SECRET = "test-healer-secret-not-a-real-token";
 
   it("rejects requests with no token", () => {
     const secret = VALID_SECRET;
