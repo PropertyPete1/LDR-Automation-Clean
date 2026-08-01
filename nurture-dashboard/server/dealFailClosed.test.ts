@@ -20,9 +20,10 @@ beforeEach(() => {
   clearDealCache?.();
   resetDealCheckFailedClosedCount();
   vi.stubEnv("FUB_API_KEY", "test-key");
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  // Plain fake timers — the clock is driven explicitly by flushRetries() below.
+  vi.useFakeTimers();
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 /** Every fetch fails. */
 function alwaysFailing() {
@@ -31,31 +32,57 @@ function alwaysFailing() {
   return fn;
 }
 
+/**
+ * Release the retry backoff deterministically.
+ *
+ * This suite used to run on `useFakeTimers({ shouldAdvanceTime: true })`, which
+ * advances the fake clock from REAL elapsed time — so covering the retry
+ * backoff depended on the machine keeping up, and the suite went intermittently
+ * red under load. A flaky test on the send-blocking guard is the worst place to
+ * have one: red becomes the normal colour and a real regression hides in it.
+ * Driving the clock ourselves removes the timing coupling entirely (and drops
+ * ~9s of real sleeping). The window is deliberately larger than any single
+ * backoff so the test does not encode the production constant.
+ */
+async function flushRetries() {
+  await vi.advanceTimersByTimeAsync(10_000);
+}
+
 describe("deal protection — fail closed", () => {
   it("throws rather than reporting 'no deals' when the API is down", async () => {
     alwaysFailing();
-    await expect(getPersonDeals(PERSON)).rejects.toBeInstanceOf(DealCheckUnavailable);
+    const settled = expect(getPersonDeals(PERSON)).rejects.toBeInstanceOf(DealCheckUnavailable);
+    await flushRetries();
+    await settled;
   });
 
   it("retries once before giving up", async () => {
     const fn = alwaysFailing();
-    await expect(getPersonDeals(PERSON)).rejects.toThrow();
+    const settled = expect(getPersonDeals(PERSON)).rejects.toThrow();
+    await flushRetries();
+    await settled;
     expect(fn.mock.calls.length).toBe(2); // initial + one retry
   });
 
   it("hasAnyDeal blocks (true) when the check is unavailable", async () => {
     alwaysFailing();
-    await expect(hasAnyDeal(PERSON)).resolves.toBe(true);
+    const blocked = hasAnyDeal(PERSON);
+    await flushRetries();
+    await expect(blocked).resolves.toBe(true);
   });
 
   it("isLeaseListingSilenced silences (true) when the check is unavailable", async () => {
     alwaysFailing();
-    await expect(isLeaseListingSilenced(PERSON)).resolves.toBe(true);
+    const silenced = isLeaseListingSilenced(PERSON);
+    await flushRetries();
+    await expect(silenced).resolves.toBe(true);
   });
 
   it("counts the failure so the daily/4am report can surface it", async () => {
     alwaysFailing();
-    await hasAnyDeal(PERSON);
+    const done = hasAnyDeal(PERSON);
+    await flushRetries();
+    await done;
     expect(getDealCheckFailedClosedCount()).toBeGreaterThan(0);
   });
 
@@ -65,6 +92,8 @@ describe("deal protection — fail closed", () => {
       if (++n === 1) throw new Error("transient");
       return { ok: true, status: 200, json: async () => ({ deals: [] }) } as unknown as Response;
     }));
-    await expect(hasAnyDeal(PERSON)).resolves.toBe(false); // normal send path
+    const recovered = hasAnyDeal(PERSON);
+    await flushRetries();
+    await expect(recovered).resolves.toBe(false); // normal send path
   });
 });
