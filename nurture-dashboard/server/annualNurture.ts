@@ -309,7 +309,9 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
 
         result.emailsSent++;
         result.details.push(`SENT: ${lead.leadName} (${leadEmail}) — "${email.subject}"`);
-        console.log(`[annualNurture] Sent to ${lead.leadName} (${leadEmail})`);
+        // Lead ID only — name and email stay out of stdout. The operator report
+        // above (result.details) still carries the full line.
+        console.log(`[annualNurture] Sent to lead ${lead.id}`);
 
         // Small delay between sends
         await new Promise(r => setTimeout(r, 2000));

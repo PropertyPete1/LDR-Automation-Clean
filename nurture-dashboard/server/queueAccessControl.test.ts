@@ -30,7 +30,11 @@ const ROSTER: AgentEntry[] = [
   { name: "Laila", slug: "laila", role: "Agent", fubUserId: 35 },
 ];
 
-const ADMIN_TOKEN = "ldr2026admin";
+// A DUMMY fixture value, deliberately not a plausible real token. The previous
+// literal here read exactly like a production one, and this file is public. The
+// live token is ENV.powerQueueAdminToken and grants full cross-agent queue
+// access (every agent's lead PII) — it must never be pasted into a test.
+const ADMIN_TOKEN = "test-admin-token-not-real";
 
 /**
  * Mirror of the access control logic inside the getPendingQueue procedure.

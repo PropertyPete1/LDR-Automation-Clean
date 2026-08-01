@@ -360,7 +360,9 @@ export async function runBounceHandler(): Promise<BounceHandlerResult> {
           await removeBadEmailAndTag(lead, email);
           result.emailRemovedPhoneKept++;
           result.details.push(`KEPT (SMS-only): ${lead.name} — ${email} removed, phone ${phone} on file`);
-          console.log(`[bounceHandler] Kept ${lead.name} (ID ${lead.id}) — bad email removed, phone ${phone} on file for SMS outreach`);
+          // Lead ID only — name/email/phone stay out of stdout. The full detail
+          // is still recorded in the observation below and the operator report.
+          console.log(`[bounceHandler] Kept lead ${lead.id} — bad email removed, phone on file for SMS outreach`);
           await writeObservation({
             source: "bounce_handler",
             severity: "info",
@@ -375,7 +377,7 @@ export async function runBounceHandler(): Promise<BounceHandlerResult> {
           await moveLeadToTrash(lead, email);
           result.movedToTrash++;
           result.details.push(`TRASHED (no phone): ${lead.name} — ${email}`);
-          console.log(`[bounceHandler] Trashed ${lead.name} (ID ${lead.id}) — bad email, no phone`);
+          console.log(`[bounceHandler] Trashed lead ${lead.id} — bad email, no phone`);
           await writeObservation({
             source: "bounce_handler",
             severity: "warning",
