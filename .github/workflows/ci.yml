@@ -125,4 +125,3 @@ jobs:
       - name: vitest
         working-directory: ${{ matrix.project }}
         run: pnpm exec vitest run
-```
