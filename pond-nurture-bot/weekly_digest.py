@@ -10,6 +10,7 @@ Summarizes the past week's activity across all bots:
 - Pond size
 - Leads reassigned
 - Engagement tier breakdown
+- Funnel: cold → contacted → engaged → warm → handed off
 - Comparison vs. previous week where available
 """
 
@@ -26,6 +27,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
+
+# Funnel instrumentation lives in the package so the daily summary in main.py
+# can share the exact same stage definitions — two places reporting the same
+# funnel from two different definitions would be worse than not reporting it.
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+from fub_automation.funnel import (  # noqa: E402
+    format_funnel_html,
+    query_funnel,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("weekly_digest")
@@ -445,11 +455,21 @@ def format_digest(this_week: dict, last_week: dict, pond_size: int) -> str:
     for agent_id, count in this_week.get("misses_by_agent", {}).items():
         misses_rows += f"<tr><td>Agent #{agent_id}</td><td>{count}</td></tr>\n"
 
+    # Funnel — leads the top of the digest, because "how many went warm and
+    # reached Peter" is the question the digest exists to answer. Omitted
+    # entirely rather than shown as zeros if the query failed.
+    funnel = this_week.get("funnel")
+    funnel_section = (
+        format_funnel_html(funnel, last_week.get("funnel") or {}) if funnel else ""
+    )
+
     html = f"""
     <html>
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #1f2937;">
     <h1 style="color: #1e40af; border-bottom: 2px solid #1e40af; padding-bottom: 10px;">📊 Weekly Performance Digest</h1>
     <p style="color: #6b7280;">Week ending {dt.datetime.now(CT).strftime('%B %d, %Y')}</p>
+
+    {funnel_section}
 
     <h2>📬 Email Sends</h2>
     <table style="border-collapse: collapse; width: 100%;">
@@ -559,6 +579,17 @@ def main():
     # Seller nurture stats
     seller_stats = query_seller_nurture_stats(conn, this_week_start, this_week_end)
     this_week_stats["seller_nurture_stats"] = seller_stats
+
+    # Funnel — same two windows, so the week-over-week deltas line up with every
+    # other comparison in the digest. Read-only; never blocks the digest.
+    try:
+        this_week_stats["funnel"] = query_funnel(conn, this_week_start, this_week_end)
+        last_week_stats["funnel"] = query_funnel(conn, last_week_start, last_week_end)
+    except Exception as exc:  # noqa: BLE001
+        # A reporting add-on must never cost Peter the whole digest.
+        LOGGER.warning("Funnel query failed, digest continues without it: %s", exc)
+        this_week_stats["funnel"] = None
+        last_week_stats["funnel"] = None
 
     conn.close()
 

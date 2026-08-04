@@ -4723,8 +4723,23 @@ class RuleEngine:
         # like a quiet day rather than a suppressed run.
         deal_failed_rows = self.db.recent_audit_rows(["deal_check_failed_closed"], since)
         deal_failed_closed_today = len(deal_failed_rows)
+
         if not rows and not deal_failed_closed_today:
             return
+
+        # Warm leads today — the one funnel number worth seeing daily rather than
+        # waiting a week for. Same WARM definition the weekly digest uses (a
+        # reply that was not an opt-out), imported from funnel.py so the daily
+        # and weekly numbers can never drift apart. Read-only, and wrapped
+        # because instrumentation must never cost Peter the summary itself.
+        new_warm_today_count = 0
+        try:
+            from .funnel import new_warm_today as _new_warm_today
+
+            with self.db.connect() as _con:
+                new_warm_today_count = _new_warm_today(_con, since, dt.datetime.now(UTC))
+        except Exception as _funnel_exc:  # noqa: BLE001
+            LOGGER.warning("Daily funnel count unavailable: %s", _funnel_exc)
         counts: Dict[Tuple[str, str], int] = {}
         examples: List[str] = []
         reassigned_leads_for_peter: List[dict] = []
@@ -4802,6 +4817,11 @@ class RuleEngine:
             "----------------------------------------",
             *counts_formatted,
             "",
+            # Funnel one-liner: warm leads should surface the day they go warm,
+            # not sit until Monday's digest.
+            f"📈 FUNNEL — {new_warm_today_count} new WARM lead(s) today "
+            "(replied, not an opt-out). Full funnel in Monday's digest.",
+            "",
         ]
         # Fail-closed deal checks: leads we deliberately did NOT touch today
         # because FUB's deals API was unreachable. Surfaced so a silent outage
@@ -4823,6 +4843,14 @@ class RuleEngine:
         for c_fmt in counts_formatted:
             html_lines.append(f"<li>{c_fmt}</li>")
         html_lines.append("</ul>")
+        # Funnel one-liner — green when there is something to celebrate, muted
+        # when there is not, so a zero does not read as an alert.
+        _warm_colour = "#166534" if new_warm_today_count else "#6b7280"
+        html_lines.append(
+            f'<p style="color:{_warm_colour};"><strong>📈 FUNNEL — '
+            f"{new_warm_today_count} new WARM lead(s) today</strong> "
+            "(replied, not an opt-out). Full funnel in Monday's digest.</p>"
+        )
         if deal_failed_closed_today:
             html_lines.append(
                 f'<p style="color:#b45309;"><strong>⚠️ {deal_failed_closed_today} lead(s) skipped</strong> — '
