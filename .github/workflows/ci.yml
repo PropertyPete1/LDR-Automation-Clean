@@ -1,4 +1,3 @@
-```yaml
 # CI — runs the test suites that nothing was running automatically.
 #
 # Python already had five scheduled workflows; the TypeScript suites had none,
