@@ -11,6 +11,7 @@ import { runEngineForAgent, getActiveEngineAgents, isLegacyBot } from "./botEngi
 import { getDb } from "./db";
 import { agentBots } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
+import { dbReachable } from "./dbReachable";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,12 +30,15 @@ const MIGRATED_SLUGS = [
 const OFFBOARDED_SLUGS = ["abby", "jason"];
 
 // These exercise the REAL engine against the REAL agent_bots table, so they need
-// a live MySQL. Without DATABASE_URL getDb() returns null and they fail with
-// "Cannot read properties of null" / "[Engine] Agent not found" rather than
-// exercising the gate — permanent reds in every mirror and audit run, which is
-// the noise that hides real regressions. Gated, not weakened: with a DB they run
-// exactly as before, and the DB-free block below covers the same invariants.
-const hasDb = !!process.env.DATABASE_URL;
+// a live MySQL. Without one, getDb() returns null and they fail with "Cannot
+// read properties of null" / "[Engine] Agent not found" rather than exercising
+// the gate — permanent reds in every mirror and audit run, which is the noise
+// that hides real regressions. Gated, not weakened: with a DB they run exactly
+// as before, and the DB-free block below covers the same invariants.
+//
+// Probed rather than inferred from DATABASE_URL being set: a URL pointing at
+// nothing satisfies that check and then fails on first query.
+const hasDb = await dbReachable();
 
 describe.skipIf(!hasDb)("botEngine legacy safeguard (requires DATABASE_URL)", () => {
   it("migrated slugs are in LEGACY_BOT_SLUGS but have legacyRetired=true so engine allows them", async () => {

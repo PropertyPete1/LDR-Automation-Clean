@@ -1,12 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getDb, getCachedDraft, setCachedDraft, snoozeLead, unsnoozeLead, getActiveSnoozesForAgent, getSnoozeCount, recordQueueAction, getWeeklyQueueStats } from "./db";
+import { dbReachable } from "./dbReachable";
 
 
 // Env-gated: this suite asserts against a live external dependency that is
 // intentionally absent on any machine that must not hold it (local dev, CI,
 // audit runs). It was FAILING rather than skipping, which kept the suite
 // permanently red and hid real regressions in the noise.
-const hasDb = !!process.env.DATABASE_URL;
+//
+// Probed rather than inferred from DATABASE_URL being set: drizzle() is lazy,
+// so a URL pointing at nothing satisfies that check and then fails on the first
+// query — which is how a sandbox holding secrets but no MySQL turned this suite
+// red again.
+const hasDb = await dbReachable();
 
 describe.skipIf(!hasDb)("Power Queue 2.0 - SMS Draft Cache", () => {
   it("setCachedDraft stores and getCachedDraft retrieves", async () => {

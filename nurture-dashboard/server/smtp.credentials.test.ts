@@ -35,12 +35,37 @@ describe.skipIf(!inDeployedEnv)("SMTP credentials", () => {
   });
 });
 
-// Also deployment-only: /home/ubuntu/... is the live Manus host filesystem, so
-// this can only be true on the deployed box. Same gate as the credentials above.
-describe.skipIf(!inDeployedEnv)("pond-nurture route", () => {
-  it("run_approved_daily_automation.py script path is correct", async () => {
-    const { existsSync } = await import("fs");
-    const scriptPath = "/home/ubuntu/fub_automation/run_approved_daily_automation.py";
-    expect(existsSync(scriptPath)).toBe(true);
+/**
+ * This block used to assert that
+ *   /home/ubuntu/fub_automation/run_approved_daily_automation.py
+ * exists on disk, gated on SMTP_HOST being set.
+ *
+ * Two things were wrong with it. The gate and the assertion were unrelated —
+ * holding SMTP credentials says nothing about whether you are on the Manus host
+ * — so any environment with mail configured but a different filesystem went red.
+ * And the assertion had outlived its subject: pondNurture.ts is a native
+ * TypeScript port that explicitly replaced the shell-exec approach ("no Python,
+ * no shell, no sandbox paths"), so the route has not depended on that script for
+ * some time. It was pinning a dependency the code deliberately removed.
+ *
+ * Replaced with the invariant actually worth protecting, which needs no
+ * environment at all: the route is registered, and it does NOT shell out to the
+ * Python entrypoint that GitHub Actions already owns. If it ever did again,
+ * pond leads would be emailed twice — once by Actions, once by the route.
+ */
+describe("pond-nurture route", () => {
+  it("is registered and runs the native engine, never a Python shell-exec", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const indexSrc = fs.readFileSync(path.join(here, "_core/index.ts"), "utf-8");
+
+    expect(indexSrc).toContain('app.post("/api/scheduled/pond-nurture"');
+    expect(indexSrc).toContain("runPondNurture");
+
+    // The duplicate-send guard: no shelling out to the Actions entrypoint.
+    expect(indexSrc).not.toContain("run_approved_daily_automation.py");
+    expect(indexSrc).not.toMatch(/exec(Sync|File)?\(\s*['"`][^'"`]*python/i);
   });
 });

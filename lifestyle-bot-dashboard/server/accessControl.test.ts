@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
+import { dbReachable } from "./dbReachable";
 import type { TrpcContext } from "./_core/context";
+
+// Block (d) drives bots.agentView, which queries MySQL. With no DB the
+// procedure returns empty arrays and the scoping assertions hold vacuously;
+// pointed at an unreachable DB it throws. Probe so it skips in both of those
+// cases and genuinely runs when there is a database to scope against.
+const hasDb = await dbReachable();
 
 /**
  * Access Control Tests — Item 3
@@ -119,7 +126,7 @@ describe("Access Control — Item 3", () => {
     });
   });
 
-  describe("(d) /agent/:slug endpoint isolation — no cross-agent data leakage", () => {
+  describe.skipIf(!hasDb)("(d) /agent/:slug endpoint isolation — no cross-agent data leakage", () => {
     it("bots.agentView only returns data for the requested slug", async () => {
       // This is a public procedure (linked from clock-in emails), so test with no auth
       const caller = appRouter.createCaller(createUnauthContext());
