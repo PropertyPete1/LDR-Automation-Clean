@@ -1,5 +1,7 @@
 # LDR Database Hygiene & Nurture System
 
+[![CI](https://github.com/PropertyPete1/LDR-Automation-Clean/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PropertyPete1/LDR-Automation-Clean/actions/workflows/ci.yml)
+
 > ✅ **LIVE — runs entirely on GitHub Actions (cutover 2026-07-13)**
 > Agent Bot Dashboard and Power Queue remain on Manus hosting.
 
