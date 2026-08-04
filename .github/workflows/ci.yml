@@ -1,0 +1,129 @@
+```yaml
+# CI — runs the test suites that nothing was running automatically.
+#
+# Python already had five scheduled workflows; the TypeScript suites had none,
+# so ~660 tests and both `tsc` checks only ever ran when a human ran them. Every
+# chronic red found in the last few audits survived on exactly that gap.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# DO NOT ADD AN `env:` BLOCK WITH SECRETS TO THIS FILE.
+#
+# The other workflows in this repo each carry an env: block of secrets because
+# they do real work. This one must not, and the reason is not caution — it is
+# how the suites are designed to behave.
+#
+# Tests that need a real dependency skip themselves when it is absent. Some of
+# those gates read the PRESENCE of a credential. Hand this workflow a secret
+# pointing at something CI cannot reach — a MySQL URL with no MySQL, an API key
+# with no network egress — and those tests un-skip and fail. That is precisely
+# what turns a green suite red in a provisioned sandbox, and it is the failure
+# this workflow exists to prevent, not cause.
+#
+# Secretless is the supported configuration. Verified: on a clean clone with
+# --frozen-lockfile and no secrets, all three suites pass.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap first gate: catches a syntax error in ~10s, before three jobs spend
+  # time installing dependencies. Needs no requirements install — compileall
+  # only parses.
+  gate:
+    name: py_compile (fast gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Byte-compile all Python
+        working-directory: pond-nurture-bot
+        run: python -m compileall -q src *.py
+
+  python:
+    name: Python — pytest
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        working-directory: pond-nurture-bot
+        # pytest is deliberately NOT in requirements.txt — the scheduled
+        # workflows install that file to do real work and should not pull a
+        # test runner into the production environment.
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: pytest
+        working-directory: pond-nurture-bot
+        # conftest.py pins DRY_RUN=true, blanks FUB_API_KEY and points the DB at
+        # a temp file, so the suite is hermetic — mocked HTTP only, no secrets.
+        run: python -m pytest -q
+
+  typescript:
+    name: TS — ${{ matrix.project }}
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false # one project failing should not hide the other's result
+      matrix:
+        project:
+          - lifestyle-bot-dashboard
+          - nurture-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must precede setup-node: the pnpm cache resolves the store path by
+      # running pnpm, so pnpm has to be on PATH first.
+      # No `version:` here on purpose — action-setup reads the exact pinned
+      # pnpm from each package.json `packageManager` field (pnpm@10.4.1).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22" # vite 7 requires >=20.19 / >=22.12
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.project }}
+        # --frozen-lockfile fails rather than silently resolving a new tree if
+        # pnpm-lock.yaml and package.json disagree.
+        run: pnpm install --frozen-lockfile
+
+      - name: tsc --noEmit
+        working-directory: ${{ matrix.project }}
+        run: pnpm exec tsc --noEmit
+
+      - name: vitest
+        working-directory: ${{ matrix.project }}
+        run: pnpm exec vitest run
+```
