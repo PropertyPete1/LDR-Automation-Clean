@@ -105,6 +105,8 @@ jobs:
       # No `version:` here on purpose — action-setup reads the exact pinned
       # pnpm from each package.json `packageManager` field (pnpm@10.4.1).
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ matrix.project }}/package.json
 
       - uses: actions/setup-node@v4
         with:
