@@ -1036,6 +1036,54 @@ class ContentGenerator:
             content = "\n".join(lines)
         return content
 
+    @staticmethod
+    def extract_json_object(content: str) -> str:
+        """Return just the first complete JSON object in `content`.
+
+        The fence-stripper above handles ```json wrappers but not the other
+        common shape: a valid JSON object followed by a sentence or two of
+        commentary. json.loads() rejects that with "Extra data: line N", and on
+        2026-08-05 that error hit 53 of 90 pond skip checks — 59%.
+
+        That was not merely wasted tokens. should_skip_lead_llm() treats any
+        exception as "do not skip", so for 59% of leads the LLM skip gate was
+        silently absent: notes saying the lead had bought a house, signed with
+        another agent, or asked to be left alone stopped being read at all.
+        Raising the daily cap would have multiplied exactly that population.
+
+        Scans with a brace counter that ignores braces inside strings, so a
+        reason field containing '}' cannot truncate the object early. Returns
+        the input unchanged when no object is found, letting the caller's own
+        error handling report a genuinely unparseable response.
+        """
+        if not content:
+            return content
+        start = content.find("{")
+        if start == -1:
+            return content
+        depth = 0
+        in_string = False
+        escaped = False
+        for i in range(start, len(content)):
+            ch = content[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return content[start : i + 1]
+        return content
+
     def should_skip_lead_llm(self, person: dict, notes: List[dict]) -> Tuple[bool, str]:
         if not notes:
             return False, ""
@@ -1107,7 +1155,7 @@ class ContentGenerator:
             content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.1)
             if not content:
                 return False, ""
-            parsed = json.loads(content)
+            parsed = json.loads(self.extract_json_object(content))
             should_skip = bool(parsed.get("should_skip"))
             confidence = int(parsed.get("confidence") or 0)
             reason = str(parsed.get("reason") or "").strip()
@@ -2873,7 +2921,22 @@ class RuleEngine:
         recent_nurtures = self.db.recent_audit_rows(["pond_nurture"], utc_today_start)
         sent_count = sum(1 for r in recent_nurtures if r.get("status") in ("sent", "dry_run_sent"))
         
+        # Ramped daily cap. Resolution order: POND_DAILY_CAP env override, then
+        # the stored ramp step, then the rules.yaml value as a floor-of-last-
+        # resort if the state DB is unreadable. The cap only bounds HOW MANY of
+        # the already-filtered candidates get an email — every suppression check
+        # lives inside process_reengagement_candidate below and is untouched by it.
         cap = max(0, int(self.rules.phase2_max_customer_emails_per_run))
+        try:
+            from .ramp import resolve_daily_cap
+
+            with self.db.connect() as _con:
+                cap = max(0, int(resolve_daily_cap(_con)))
+            LOGGER.info("Pond nurture daily cap resolved to %s", cap)
+        except Exception as _cap_exc:  # noqa: BLE001
+            LOGGER.warning(
+                "Ramp cap unavailable (%s) — falling back to rules.yaml cap %s", _cap_exc, cap
+            )
         for person in candidates:
             # Skip leads not in the configured pond immediately to avoid clogging database with logs
             if self.rules.pond_nurture_only and self.rules.pond_ids:
@@ -4037,8 +4100,54 @@ class RuleEngine:
             return "suppressed"
         last = self.db.get_last_reengagement(person_id)
         # ── Engagement-Based Cadence (Tier 3) ──
-        tier = self.classify_engagement_tier(person)
+        tier, latest_inbound, _tier_reason = self._classify_engagement(person)
         cadence_days = {"engaged": 10, "standard": 14, "cold": 21}.get(tier, self.rules.reengagement_cadence_days)
+
+        # ── Never-engaged tightening (volume ramp, 2026-08) ──
+        # 'cold' holds two populations that deserve different treatment:
+        #
+        #   LAPSED       replied/called once, but >90 days ago  -> keep 21 days.
+        #                They have engaged before, so a slower touch is a
+        #                considered choice, not neglect.
+        #   NEVER ENGAGED no inbound signal has EVER been recorded -> 14 days.
+        #                Nothing about a 21-day gap is working for them, and a
+        #                lead who has never responded cannot be annoyed by a
+        #                cadence they have never reacted to.
+        #
+        # Only the second group tightens, and only down to the standard 14 —
+        # never below it. Leads with any reply history keep their existing
+        # cadence, and the timeline-window override below still STRETCHES from
+        # whatever this resolves to, so a lead with a stated future window is
+        # unaffected by this branch.
+        if tier == "cold" and latest_inbound is None:
+            cadence_days = min(cadence_days, self.rules.reengagement_cadence_days)
+
+        # ── EARLY CADENCE GATE (runtime) ─────────────────────────────────────
+        # The timeline override below costs a FUB notes fetch plus an Anthropic
+        # call, and it used to run for EVERY candidate — including the ~13 in 14
+        # that a 14-day cadence means are not due today. Those leads were then
+        # discarded a few lines later by the very same gate.
+        #
+        # On 2026-08-05 that waste dominated the run: 2130 Anthropic calls at
+        # ~2.5s each accounted for essentially the entire 91 minutes, and the
+        # job was killed by the workflow's 90-minute timeout mid-pond.
+        #
+        # Gating here is EQUIVALENT, not an approximation. Every timeline branch
+        # below applies max(cadence_days, N) — it can only ever lengthen the
+        # interval, never shorten it (that is the documented contract, and the
+        # never-engaged tightening above has already been applied). So the value
+        # of cadence_days at this point is a LOWER BOUND on its final value: a
+        # lead too recent for this bound is too recent for any stretched bound,
+        # and would have been skipped below regardless. The lead is logged with
+        # the same reason and status either way.
+        if last and dt.datetime.now(UTC) - last < dt.timedelta(days=cadence_days):
+            self.db.log(
+                "pond_nurture",
+                "skipped",
+                person_id,
+                {"reason": f"{tier}-tier cadence cap ({cadence_days}d)"},
+            )
+            return "skipped"
 
         # ── Timeline-Aware Cadence Override (stretches cadence, never shortens) ──
         is_value_led = False
@@ -4740,6 +4849,18 @@ class RuleEngine:
                 new_warm_today_count = _new_warm_today(_con, since, dt.datetime.now(UTC))
         except Exception as _funnel_exc:  # noqa: BLE001
             LOGGER.warning("Daily funnel count unavailable: %s", _funnel_exc)
+
+        # Volume-ramp footer: which cap ran today, which step it came from, and
+        # whether the guardrails are holding it. Degrades to a plain line rather
+        # than vanishing, so its absence always means a bug and never a hold.
+        ramp_status_line = "Cap: unavailable"
+        try:
+            from .ramp import status_line as _ramp_status
+
+            with self.db.connect() as _con:
+                ramp_status_line = _ramp_status(_con)
+        except Exception as _ramp_exc:  # noqa: BLE001
+            LOGGER.warning("Ramp status unavailable: %s", _ramp_exc)
         counts: Dict[Tuple[str, str], int] = {}
         examples: List[str] = []
         reassigned_leads_for_peter: List[dict] = []
@@ -4822,6 +4943,8 @@ class RuleEngine:
             f"📈 FUNNEL — {new_warm_today_count} new WARM lead(s) today "
             "(replied, not an opt-out). Full funnel in Monday's digest.",
             "",
+            ramp_status_line,
+            "",
         ]
         # Fail-closed deal checks: leads we deliberately did NOT touch today
         # because FUB's deals API was unreachable. Surfaced so a silent outage
@@ -4850,6 +4973,10 @@ class RuleEngine:
             f'<p style="color:{_warm_colour};"><strong>📈 FUNNEL — '
             f"{new_warm_today_count} new WARM lead(s) today</strong> "
             "(replied, not an opt-out). Full funnel in Monday's digest.</p>"
+        )
+        _ramp_colour = "#b45309" if "HELD" in ramp_status_line else "#6b7280"
+        html_lines.append(
+            f'<p style="color:{_ramp_colour};font-size:0.9em;">🚦 {ramp_status_line}</p>'
         )
         if deal_failed_closed_today:
             html_lines.append(
@@ -5368,6 +5495,11 @@ class RuleEngine:
         return None
 
     def classify_engagement_tier(self, person: dict) -> str:
+        """Public tier for a pond lead. See _classify_engagement for detail."""
+        tier, _, _ = self._classify_engagement(person)
+        return tier
+
+    def _classify_engagement(self, person: dict) -> Tuple[str, Optional[dt.datetime], str]:
         """Classify a pond lead into engagement tiers based on inbound activity.
 
         Tiers:
@@ -5378,6 +5510,17 @@ class RuleEngine:
         Data source: FUB person fields (lastReceivedEmail, lastReceivedText, lastIncomingCall)
         + our audit_log reply_detected entries. FUB does NOT expose email open/click
         tracking via API, so we use replies + inbound activity as the engagement signal.
+
+        Returns (tier, latest_inbound, reason). latest_inbound is what separates
+        the two very different populations inside 'cold':
+
+          latest_inbound is None -> NEVER engaged. No reply, text or call, ever.
+          latest_inbound is set  -> LAPSED. They did engage once; it was >90d ago.
+
+        Cadence treats those differently (see the call site), so the caller needs
+        the distinction rather than just the tier label. The tier vocabulary is
+        deliberately unchanged so the digest breakdown, the funnel's ENGAGED
+        stage and the LLM prompt all keep working.
         """
         person_id = int(person["id"])
         now = dt.datetime.now(UTC)
@@ -5424,7 +5567,7 @@ class RuleEngine:
 
         # Persist tier classification
         self.db.upsert_engagement_tier(person_id, tier, reason)
-        return tier
+        return tier, latest_inbound, reason
 
     def qualifies_for_reengagement(self, person: dict) -> bool:
         # Strictly restrict automated re-engagement emails to leads currently inside a configured Pond

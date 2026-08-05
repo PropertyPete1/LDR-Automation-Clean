@@ -233,8 +233,13 @@ class TestTimelineCadence:
 # ═══ 6+7. Caps, dedup guard, dry-run separation ═══════════════════════════════
 
 class TestGuardAndDryRun:
-    def test_pond_cap_is_100_and_closed_drip_cap_20(self, rules, m):
-        assert rules.phase2_max_customer_emails_per_run == 100
+    def test_pond_cap_fallback_matches_ramp_step_1_and_closed_drip_cap_20(self, rules, m):
+        """The rules.yaml pond cap is now a FALLBACK for when ramp state is
+        unreadable, so it must equal the ramp's first step rather than the old
+        flat 100. The live cap comes from ramp.RAMP_STEPS / POND_DAILY_CAP."""
+        from fub_automation.ramp import RAMP_STEPS
+
+        assert rules.phase2_max_customer_emails_per_run == RAMP_STEPS[0] == 150
         import inspect
         src = inspect.getsource(m.RuleEngine)
         assert "launch_cap_reached" in src

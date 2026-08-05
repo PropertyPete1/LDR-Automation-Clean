@@ -31,7 +31,13 @@ customer_nurture_log_note_enabled: false
 phase2_daily_summary_enabled: true
 phase2_daily_summary_email: "peter@lifestyledesignrealty.com"
 # Escalated safety caps for 4,000+ client backlog (Phase B); set to 0 for unlimited after Peter reviews.
-phase2_max_customer_emails_per_run: 100
+#
+# phase2_max_customer_emails_per_run is now a FALLBACK ONLY. The live pond cap
+# comes from the volume ramp (src/fub_automation/ramp.py): 150 → 200 → 250 → 300,
+# one step per green week, ceiling 300. This value is used only if the ramp state
+# cannot be read. Override any of it for a single run with POND_DAILY_CAP=<n>.
+# Reassignments are NOT ramped and keep their own flat cap.
+phase2_max_customer_emails_per_run: 150
 phase2_max_reassignments_per_run: 100
 phase2_manual_suppression_tags:
   - "Do Not Nurture"

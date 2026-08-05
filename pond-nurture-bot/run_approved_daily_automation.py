@@ -159,6 +159,29 @@ def main() -> int:
 
         print("Daily video generation and CDN refresh completed successfully!")
 
+    # Wall clock for the runtime guardrail. The ramp must be able to see that a
+    # run is creeping toward the workflow's timeout-minutes, and nothing inside
+    # the job can read GitHub's own run duration.
+    import time as _time
+
+    _run_started = _time.monotonic()
+
+    # Weekly ramp evaluation, before any sending, so today's cap reflects the
+    # decision made from last week's guardrails.
+    try:
+        from fub_automation.ramp import maybe_advance as _maybe_advance
+
+        with db.connect() as _con:
+            _ramp = _maybe_advance(_con)
+        if _ramp["advanced"]:
+            print(f"[ramp] Advanced to step {_ramp['step_index'] + 1} — cap now {_ramp['cap']}/day")
+        elif _ramp["holding"]:
+            print(f"[ramp] HELD at cap {_ramp['cap']}/day — {_ramp['hold_reason']}")
+        else:
+            print(f"[ramp] Cap {_ramp['cap']}/day ({_ramp['interval_note']})")
+    except Exception as _ramp_exc:  # noqa: BLE001
+        print(f"Warning: ramp evaluation failed, cap falls back to rules.yaml: {_ramp_exc}")
+
     engine.scan_all_leads_for_disqualification()  # Reply Intent Handler: auto-trash relocated/bought-elsewhere leads (ALL leads)
     engine.scan_pond_responses_for_intent()
     engine.scan_stale_agent_no_note_reassignment()
@@ -188,6 +211,19 @@ def main() -> int:
         print("Skipping dashboard refresh (dry-run or script not found)")
         
     print('Approved daily automation run completed.')
+
+    # ── Record wall-clock runtime for the ramp's runtime guardrail ─────────────
+    # Written even in dry-run: the guardrail cares how long the work takes, not
+    # whether mail was delivered.
+    try:
+        from fub_automation.ramp import record_run_duration as _record_duration
+
+        _elapsed_min = (_time.monotonic() - _run_started) / 60.0
+        with db.connect() as _con:
+            _record_duration(_con, _elapsed_min)
+        print(f'  [ramp] Run duration recorded: {_elapsed_min:.1f} min')
+    except Exception as _dur_exc:  # noqa: BLE001
+        print(f'Warning: could not record run duration: {_dur_exc}')
 
     # ── Post observation to FUB Nurture Dashboard ───────────────────────────────
     _post_dashboard_observation(db, settings)

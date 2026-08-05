@@ -36,6 +36,10 @@ from fub_automation.funnel import (  # noqa: E402
     format_funnel_html,
     query_funnel,
 )
+from fub_automation.ramp import (  # noqa: E402
+    digest_section_html,
+    evaluate_guardrails,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 LOGGER = logging.getLogger("weekly_digest")
@@ -471,6 +475,8 @@ def format_digest(this_week: dict, last_week: dict, pond_size: int) -> str:
 
     {funnel_section}
 
+    {this_week.get('ramp_html', '')}
+
     <h2>📬 Email Sends</h2>
     <table style="border-collapse: collapse; width: 100%;">
     <tr style="background: #f3f4f6;"><th style="text-align:left; padding:8px;">Bot</th><th style="padding:8px;">Count</th><th style="padding:8px;">vs Last Week</th></tr>
@@ -590,6 +596,19 @@ def main():
         LOGGER.warning("Funnel query failed, digest continues without it: %s", exc)
         this_week_stats["funnel"] = None
         last_week_stats["funnel"] = None
+
+    # Volume ramp — current cap, step, and the guardrail readings behind any
+    # hold. Read-only: the digest reports the ramp, it never moves it.
+    try:
+        this_week_stats["ramp_guardrails"] = evaluate_guardrails(
+            conn, this_week_start, this_week_end
+        )
+        this_week_stats["ramp_html"] = digest_section_html(
+            conn, this_week_stats["ramp_guardrails"]
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Ramp section failed, digest continues without it: %s", exc)
+        this_week_stats["ramp_html"] = ""
 
     conn.close()
 
