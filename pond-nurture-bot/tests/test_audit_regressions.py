@@ -192,7 +192,7 @@ def test_yesterdays_sends_do_not_consume_todays_cap(m, db):
 
 def test_smtp_send_uses_an_explicit_timeout(m, monkeypatch):
     """Without a timeout, one hung SMTP connection stalls the whole daily run
-    until the 90-minute job timeout and every remaining lead goes unsent."""
+    until the 120-minute job timeout and every remaining lead goes unsent."""
     captured = {}
 
     class FakeSMTP:

@@ -30,13 +30,13 @@ GUARDRAILS (all computed from audit_log rows the system already writes)
     runtime headroom = worst daily run duration vs the workflow      -> HOLD
                        timeout
 
-The third one is not cosmetic. The daily workflow has a 90-minute
-timeout-minutes and the run was already being KILLED at that limit on cap 100
-(2026-08-05: cancelled at 91.1 min, mid-pond). Advancing the cap into a
-timeout does not send more email — it gets the run killed part-way through,
-which is strictly worse than not advancing. So runtime is a first-class
-guardrail: if last week's worst run used more than RUNTIME_HOLD_FRACTION of
-the timeout, the ramp holds regardless of how clean the list looks.
+The third one is not cosmetic. The daily workflow allows 120 timeout-minutes,
+raised from 90 after a run was KILLED at the old limit on cap 100 (2026-08-05:
+cancelled at 91.1 min, mid-pond). Advancing the cap into a timeout does not
+send more email — it gets the run killed part-way through, which is strictly
+worse than not advancing. So runtime is a first-class guardrail: if last week's
+worst run used more than RUNTIME_HOLD_FRACTION of the timeout, the ramp holds
+regardless of how clean the list looks.
 
 A guardrail with a zero denominator (a week with no sends) is NOT green — it
 is unknown, and unknown must not advance a ramp.
@@ -60,9 +60,9 @@ OPT_OUT_RATE_LIMIT_PCT = 1.5
 
 # Workflow timeout-minutes for daily-automation.yml. If that value changes in
 # the workflow, change it here too — this module cannot read it.
-WORKFLOW_TIMEOUT_MINUTES = 90
+WORKFLOW_TIMEOUT_MINUTES = 120
 # Hold if the worst run last week used more than this share of the timeout.
-# 0.8 leaves ~18 minutes of headroom for a slow FUB or a slow Anthropic day.
+# 0.8 leaves ~24 minutes of headroom for a slow FUB or a slow Anthropic day.
 RUNTIME_HOLD_FRACTION = 0.8
 
 # Actions whose 'sent' status means an email actually went to a lead.

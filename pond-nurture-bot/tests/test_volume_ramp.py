@@ -159,11 +159,11 @@ def test_holds_on_high_bounce_rate(con):
 
 def test_holds_when_runtime_is_near_the_workflow_timeout(con):
     """The guardrail that stops the ramp walking into a killed run."""
-    _healthy_week(con, runtime_min=85.0)  # limit is 0.8 * 90 = 72
+    _healthy_week(con, runtime_min=110.0)  # limit is 0.8 * 120 = 96
     _start_clock(con)
     r = maybe_advance(con, now=NOW)
     assert r["advanced"] is False
-    assert "runtime 85 min" in r["hold_reason"]
+    assert "runtime 110 min" in r["hold_reason"]
 
 
 def test_a_week_with_no_sends_is_unknown_not_green(con):

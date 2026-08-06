@@ -1907,12 +1907,34 @@ class EmailSender:
         if bcc:
             msg["Bcc"] = ", ".join(bcc)
         msg["Subject"] = subject
-        msg.set_content(body)
+        # cte="base64" is load-bearing, not a style choice.
+        #
+        # Left to itself, set_content() picks quoted-printable for these bodies
+        # (they carry emoji, and the Tap-to-Text URLs blow past the 78-column
+        # line limit). QP is only safe if every reader honours it exactly: the
+        # '=' in "?lead_id=1970" goes on the wire as "=3D", and long URLs get
+        # soft-wrapped with a trailing '='. Any hop that decodes QP against a
+        # body it should have left alone eats the literal '=' plus the two
+        # characters after it, and the daily summary's links arrive destroyed:
+        #
+        #     lead_id=1970  ->  lead_id\x1970     ('=19' read as one octet)
+        #     lead_id=694   ->  lead_idi4         ('=69' -> 'i')
+        #     lead_id=2159  ->  lead_id!59        ('=21' -> '!')
+        #
+        # Note which '=' is lost: the structural one between the query key and
+        # its value. make_sms_uri() already percent-encodes every param VALUE,
+        # so no amount of extra URL-encoding can save that character — it has
+        # to stop appearing literally in the transmitted body. base64 does
+        # exactly that: the payload is an opaque alphanumeric blob, so a URL's
+        # '=' is never on the wire as '=' and there is nothing for a stray QP
+        # decode to consume. It is 7-bit clean and universally supported; the
+        # ~33% size cost is nothing against links that silently do not work.
+        msg.set_content(body, cte="base64")
         if html_body:
-            msg.add_alternative(html_body, subtype="html")
+            msg.add_alternative(html_body, subtype="html", cte="base64")
         # timeout is REQUIRED: without it smtplib inherits the OS socket
         # default, so a hung SMTP connection stalls the whole daily run until
-        # the 90-minute job timeout and every remaining lead goes unsent.
+        # the 120-minute job timeout and every remaining lead goes unsent.
         with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port,
                           timeout=SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.starttls()
