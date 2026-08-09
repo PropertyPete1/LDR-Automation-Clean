@@ -2,10 +2,18 @@
 """
 Lightweight speed-to-lead intraday checker.
 
-Runs every minute during business hours (10am–6pm CT) via Manus AGENT cron.
-ONLY processes new_lead_timers — no pond nurture, no agent digests, no reassignments.
+Runs every 5 minutes during business hours (10am–6pm CT) via GitHub Actions.
+Discovers newly assigned leads, then processes new_lead_timers — no pond
+nurture, no agent digests, no reassignment sweeps beyond the timers themselves.
+
+Discovery lives here, not only in the daily run. poll_new_leads() used to be
+called from run_approved_daily_automation.py alone, so a lead assigned at
+10:05am was not even *seen* until the next morning's sweep: the 30/60-minute
+timers it drives could not fire, because no timer existed. The daily call stays
+as a backup sweep for anything an intraday run missed (job cancelled, outage).
 
 This script is intentionally minimal so it completes in under 30 seconds.
+Polling adds one paginated GET /people per run.
 """
 
 from __future__ import annotations
@@ -99,6 +107,20 @@ def main() -> int:
     fub = FollowUpBossClient(settings)
     engine = RuleEngine(settings, rules, fub, db)
 
+    # Discovery first: a lead found on this pass gets its timer created and then
+    # evaluated in the same run, instead of waiting for the next one.
+    #
+    # Polling is deliberately NOT inside the timer try-block. It is the newer,
+    # network-heavier half of the job; a failure here must not stop the half
+    # that actually warns and reassigns. The run still exits non-zero (below) so
+    # the dead-man's switch sees it.
+    poll_failed = False
+    try:
+        engine.poll_new_leads()
+    except Exception as exc:
+        poll_failed = True
+        LOGGER.error("New-lead polling failed: %s", exc, exc_info=True)
+
     try:
         engine.process_new_lead_timers()
         LOGGER.info("Speed-to-lead check complete at %s CT", datetime.datetime.now(CT).strftime("%H:%M:%S"))
@@ -106,6 +128,10 @@ def main() -> int:
         LOGGER.error("Speed-to-lead check failed: %s", exc, exc_info=True)
         # Mark the switch DOWN immediately rather than waiting for the grace
         # period — this job drives the 30/60-minute lead-response timers.
+        _ping_healthcheck("speed_to_lead", fail=True)
+        return 1
+
+    if poll_failed:
         _ping_healthcheck("speed_to_lead", fail=True)
         return 1
 
