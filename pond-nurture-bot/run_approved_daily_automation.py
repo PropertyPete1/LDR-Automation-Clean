@@ -189,6 +189,9 @@ def main() -> int:
     engine.scan_seller_nurture()  # Seller nurture track: 5-email sequence for "Seller Lead" tagged pond leads
     engine.scan_agent_followup()
     engine.scan_untouched_assignments()  # Assignment safety net: 24h+ untouched agent assignments (task + note + summary section)
+    # Backup sweep. Primary discovery is the 5-minute speed-to-lead job
+    # (run_speed_to_lead_check.py); this catches anything an intraday run missed
+    # — cancelled job, Actions outage, FUB 5xx. Dedup makes the overlap free.
     engine.poll_new_leads()
     engine.process_new_lead_timers()
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
