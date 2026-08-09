@@ -186,3 +186,13 @@ business_hours_end: "18:00"
 # Monday=0 through Sunday=6. Current setting counts all days from 10 AM to 6 PM Central.
 business_hours_days: [0, 1, 2, 3, 4, 5, 6]
 local_timezone: "America/Chicago"
+
+# Assignment safety net — daily untouched-assignment alerts.
+# Covers the gap speed-to-lead cannot: a lead manually REASSIGNED to an agent
+# (created long ago) gets flagged if the agent logs zero touches for 24+ hours
+# after the daily job first observes the assignment. Alerts = FUB task +
+# @mention note to the agent + a section in Peter's daily summary email.
+untouched_assignment_alert_enabled: true
+untouched_assignment_hours: 24
+untouched_assignment_realert_hours: 72
+untouched_assignment_max_alerts_per_run: 10
