@@ -184,6 +184,12 @@ class Rules:
     # Seller nurture volume ramp + long-tail cadence (LDR-Seller-Finder volume upgrade)
     seller_daily_cap_ramp: List[int]      # e.g. [25, 25, 50, 50] — advances weekly, holds at last value
     seller_longtail_cadence_days: int     # post-sequence cadence (was monthly/30; now every 3 weeks/21)
+    # Assignment safety net — daily untouched-assignment alerts (covers the gap
+    # speed-to-lead can't: leads REASSIGNED to an agent long after creation)
+    untouched_assignment_alert_enabled: bool
+    untouched_assignment_hours: int
+    untouched_assignment_realert_hours: int
+    untouched_assignment_max_alerts_per_run: int
 
     @classmethod
     def load(cls, path: str) -> "Rules":
@@ -286,6 +292,10 @@ class Rules:
             email_address_update_scan_enabled=bool(data.get("email_address_update_scan_enabled", True)),
             seller_daily_cap_ramp=[int(c) for c in data.get("seller_daily_cap_ramp", [25, 25, 50, 50])] or [25],
             seller_longtail_cadence_days=int(data.get("seller_longtail_cadence_days", 21)),
+            untouched_assignment_alert_enabled=bool(data.get("untouched_assignment_alert_enabled", True)),
+            untouched_assignment_hours=int(data.get("untouched_assignment_hours", 24)),
+            untouched_assignment_realert_hours=int(data.get("untouched_assignment_realert_hours", 72)),
+            untouched_assignment_max_alerts_per_run=int(data.get("untouched_assignment_max_alerts_per_run", 10)),
         )
 
 
@@ -408,6 +418,20 @@ class AuditDB:
                     email_number INTEGER NOT NULL,
                     claimed_at   TEXT NOT NULL,
                     PRIMARY KEY (person_id, email_number)
+                );
+                """
+            )
+            # Assignment safety net. FUB's people API exposes no "assigned at"
+            # timestamp, so assignment age is approximated by when THIS job
+            # first observed the current lead→agent pair. A pair change resets
+            # both the clock and the alert suppression.
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS assignment_watch (
+                    person_id        INTEGER PRIMARY KEY,
+                    assigned_user_id INTEGER NOT NULL,
+                    first_seen_at    TEXT NOT NULL,
+                    last_alert_at    TEXT
                 );
                 """
             )
@@ -737,6 +761,27 @@ class AuditDB:
     def cancel_timer(self, person_id: int) -> None:
         with self.connect() as con:
             con.execute("UPDATE new_lead_timers SET canceled_at=? WHERE person_id=?", (now_iso(), person_id))
+
+    # ── Assignment safety net (untouched-assignment watch) ──
+    def get_assignment_watch(self, person_id: int) -> Optional[dict]:
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            row = con.execute("SELECT * FROM assignment_watch WHERE person_id=?", (person_id,)).fetchone()
+        return dict(row) if row else None
+
+    def upsert_assignment_watch(self, person_id: int, assigned_user_id: int, first_seen_at: Optional[str] = None) -> None:
+        """Record the current lead→agent pair. REPLACE semantics on purpose:
+        an assignment change restarts the untouched clock and clears the
+        last_alert_at suppression for the new pair."""
+        with self.connect() as con:
+            con.execute(
+                "INSERT OR REPLACE INTO assignment_watch(person_id, assigned_user_id, first_seen_at, last_alert_at) VALUES (?, ?, ?, NULL)",
+                (person_id, assigned_user_id, first_seen_at or now_iso()),
+            )
+
+    def mark_assignment_alerted(self, person_id: int) -> None:
+        with self.connect() as con:
+            con.execute("UPDATE assignment_watch SET last_alert_at=? WHERE person_id=?", (now_iso(), person_id))
 
     # ── Engagement Tier (Tier 3 Feature 1) ──
     def upsert_engagement_tier(self, person_id: int, tier: str, reason: str) -> None:
@@ -4855,7 +4900,18 @@ class RuleEngine:
         deal_failed_rows = self.db.recent_audit_rows(["deal_check_failed_closed"], since)
         deal_failed_closed_today = len(deal_failed_rows)
 
-        if not rows and not deal_failed_closed_today:
+        # Untouched-assignment alerts fired today (assignment safety net)
+        untouched_alerts: List[dict] = []
+        for _ua_row in self.db.recent_audit_rows(["untouched_assignment_alert"], since):
+            if _ua_row.get("status") in {"created", "dry_run_created"}:
+                try:
+                    _ua_details = json.loads(_ua_row.get("details") or "{}")
+                except Exception:  # noqa: BLE001
+                    _ua_details = {}
+                _ua_details["person_id"] = _ua_row.get("person_id")
+                untouched_alerts.append(_ua_details)
+
+        if not rows and not deal_failed_closed_today and not untouched_alerts:
             return
 
         # Warm leads today — the one funnel number worth seeing daily rather than
@@ -5126,6 +5182,25 @@ class RuleEngine:
             lines.append("")
             html_lines.append(f"<h3>📅 Timeline-Adjusted Leads: {timeline_stats['count']} (avg window {timeline_stats['avg_days_out']}d out)</h3>")
 
+        # ── Assignment Safety Net: untouched assignments flagged today ──
+        if untouched_alerts:
+            lines.append(f"⚠️ UNTOUCHED ASSIGNMENTS: {len(untouched_alerts)}")
+            lines.append("----------------------------------------")
+            html_lines.append(f"<h3>⚠️ UNTOUCHED ASSIGNMENTS: {len(untouched_alerts)}</h3>")
+            html_lines.append("<ul>")
+            for ua in untouched_alerts:
+                ua_lead = ua.get("lead_name") or f"FUB ID {ua.get('person_id')}"
+                ua_agent = ua.get("agent_name") or f"user {ua.get('assigned_user_id')}"
+                ua_hours = ua.get("hours_untouched", "?")
+                lines.append(f"- {ua_lead} — {ua_agent} — {ua_hours}h untouched (FUB ID {ua.get('person_id')})")
+                html_lines.append(
+                    f"<li style='margin-bottom: 8px; border-left: 3px solid #f59e0b; padding-left: 10px;'>"
+                    f"<strong>{ua_lead}</strong> — {ua_agent} — <strong>{ua_hours}h</strong> untouched"
+                    f"</li>"
+                )
+            lines.append("")
+            html_lines.append("</ul>")
+
         # Add recent notable actions
         lines.append("🔍 RECENT NOTABLE ACTIONS")
         lines.append("----------------------------------------")
@@ -5223,7 +5298,15 @@ class RuleEngine:
             if not person:
                 self.db.cancel_timer(person_id)
                 continue
-            if self.lead_touched_after_creation(person, created):
+            # Timer created_at is the DETECTION anchor (drives the 30/60-min
+            # budget). For touch detection, use the earlier of detection time
+            # and the lead's real FUB creation — an agent who touched the lead
+            # between creation and detection must still cancel the timer.
+            touch_anchor = created
+            person_created = parse_dt(person.get("created") or "")
+            if person_created and person_created < touch_anchor:
+                touch_anchor = person_created
+            if self.lead_touched_after_creation(person, touch_anchor):
                 self.db.cancel_timer(person_id)
                 self.db.log("new_lead_timer", "canceled_touched", person_id)
                 continue
@@ -5286,6 +5369,169 @@ class RuleEngine:
                 self.db.mark_warned(person_id)
                 self.db.log("new_lead_warning", "created", person_id, {"agent_name": agent_name, "assigned_user_id": assigned_user_id})
 
+    def scan_untouched_assignments(self) -> None:
+        """Assignment safety net: flag agent-assigned, non-pond leads with zero
+        agent touch for 24+ hours after their current assignment was first seen.
+
+        Exists because speed-to-lead timers only ever start for leads CREATED in
+        the last 24h — a lead manually reassigned to an agent months after
+        creation had no net at all until the 14-day agent-followup digest.
+        Alerts are a FUB task + @mention note to the agent (never a message to
+        the lead) and a section in Peter's daily summary.
+        """
+        if not self.rules.untouched_assignment_alert_enabled:
+            LOGGER.info("Untouched-assignment safety net is disabled by rules.yaml")
+            return
+        now = dt.datetime.now(UTC)
+        threshold = dt.timedelta(hours=self.rules.untouched_assignment_hours)
+        realert_window = dt.timedelta(hours=self.rules.untouched_assignment_realert_hours)
+        cap = max(0, int(self.rules.untouched_assignment_max_alerts_per_run))
+
+        # Server-side prefilter: a lead untouched for 24h+ necessarily has a
+        # stale lastActivity. (Limitation: automated emails can bump
+        # lastActivity and hide a lead from this net until they quiet down.)
+        cutoff = (now - threshold).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            candidates = self.fub.get_people(lastActivityBefore=cutoff, fields="allFields")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Untouched-assignment scan failed to fetch candidates: %s", exc)
+            self.db.log("untouched_assignment_scan", "error", None, {"error": str(exc)})
+            return
+        # Longest-neglected first, so the per-run cap always spends its budget
+        # on the worst offenders.
+        candidates.sort(key=lambda p: parse_dt(p.get("lastActivity") or "") or now)
+        LOGGER.info("Untouched-assignment scan: %s candidates with lastActivity before %s", len(candidates), cutoff)
+
+        try:
+            users_map = self.user_cache_by_id()
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception("Untouched-assignment scan failed to fetch users: %s", exc)
+            self.db.log("untouched_assignment_scan", "error", None, {"error": str(exc)})
+            return
+        excluded_agent_ids: set = set(getattr(self.rules, "excluded_user_ids", []))
+        skip_counts: Dict[str, int] = {}
+        alerts_sent = 0
+        cap_logged = False
+
+        def _skip(reason: str) -> None:
+            skip_counts[reason] = skip_counts.get(reason, 0) + 1
+
+        for person in candidates:
+            person_id = int(person["id"])
+            if person.get("assignedPondId"):
+                _skip("in_pond")
+                continue
+            assigned_user_id = person.get("assignedUserId")
+            if not assigned_user_id:
+                _skip("unassigned")
+                continue
+            assigned_user_id = int(assigned_user_id)
+            if self.rules.peter_user_id is not None and assigned_user_id == int(self.rules.peter_user_id):
+                _skip("assigned_to_peter")
+                continue
+            if assigned_user_id in excluded_agent_ids:
+                _skip("excluded_agent")
+                continue
+            agent_user = users_map.get(assigned_user_id)
+            if not agent_user or agent_user.get("status") != "Active":
+                _skip("inactive_agent")
+                continue
+            if self.is_excluded(person):
+                _skip("excluded_lead")
+                continue
+
+            watch = self.db.get_assignment_watch(person_id)
+            if not watch or int(watch["assigned_user_id"]) != assigned_user_id:
+                # First sighting of THIS lead→agent pair — start the clock now.
+                self.db.upsert_assignment_watch(person_id, assigned_user_id)
+                _skip("watch_started")
+                continue
+
+            first_seen = parse_dt(watch["first_seen_at"]) or now
+            hours_untouched = (now - first_seen).total_seconds() / 3600
+            if now - first_seen < threshold:
+                _skip("under_threshold")
+                continue
+
+            last_alert = parse_dt(watch.get("last_alert_at") or "")
+            if last_alert and now - last_alert < realert_window:
+                _skip("realert_suppressed")
+                self.db.log(
+                    "untouched_assignment_skip", "realert_suppressed", person_id,
+                    {"assigned_user_id": assigned_user_id, "last_alert_at": watch.get("last_alert_at")},
+                )
+                continue
+
+            if cap and alerts_sent >= cap:
+                # Cheap check BEFORE the touch check so a capped run stops
+                # burning notes-API calls; these leads stay unmarked and get
+                # first claim on tomorrow's budget (sort is oldest-first).
+                if not cap_logged:
+                    self.db.log("untouched_assignment_alert", "cap_reached", None, {"cap": cap})
+                    cap_logged = True
+                _skip("cap_deferred")
+                self.db.log("untouched_assignment_skip", "cap_deferred", person_id, {"assigned_user_id": assigned_user_id})
+                continue
+
+            if self.lead_touched_after_creation(person, first_seen):
+                _skip("touched")
+                self.db.log(
+                    "untouched_assignment_skip", "touched", person_id,
+                    {"assigned_user_id": assigned_user_id, "first_seen_at": watch["first_seen_at"]},
+                )
+                continue
+
+            agent_name = agent_user.get("name") or ""
+            lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
+            mention = f"@{agent_name} " if agent_name else ""
+            # Same visual format as the speed-to-lead warning note so agents
+            # recognize it instantly. Subject MUST keep the "Automation:"
+            # prefix — that is what stops this note from counting as a touch.
+            warning_body = (
+                f"{mention}🚨 **URGENT UNTOUCHED ASSIGNMENT WARNING** 🚨\n\n"
+                f"This lead was assigned to you, but no first touch (call, text, or email) has been detected "
+                f"after **{int(hours_untouched)} hours**.\n\n"
+                f"⚠️ **Action Required**: Please contact this lead today!\n"
+                f"⏰ This lead is also being reported to {self.rules.peter_name} in the daily automation summary."
+            )
+            try:
+                self.fub.create_task(
+                    person_id,
+                    assigned_user_id,
+                    f"URGENT: assigned lead untouched for {int(hours_untouched)}+ hours — contact today",
+                    task_type="Call",
+                    due_minutes=60,
+                )
+                self.fub.add_note(person_id, "Automation: untouched assignment warning", warning_body)
+            except Exception as exc:  # noqa: BLE001
+                # Leave the watch row unmarked so the next run retries.
+                LOGGER.exception("Untouched-assignment alert failed for person %s", person_id)
+                self.db.log("untouched_assignment_alert", "error", person_id, {"error": str(exc)})
+                continue
+            self.db.mark_assignment_alerted(person_id)
+            alerts_sent += 1
+            _alert_status = "dry_run_created" if self.settings.dry_run else "created"
+            self.db.log(
+                "untouched_assignment_alert", _alert_status, person_id,
+                {
+                    "lead_name": lead_name,
+                    "agent_name": agent_name,
+                    "assigned_user_id": assigned_user_id,
+                    "hours_untouched": round(hours_untouched, 1),
+                },
+            )
+            LOGGER.info(
+                "Untouched-assignment alert for lead %s (%s) — agent %s, %.1fh untouched",
+                person_id, lead_name, agent_name, hours_untouched,
+            )
+
+        # One aggregate row per run records EVERY skip reason without writing
+        # thousands of per-lead rows for structural skips (pond/unassigned/...).
+        self.db.log(
+            "untouched_assignment_scan", "completed", None,
+            {"candidates": len(candidates), "alerts": alerts_sent, "skips": skip_counts},
+        )
+
     def poll_new_leads(self) -> None:
         if not self.rules.new_lead_warning_enabled and not self.rules.new_lead_reassignment_enabled:
             LOGGER.info("Speed-to-lead workflow is disabled. Skipping API polling.")
@@ -5327,9 +5573,12 @@ class RuleEngine:
             assigned_user_id = person.get("assignedUserId")
             # If the lead is assigned to an agent (and NOT Peter Allen himself), start the speed-to-lead timer!
             if assigned_user_id and int(assigned_user_id) != self.rules.peter_user_id:
-                created_at = person.get("created")
-                self.db.add_new_lead_timer(person_id, int(assigned_user_id), created_at)
-                self.db.log("new_lead_timer", "started_polling", person_id, {"assignedUserId": assigned_user_id, "created_at": created_at})
+                # Anchor the timer at DETECTION time (now), never the lead's FUB
+                # created timestamp — polling runs once daily, so a lead created
+                # yesterday afternoon would otherwise start its timer already
+                # past the 60-minute budget and be insta-reassigned.
+                self.db.add_new_lead_timer(person_id, int(assigned_user_id))
+                self.db.log("new_lead_timer", "started_polling", person_id, {"assignedUserId": assigned_user_id, "fub_created_at": person.get("created")})
                 LOGGER.info("API Polling: Started speed-to-lead timer for Lead %s (Assigned to Agent %s)", person_id, assigned_user_id)
                 # Send immediate email notification to the agent with click-to-text link
                 self._send_speed_to_lead_agent_alert(person, int(assigned_user_id))

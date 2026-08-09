@@ -188,6 +188,7 @@ def main() -> int:
     engine.scan_stale_leads()
     engine.scan_seller_nurture()  # Seller nurture track: 5-email sequence for "Seller Lead" tagged pond leads
     engine.scan_agent_followup()
+    engine.scan_untouched_assignments()  # Assignment safety net: 24h+ untouched agent assignments (task + note + summary section)
     engine.poll_new_leads()
     engine.process_new_lead_timers()
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
