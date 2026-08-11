@@ -59,7 +59,13 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # NOTE: this action has no `model` input — the model is passed
           # through to the Claude CLI via claude_args.
-          claude_args: --model ${{ steps.model.outputs.model }}
+          #
+          # --allowedTools is pre-approved up front because CI is
+          # non-interactive: without it the coder hits permission-denied
+          # partway through a build, the way lifestyle-brain did.
+          claude_args: >-
+            --model ${{ steps.model.outputs.model }}
+            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,Bash(git:*),Bash(npm:*),Bash(pip:*),Bash(pip3:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(gh:*)"
           prompt: |
             You are implementing a build order filed as GitHub issue #${{ github.event.issue.number }}
             in ${{ github.repository }}.
