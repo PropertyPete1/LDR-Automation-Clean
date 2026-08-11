@@ -1,0 +1,131 @@
+# One-shot repair, run by hand. Not scheduled, and it should stay that way.
+#
+# Rebuilds reengagement_log rows for a day whose audit writes were lost — see
+# PR #5, where a failed state-DB push threw away 150 sends that had really gone
+# out. It reads the FUB notes the bot wrote at send time and restores the
+# cadence clock so none of those leads gets emailed early.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+name: Backfill reengagement_log
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Local (CT) date to repair, YYYY-MM-DD"
+        required: true
+        default: "2026-08-11"
+      expect:
+        description: "Authoritative send count — a mismatch aborts rather than half-repairing"
+        required: true
+        default: "150"
+      commit:
+        description: "Actually write. Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: "true" # nothing here sends; this only keeps main.py's import inert
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Count the rows already present
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import sqlite3
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          print('reengagement_log rows before:',
+                c.execute('SELECT COUNT(*) FROM reengagement_log').fetchone()[0])
+          "
+
+      - name: Backfill
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 backfill_reengagement.py \
+            --date "${{ inputs.date }}" \
+            --expect "${{ inputs.expect }}" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something was actually written. A dry run must never touch
+      # the state branch.
+      - name: Push state DB
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      # The state branch is last-writer-wins and Speed-to-Lead pushes to it on
+      # its own schedule, so "we pushed" is not the same as "it is still there".
+      # Re-pull from scratch and read the rows back.
+      - name: Re-pull and verify the repair survived
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Confirm the backfilled rows are on the state branch
+        if: ${{ inputs.commit }}
+        working-directory: pond-nurture-bot
+        env:
+          EXPECT: ${{ inputs.expect }}
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import sqlite3, sys, os
+          expect = int(os.environ['EXPECT'])
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          total = c.execute('SELECT COUNT(*) FROM reengagement_log').fetchone()[0]
+          marked = c.execute(
+              \"SELECT COUNT(*) FROM reengagement_log WHERE message_hash='backfilled-from-fub-note'\"
+          ).fetchone()[0]
+          print(f'reengagement_log rows after: {total}')
+          print(f'rows carrying the backfill marker: {marked}')
+          if marked == 0:
+              print('ERROR: the repair is not on the state branch — another workflow '
+                    'probably overwrote it. Re-run this workflow.', file=sys.stderr)
+              sys.exit(1)
+          print(f'✅ repair persisted ({marked} of {expect} leads carry a rebuilt row; '
+                f'the remainder already had one at or after their send)')
+          "
