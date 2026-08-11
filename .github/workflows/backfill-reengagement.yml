@@ -19,6 +19,12 @@ on:
         description: "Authoritative send count — a mismatch aborts rather than half-repairing"
         required: true
         default: "150"
+      tables:
+        description: "Which repair to run"
+        type: choice
+        required: true
+        default: both
+        options: [both, reengagement, audit]
       commit:
         description: "Actually write. Leave false for a dry run first."
         type: boolean
@@ -82,6 +88,7 @@ jobs:
           python3 backfill_reengagement.py \
             --date "${{ inputs.date }}" \
             --expect "${{ inputs.expect }}" \
+            --tables "${{ inputs.tables }}" \
             ${{ inputs.commit && '--commit' || '' }}
 
       # Only when something was actually written. A dry run must never touch
@@ -119,22 +126,47 @@ jobs:
         working-directory: pond-nurture-bot
         env:
           EXPECT: ${{ inputs.expect }}
+          DAY: ${{ inputs.date }}
         run: |
           set -euo pipefail
           python3 -c "
           import sqlite3, sys, os
           expect = int(os.environ['EXPECT'])
+          day = os.environ['DAY']
           c = sqlite3.connect('data/fub_automation.sqlite3')
+
           total = c.execute('SELECT COUNT(*) FROM reengagement_log').fetchone()[0]
           marked = c.execute(
               \"SELECT COUNT(*) FROM reengagement_log WHERE message_hash='backfilled-from-fub-note'\"
           ).fetchone()[0]
-          print(f'reengagement_log rows after: {total}')
-          print(f'rows carrying the backfill marker: {marked}')
-          if marked == 0:
+          print(f'reengagement_log: {total} rows, {marked} carrying the backfill marker')
+
+          # CT day bounds, the same window the repair used.
+          from zoneinfo import ZoneInfo
+          import datetime as dt
+          start = dt.datetime.strptime(day, '%Y-%m-%d').replace(tzinfo=ZoneInfo('America/Chicago'))
+          end = start + dt.timedelta(days=1)
+          sends = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE created_at >= ? AND created_at < ?\"
+              \" AND action='pond_nurture' AND status='sent'\",
+              (start.astimezone(dt.timezone.utc).isoformat(), end.astimezone(dt.timezone.utc).isoformat()),
+          ).fetchone()[0]
+          rebuilt = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE created_at >= ? AND created_at < ?\"
+              \" AND action='pond_nurture' AND status='sent'\"
+              \" AND details LIKE '%backfilled-from-fub-note%'\",
+              (start.astimezone(dt.timezone.utc).isoformat(), end.astimezone(dt.timezone.utc).isoformat()),
+          ).fetchone()[0]
+          print(f'audit_log for {day}: {sends} pond_nurture/sent rows, {rebuilt} rebuilt')
+
+          if marked == 0 and rebuilt == 0:
               print('ERROR: the repair is not on the state branch — another workflow '
                     'probably overwrote it. Re-run this workflow.', file=sys.stderr)
               sys.exit(1)
-          print(f'✅ repair persisted ({marked} of {expect} leads carry a rebuilt row; '
-                f'the remainder already had one at or after their send)')
+          if sends > expect:
+              print(f'ERROR: {day} has {sends} sends but only {expect} were expected — '
+                    f'rows were duplicated. Do NOT re-run; investigate.', file=sys.stderr)
+              sys.exit(1)
+          print(f'✅ repair persisted for {day}: {sends}/{expect} sends visible to reply '
+                f'detection, {marked} leads carrying a rebuilt cadence clock')
           "

@@ -203,6 +203,145 @@ def test_backfilled_rows_are_identifiable_as_reconstructed(db):
     assert row == ("email", "Austin", bf.BACKFILL_MARKER)
 
 
+# ── audit_log: what reply detection searches ─────────────────────────────────
+
+
+def day_bounds():
+    return bf.local_day_bounds(DATE, "America/Chicago")
+
+
+def test_every_send_becomes_a_row_including_a_lead_emailed_twice():
+    """Unlike the cadence clock this does NOT collapse per person —
+    scan_reply_detection keys off the most recent send per lead, so dropping the
+    second would move that lead's reply window backwards."""
+    sends = bf.sends_from_notes([note(101, at(8, 30)), note(101, at(11, 15)),
+                                 note(102, at(9, 0))], DATE)
+
+    assert len(sends) == 3
+    assert [s["created"] for s in sends] == sorted(s["created"] for s in sends)
+
+
+def test_send_rows_carry_what_the_ticker_and_the_funnel_read():
+    send = bf.sends_from_notes([note(101, at(8, 30), "EMAIL + SMS", "San Antonio")], DATE)[0]
+
+    assert send["person_id"] == 101
+    assert send["channels"] == ["email", "sms"]
+    assert send["city"] == "San Antonio"
+    assert send["subject"] == "Your home"
+    assert send["created"] == at(8, 30)
+
+
+def test_only_the_target_day_becomes_audit_rows():
+    sends = bf.sends_from_notes(
+        [note(101, at(8, 30)), note(102, at(8, 30) - dt.timedelta(days=1))], DATE)
+    assert [s["person_id"] for s in sends] == [101]
+
+
+def test_a_lead_already_logged_that_day_is_skipped():
+    """THE hazard: audit_log has no unique key, so a second run without this
+    doubles every row and hands the ramp a day that looks twice as busy."""
+    sends = bf.sends_from_notes([note(101, at(8, 30)), note(102, at(9, 0))], DATE)
+    write, skip = bf.plan_audit_backfill(sends, already_logged=[101])
+
+    assert [r["person_id"] for r in write] == [102]
+    assert [r["person_id"] for r in skip] == [101]
+
+
+def test_audit_rows_land_where_reply_detection_looks(db, m):
+    """The whole point: recent_audit_rows must return these leads, because that
+    is the list scan_reply_detection builds its watch set from."""
+    sends = bf.sends_from_notes([note(101, at(8, 30)), note(102, at(9, 0))], DATE)
+    write, _ = bf.plan_audit_backfill(sends, [])
+
+    conn = sqlite3.connect(db.path)
+    assert bf.apply_audit_rows(conn, write, {101: "Jane Harper", 102: "Ray Ortiz"}) == 2
+    conn.close()
+
+    rows = db.recent_audit_rows(["pond_nurture"], at(0, 1) - dt.timedelta(days=1))
+    seen = {r["person_id"]: r for r in rows if r["status"] == "sent"}
+    assert set(seen) == {101, 102}
+
+
+def test_rerunning_the_audit_backfill_inserts_nothing(db):
+    sends = bf.sends_from_notes([note(101, at(8, 30)), note(102, at(9, 0))], DATE)
+    conn = sqlite3.connect(db.path)
+    start, end = day_bounds()
+
+    write, _ = bf.plan_audit_backfill(sends, bf.people_logged_on(conn, start, end))
+    bf.apply_audit_rows(conn, write, {})
+    assert bf.count_audit_sends(conn, start, end) == 2
+
+    write2, skip2 = bf.plan_audit_backfill(sends, bf.people_logged_on(conn, start, end))
+    bf.apply_audit_rows(conn, write2, {})
+    assert write2 == [] and len(skip2) == 2
+    assert bf.count_audit_sends(conn, start, end) == 2, "re-run doubled the day"
+    conn.close()
+
+
+def test_backfilled_audit_rows_are_identifiable_and_ticker_ready(db):
+    import json
+    sends = bf.sends_from_notes([note(101, at(8, 30), city="Austin")], DATE)
+    write, _ = bf.plan_audit_backfill(sends, [])
+    conn = sqlite3.connect(db.path)
+    bf.apply_audit_rows(conn, write, {101: "Jane Harper"})
+    details = json.loads(conn.execute(
+        "SELECT details FROM audit_log WHERE person_id=101").fetchone()[0])
+    conn.close()
+
+    assert details["backfilled"] == bf.BACKFILL_MARKER
+    assert details["contact_name"] == "Jane Harper"
+    assert details["city"] == "Austin"
+
+
+def test_an_unresolvable_name_falls_back_the_way_telemetry_would(db):
+    import json
+    from fub_automation import telemetry as tel
+
+    write, _ = bf.plan_audit_backfill(bf.sends_from_notes([note(507, at(8, 30))], DATE), [])
+    conn = sqlite3.connect(db.path)
+    bf.apply_audit_rows(conn, write, {})  # no name resolved
+    details = json.loads(conn.execute(
+        "SELECT details FROM audit_log WHERE person_id=507").fetchone()[0])
+    conn.close()
+
+    assert details["contact_name"] == "Lead #507"
+    assert tel._contact_name(details, 507) == "Lead #507"
+
+
+def test_the_repaired_day_is_countable_by_telemetry(db, tmp_path):
+    """End to end onto the dashboard: after the audit repair, emails_sent for the
+    day equals the number of sends, and the ticker renders them with names."""
+    from fub_automation import telemetry as tel
+
+    sends = bf.sends_from_notes([note(101, at(8, 30)), note(102, at(9, 0))], DATE)
+    write, _ = bf.plan_audit_backfill(sends, [])
+    conn = sqlite3.connect(db.path)
+    bf.apply_audit_rows(conn, write, {101: "Jane Harper", 102: "Ray Ortiz"})
+    conn.close()
+
+    written = tel.write_status(db.path, str(tmp_path / "status"), now=at(20, 0))
+    assert written["daily_stats"]["date"] == DATE
+    assert written["daily_stats"]["emails_sent"] == 2
+    assert {e["contact_name"] for e in written["activity_log"]} == {"Jane Harper", "Ray Ortiz"}
+    assert all(e["type"] == "sent" for e in written["activity_log"])
+
+
+def test_the_repair_satisfies_the_stats_log_invariant(db, tmp_path):
+    """The two repairs must not fight: a day rebuilt in audit_log has to be able
+    to account for the ticker entries it generates."""
+    from fub_automation import telemetry as tel
+
+    write, _ = bf.plan_audit_backfill(
+        bf.sends_from_notes([note(100 + i, at(8, i % 60)) for i in range(30)], DATE), [])
+    conn = sqlite3.connect(db.path)
+    bf.apply_audit_rows(conn, write, {})
+    conn.close()
+
+    written = tel.write_status(db.path, str(tmp_path / "status"), now=at(20, 0))
+    tel.check_agreement(written["daily_stats"], written["activity_log"], "America/Chicago")
+    assert written["daily_stats"]["emails_sent"] == 30
+
+
 def test_the_repair_makes_the_cadence_check_skip_the_lead(m, db, rules, settings, fub, monkeypatch):
     """End to end on the thing that actually matters: after the repair, the real
     cadence gate treats the lead as recently emailed instead of due."""
