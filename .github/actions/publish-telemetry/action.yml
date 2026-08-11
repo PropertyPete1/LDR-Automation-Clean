@@ -3,16 +3,23 @@ description: "Regenerate status/*.json from the audit DB and commit them straigh
 
 # Run this with `if: always()` and BEFORE the state-sync push step.
 #
-# Order matters: state-sync's push mode does `git checkout state` + `git rm -rf .`
-# in the same working tree, so anything under status/ written before it is gone
-# by the time it finishes — and the tree is left on the state branch.
+# THIS STEP MUST LEAVE THE WORKING TREE EXACTLY AS IT FOUND IT.
 #
-# Regenerating here rather than relying on the file the bot wrote is deliberate.
-# The Python run writes status/ in a finally block, which covers an exception
-# but not a hard kill or a job timeout; this step reads the same audit DB and
-# produces the same answer, so telemetry survives a run that never reached its
-# own finally. The activity log merges rather than appends, so doing it twice
-# is a no-op, not a double entry.
+# That is not tidiness, it is the whole incident of 2026-08-11. The first
+# version wrote status/*.json into the working tree. Once the first telemetry
+# commit made status/ a TRACKED path on main, every later run left modified
+# tracked files behind, and state-sync's push step — which does
+# `git checkout state 2>/dev/null || git checkout --orphan state` — could no
+# longer switch branches: checkout refuses over dirty tracked files, and the
+# fallback dies with "a branch named 'state' already exists" under `bash -e`.
+# Daily Automation and Reply Detection failed at that step for sixteen hours.
+# The bot kept sending; none of its audit rows were ever persisted; and every
+# later run recomputed the day from a state DB that had never seen them and
+# published a confident `emails_sent: 0`.
+#
+# So: generate into a temp directory, build the commit with plumbing against a
+# temporary index, and restore status/ on the way out. HEAD, the branch and the
+# working tree are never touched.
 
 inputs:
   github_token:
@@ -26,94 +33,114 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Write status files
-      shell: bash
-      working-directory: pond-nurture-bot
-      env:
-        DATABASE_PATH: ${{ inputs.database_path }}
-      run: |
-        set -uo pipefail
-        if [ ! -f "$DATABASE_PATH" ]; then
-          echo "⚠️  No audit DB at pond-nurture-bot/$DATABASE_PATH — nothing to report."
-          exit 0
-        fi
-        # PYTHONPATH rather than the src. prefix: this invocation has no
-        # package parent, and telemetry.py has no intra-package imports.
-        PYTHONPATH=src python3 -m fub_automation.telemetry \
-          --db "$DATABASE_PATH" \
-          --out ../status
-
-    - name: Commit status files to main
+    - name: Publish telemetry
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github_token }}
+        DATABASE_PATH: ${{ inputs.database_path }}
       run: |
+        # Composite `shell: bash` starts with -e already set — that is exactly
+        # how the state-sync step turned one git error into a failed job. Turn
+        # it OFF deliberately: below, a non-zero exit from the writer is DATA
+        # (rc=2 means "the numbers contradict each other"), and it has to be
+        # read, not thrown.
+        set +e
         set -uo pipefail
 
-        if [ ! -f status/daily_stats.json ] || [ ! -f status/activity_log.json ]; then
-          echo "⚠️  Status files were not written — nothing to commit."
+        db="pond-nurture-bot/${DATABASE_PATH}"
+        if [ ! -f "$db" ]; then
+          echo "⚠️  No audit DB at $db — nothing to report."
+          exit 0
+        fi
+
+        # Everything happens here. Nothing is written under the checkout.
+        out="$(mktemp -d)"
+        trap 'rm -rf "$out"' EXIT
+
+        # The commit is always built on the CURRENT main, never on the SHA
+        # actions/checkout pinned this job to — several bot workflows publish
+        # here and a sibling push is routine.
+        git fetch -q origin main || true
+
+        # Seed the temp dir from what main already publishes. activity_log is a
+        # MERGE, not an append: the on-disk file is the long memory that
+        # outlives the state DB, and on 2026-08-11 it was the only surviving
+        # record of the morning's sends. Seeding from origin/main rather than
+        # the local checkout also picks up entries a sibling published while
+        # this job was running.
+        git show "FETCH_HEAD:status/activity_log.json" > "$out/activity_log.json" 2>/dev/null || true
+
+        PYTHONPATH=pond-nurture-bot/src python3 -m fub_automation.telemetry \
+          --db "$db" --out "$out"
+        rc=$?
+
+        # Exit 2 is the stats/log agreement invariant tripping: the audit DB is
+        # missing rows the published log already proves happened. Publishing
+        # anything now would overwrite good numbers with understated ones.
+        if [ "$rc" -eq 2 ]; then
+          echo "::error::Telemetry refused to publish — stats and activity log disagree. The state DB is probably not being persisted; check the 'Push state DB' step on recent runs."
+          exit 1
+        fi
+        if [ "$rc" -ne 0 ] || [ ! -f "$out/daily_stats.json" ] || [ ! -f "$out/activity_log.json" ]; then
+          echo "⚠️  Status files were not written (rc=$rc) — nothing to commit."
           exit 0
         fi
 
         # Both files must parse before they reach main. LIFESTYLE has no
-        # fallback for malformed JSON, and a bad commit here would sit on the
-        # dashboard until the next run.
-        for f in status/daily_stats.json status/activity_log.json; do
+        # fallback for malformed JSON.
+        for f in "$out/daily_stats.json" "$out/activity_log.json"; do
           if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; then
-            echo "❌ $f is not valid JSON — refusing to commit."
-            exit 0
+            echo "❌ $(basename "$f") is not valid JSON — refusing to commit."
+            exit 1
           fi
         done
 
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
+        stamp="$(python3 -c "import json;print(json.load(open('$out/daily_stats.json'))['date'])")"
 
-        stamp="$(python3 -c "import json;print(json.load(open('status/daily_stats.json'))['date'])")"
-
-        # The commit is built with plumbing against a temporary index, and
-        # HEAD and the working tree are never touched. Three reasons:
-        #
-        #  1. The tree is not ours to move. The decrypted state DB is sitting
-        #     in it waiting for the next step, and the bot may have left other
-        #     files behind. A reset/checkout/rebase here reaches well past
-        #     status/.
-        #  2. Every commit is built on the CURRENT origin/main, so a sibling
-        #     workflow's push is never rolled back — actions/checkout pinned
-        #     this job to the SHA it started from, and with several bot
-        #     workflows publishing here a concurrent push is routine.
-        #  3. No merge ever happens, so there is no conflict resolution to get
-        #     backwards. During a rebase `--ours` means upstream, not ours;
-        #     resolving that way silently threw this run's telemetry away and
-        #     still reported success. status/ is a whole snapshot regenerated
-        #     from the audit DB, so there is nothing to merge in the first
-        #     place — this run's read is simply the newer one.
+        published=0
         for attempt in 1 2 3; do
           git fetch -q origin main || true
           base="$(git rev-parse FETCH_HEAD)"
 
           index="$(mktemp)"
           GIT_INDEX_FILE="$index" git read-tree "$base"
-          for f in status/daily_stats.json status/activity_log.json; do
-            blob="$(git hash-object -w "$f")"
-            GIT_INDEX_FILE="$index" git update-index --add --cacheinfo "100644,$blob,$f"
+          for name in daily_stats.json activity_log.json; do
+            blob="$(git hash-object -w "$out/$name")"
+            GIT_INDEX_FILE="$index" git update-index --add \
+              --cacheinfo "100644,$blob,status/$name"
           done
           tree="$(GIT_INDEX_FILE="$index" git write-tree)"
           rm -f "$index"
 
           if [ "$tree" = "$(git rev-parse "${base}^{tree}")" ]; then
             echo "✅ Telemetry unchanged — nothing to commit."
-            exit 0
+            published=1
+            break
           fi
 
           commit="$(git commit-tree "$tree" -p "$base" -m "status: telemetry for ${stamp}")"
           if git push origin "${commit}:main"; then
             echo "✅ Telemetry published to main (attempt $attempt): $commit"
-            exit 0
+            published=1
+            break
           fi
           echo "⚠️  Push rejected (attempt $attempt) — someone pushed to main; rebuilding on the new tip..."
         done
 
-        # Reached only if all three attempts failed. Never claim success here:
-        # a dashboard silently stuck on yesterday's numbers is the whole
-        # failure this telemetry exists to prevent.
-        echo "⚠️  Could not publish telemetry after 3 attempts — the next run will retry."
+        # Belt and braces. Nothing above writes under the checkout, but the bot
+        # run itself may have (write_run_telemetry defaults to <repo>/status
+        # when TELEMETRY_STATUS_DIR is unset). Leaving a single modified tracked
+        # file here is what broke state persistence for sixteen hours, so the
+        # tree is put back before this step ends, whatever happened.
+        git checkout -- status/ 2>/dev/null || true
+        git clean -fdq status/ 2>/dev/null || true
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "::warning::Working tree is not clean after publishing telemetry — the state DB push may fail:"
+          git status --porcelain
+        fi
+
+        if [ "$published" -ne 1 ]; then
+          echo "⚠️  Could not publish telemetry after 3 attempts — the next run will retry."
+        fi

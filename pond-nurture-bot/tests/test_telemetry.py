@@ -468,6 +468,127 @@ def test_empty_db_reports_zeroes_rather_than_failing(db, status_dir):
     assert json.loads((status_dir / tel.ACTIVITY_FILENAME).read_text()) == []
 
 
+# ── the stats/log agreement invariant ────────────────────────────────────────
+#
+# Incident 2026-08-11: the daily run sent ~150 emails, its state-DB push failed,
+# and every run afterwards pulled a DB lineage that had never seen them. The
+# writer computed zeros from the DB it was given and published `emails_sent: 0`
+# on a day its own activity log listed the morning's sends by name. Nothing
+# about the number looked wrong. These tests make that pair unpublishable.
+
+
+def _published_log(status_dir, entries):
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / tel.ACTIVITY_FILENAME).write_text(json.dumps(entries))
+
+
+def _sent_entry(when: dt.datetime, name: str, type_: str = "sent") -> dict:
+    return {"ts": tel.iso_z(when), "type": type_, "contact_name": name,
+            "detail": "pond nurture email"}
+
+
+def test_zeros_cannot_publish_over_a_log_that_shows_todays_sends(db, status_dir):
+    """THE regression. Empty DB, but the published log proves the day happened."""
+    _published_log(status_dir, [_sent_entry(NOW - dt.timedelta(hours=n), f"Lead {n}")
+                                for n in range(1, 6)])
+
+    with pytest.raises(tel.TelemetryContradiction) as exc:
+        tel.write_status(db.path, str(status_dir), now=NOW)
+
+    assert "5 delivered emails" in str(exc.value)
+    assert "counted only 0" in str(exc.value)
+
+
+def test_the_last_good_files_survive_a_refusal(db, status_dir):
+    """A refusal must leave the previous pair intact, not half-replace it —
+    stale-but-true beats fresh-and-wrong."""
+    at(db, NOW, "pond_nurture", "sent", 1, {"contact_name": "Jane Harper"})
+    tel.write_status(db.path, str(status_dir), now=NOW)
+    good_stats = (status_dir / tel.STATS_FILENAME).read_text()
+    good_log = (status_dir / tel.ACTIVITY_FILENAME).read_text()
+
+    # The state DB is now lost — a fresh, empty one takes its place.
+    empty = db.__class__(str(status_dir.parent / "empty.sqlite3"))
+    with pytest.raises(tel.TelemetryContradiction):
+        tel.write_status(empty.path, str(status_dir), now=NOW)
+
+    assert (status_dir / tel.STATS_FILENAME).read_text() == good_stats
+    assert (status_dir / tel.ACTIVITY_FILENAME).read_text() == good_log
+    assert json.loads(good_stats)["emails_sent"] == 1
+
+
+def test_seller_drips_in_the_log_count_toward_the_invariant(db, status_dir):
+    """`drip` is a delivered email too — emails_sent includes seller drips, so
+    the invariant has to as well or the whole seller track is a blind spot."""
+    _published_log(status_dir, [_sent_entry(NOW, "Ray Ortiz", type_="drip")])
+
+    with pytest.raises(tel.TelemetryContradiction):
+        tel.write_status(db.path, str(status_dir), now=NOW)
+
+
+def test_non_send_entries_never_trip_the_invariant(db, status_dir):
+    """needs_reply and heating_up are not deliveries; a log full of them with
+    emails_sent: 0 is an ordinary quiet day, not a contradiction."""
+    _published_log(status_dir, [
+        {"ts": tel.iso_z(NOW), "type": "needs_reply", "contact_name": "Dana Kim",
+         "detail": "replied by email"},
+        {"ts": tel.iso_z(NOW), "type": "heating_up", "contact_name": "Sam Poe",
+         "detail": "buying intent detected"},
+    ])
+
+    written = tel.write_status(db.path, str(status_dir), now=NOW)
+    assert written["daily_stats"]["emails_sent"] == 0
+
+
+def test_yesterdays_sends_in_the_log_do_not_trip_todays_invariant(db, status_dir):
+    """The log holds 100 entries spanning days. Only today's are today's."""
+    _published_log(status_dir, [_sent_entry(NOW - dt.timedelta(days=1), "Yesterday Lead")])
+
+    written = tel.write_status(db.path, str(status_dir), now=NOW)
+    assert written["daily_stats"]["emails_sent"] == 0
+
+
+def test_the_invariant_uses_the_same_local_day_as_the_stats(db, status_dir):
+    """An evening-CT send is tomorrow in UTC. Comparing a UTC date against the
+    CT date would make every evening look like a contradiction."""
+    evening = dt.datetime(2026, 8, 10, 19, 30, tzinfo=CT).astimezone(UTC)
+    assert evening.strftime("%Y-%m-%d") == "2026-08-11", "the trap this guards"
+
+    at(db, evening, "pond_nurture", "sent", 1, {"contact_name": "Evening Lead"})
+    written = tel.write_status(db.path, str(status_dir), now=evening)
+
+    assert written["daily_stats"]["date"] == "2026-08-10"
+    assert written["daily_stats"]["emails_sent"] == 1
+
+
+def test_a_trimmed_log_holding_fewer_than_the_truth_is_fine(db, status_dir):
+    """The log caps at 100; emails_sent legitimately runs far ahead of it.
+    The invariant is >=, not ==."""
+    for i in range(150):
+        at(db, NOW - dt.timedelta(seconds=i), "pond_nurture", "sent", i,
+           {"contact_name": f"Lead {i}"})
+
+    written = tel.write_status(db.path, str(status_dir), now=NOW)
+    assert written["daily_stats"]["emails_sent"] == 150
+    assert len(written["activity_log"]) == 100
+
+
+def test_the_cli_exits_2_on_a_contradiction_and_0_otherwise(db, status_dir, capsys):
+    """The publish step branches on this exit code: 2 skips the commit and goes
+    red, anything else must never fail a good bot run.
+
+    Stamped at the real clock, not the fixed NOW: the CLI has no --now, so the
+    entry has to be today's for the invariant to be in scope at all.
+    """
+    _published_log(status_dir, [_sent_entry(dt.datetime.now(UTC), "Jane Harper")])
+    assert tel.main(["--db", db.path, "--out", str(status_dir)]) == 2
+    assert "REFUSING TO PUBLISH" in capsys.readouterr().err
+
+    (status_dir / tel.ACTIVITY_FILENAME).unlink()
+    assert tel.main(["--db", db.path, "--out", str(status_dir)]) == 0
+    assert tel.main(["--db", str(status_dir / "gone.sqlite3"), "--out", str(status_dir)]) == 0
+
+
 # ── the wiring that actually feeds it ────────────────────────────────────────
 
 

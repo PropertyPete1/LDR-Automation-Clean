@@ -56,9 +56,28 @@ runs:
         # Configure git
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        # Checkout or create state branch
+        # Checkout or create state branch.
+        #
+        # The old form here was
+        #     git checkout state 2>/dev/null || git checkout --orphan state
+        # whose fallback can never fire once `state` exists — it dies with
+        # "fatal: a branch named 'state' already exists", and under this shell's
+        # -e that failed the whole job. On 2026-08-11 a single modified tracked
+        # file in the checkout (status/*.json) was enough to make the first
+        # command refuse, and Daily Automation and Reply Detection then failed
+        # at this step for sixteen hours while the bot kept sending — every
+        # audit row from those runs was lost.
+        #
+        # Persisting state must not depend on the tidiness of a working tree it
+        # does not own: -f discards local modifications to tracked files (the
+        # decrypted DB is gitignored and untouched by it), and the branch is
+        # created only when it genuinely does not exist.
         git fetch origin state:state 2>/dev/null || true
-        git checkout state 2>/dev/null || git checkout --orphan state
+        if git rev-parse --verify --quiet state >/dev/null; then
+          git checkout -f state
+        else
+          git checkout --orphan state
+        fi
         # Clean working tree
         git rm -rf . 2>/dev/null || true
         # Place only the encrypted file

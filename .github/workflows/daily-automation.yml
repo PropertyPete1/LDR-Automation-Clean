@@ -59,6 +59,11 @@ jobs:
 
       - name: Run daily automation
         working-directory: pond-nurture-bot
+        env:
+          # Keep the run's own telemetry write out of the checkout: status/ is
+          # tracked on main, and a modified tracked file here breaks the state
+          # DB push below. The publish step regenerates from the same DB anyway.
+          TELEMETRY_STATUS_DIR: ${{ runner.temp }}/telemetry
         run: |
           echo "=== Daily Automation — DRY_RUN=$DRY_RUN ==="
           python3 run_approved_daily_automation.py

@@ -74,7 +74,17 @@ def write_run_telemetry() -> None:
             return
 
         # status/ lives at the repo root; this script sits one level down.
-        status_dir = Path(__file__).resolve().parent.parent / STATUS_DIRNAME
+        #
+        # TELEMETRY_STATUS_DIR overrides that, and CI sets it to a runner temp
+        # path on purpose. status/ is a TRACKED path on main, so writing it here
+        # would leave a modified tracked file in the checkout — which is what
+        # stopped `git checkout state` in the state-sync push step on
+        # 2026-08-11 and cost a day of persisted audit rows. Local and cron runs
+        # keep the default, where dirtying a checkout costs nothing.
+        status_dir = Path(
+            os.environ.get('TELEMETRY_STATUS_DIR')
+            or Path(__file__).resolve().parent.parent / STATUS_DIRNAME
+        )
         written = write_status(db_path, str(status_dir))
         stats = written['daily_stats']
         print(
