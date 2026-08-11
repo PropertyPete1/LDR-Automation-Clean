@@ -60,12 +60,12 @@ jobs:
           # NOTE: this action has no `model` input — the model is passed
           # through to the Claude CLI via claude_args.
           #
-          # --allowedTools is pre-approved up front because CI is
-          # non-interactive: without it the coder hits permission-denied
-          # partway through a build, the way lifestyle-brain did.
+          # Plain `Bash`: CI is an ephemeral sandbox with a repo-scoped token;
+          # prefix-matched Bash(cmd:*) rejected the coder's compound commands
+          # (that was the two-day PR gremlin in lifestyle-brain).
           claude_args: >-
             --model ${{ steps.model.outputs.model }}
-            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,Bash(git:*),Bash(npm:*),Bash(pip:*),Bash(pip3:*),Bash(python:*),Bash(python3:*),Bash(pytest:*),Bash(gh:*)"
+            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,Bash"
           prompt: |
             You are implementing a build order filed as GitHub issue #${{ github.event.issue.number }}
             in ${{ github.repository }}.
@@ -90,8 +90,59 @@ jobs:
               "Closes #${{ github.event.issue.number }}" and summarise what changed
               and how you verified it.
 
+      # The coder reliably pushes its branch but does not reliably open the PR —
+      # model diligence at the end of a long build is not a guarantee. This step
+      # makes the PR deterministic: fresh branch + no PR for this issue = open it.
+      - name: Open the pull request if the coder didn't
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          git fetch origin --prune
+
+          existing="$(gh pr list --state open --limit 50 \
+            --json number,body \
+            --jq "[.[] | select((.body // \"\") | test(\"#${ISSUE}\\\\b\"))] | length")"
+          if [ "${existing}" != "0" ]; then
+            echo "A PR referencing #${ISSUE} already exists — nothing to do."
+            exit 0
+          fi
+
+          branch="$(git for-each-ref refs/remotes/origin \
+            --sort=-committerdate \
+            --format='%(refname:short)' \
+            | grep -v '^origin/main$' | head -1 | sed 's#^origin/##')"
+
+          if [ -z "$branch" ]; then
+            echo "No candidate branch found — nothing to open."
+            exit 0
+          fi
+
+          ahead="$(git rev-list --count origin/main..origin/"$branch")"
+          if [ "$ahead" = "0" ]; then
+            echo "origin/$branch has no commits beyond main — nothing to open."
+            exit 0
+          fi
+
+          # Only adopt fresh work: the branch tip must belong to this run, not
+          # be a leftover from an earlier build.
+          tip_age="$(( $(date +%s) - $(git log -1 --format=%ct origin/"$branch") ))"
+          if [ "$tip_age" -gt 3600 ]; then
+            echo "origin/$branch tip is ${tip_age}s old — predates this run; not opening."
+            exit 0
+          fi
+
+          subject="$(git log -1 --format=%s origin/"$branch")"
+          gh pr create \
+            --head "$branch" \
+            --title "${subject:-$TITLE}" \
+            --body "$(printf 'Closes #%s\n\nOpened by the jarvis-build workflow: the coder pushed `%s` without opening a pull request. Implements the build order in issue #%s.' "$ISSUE" "$branch" "$ISSUE")"
+          echo "Opened PR for $branch."
+
       # The action does not expose the PR number as a documented output, so find
-      # it by the closing reference we asked it to write.
+      # it by the closing reference.
       - name: Locate the pull request
         id: pr
         env:
