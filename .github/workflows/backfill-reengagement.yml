@@ -101,18 +101,17 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      # state-sync's push leaves the working tree checked out on the 'state'
-      # branch, which holds nothing but the encrypted DB — no .github/, so a
-      # local composite action cannot be loaded again after it. Anything that
-      # runs after a state push has to restore the tree first. (Every other
-      # workflow gets away with it only because the push is their last step.)
-      - name: Restore the checkout after the state push
-        if: ${{ inputs.commit }}
-        uses: actions/checkout@v4
-
-      # The state branch is last-writer-wins and Speed-to-Lead pushes to it on
-      # its own schedule, so "we pushed" is not the same as "it is still there".
-      # Re-pull from scratch and read the rows back.
+      # No re-checkout needed between these two steps. The push used to do
+      # `git checkout -f state`, leaving the tree on a branch that holds nothing
+      # but the encrypted DB — no .github/ — so the local action below could not
+      # be loaded a second time. Since #9 the push builds its commit with
+      # plumbing and never touches HEAD, the branch or the tree, pinned by
+      # test_the_push_never_switches_branches_or_dirties_the_tree.
+      #
+      # Still re-pull rather than trusting the push. #9 stops a concurrent
+      # writer DISCARDING these rows, but a push that loses every retry still
+      # fails without persisting them, and this workflow exists precisely
+      # because rows that were believed written turned out not to be.
       - name: Re-pull and verify the repair survived
         if: ${{ inputs.commit }}
         uses: ./.github/actions/state-sync
