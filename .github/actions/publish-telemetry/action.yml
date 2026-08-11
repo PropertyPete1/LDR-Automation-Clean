@@ -1,14 +1,14 @@
 name: "Publish Telemetry to THE FLOOR"
 description: "Regenerate status/*.json from the audit DB and commit them straight to main"
 
-# Run this with `if: always()` and BEFORE the state-sync push step.
+# Run this with `if: always()`.
 #
 # THIS STEP MUST LEAVE THE WORKING TREE EXACTLY AS IT FOUND IT.
 #
 # That is not tidiness, it is the whole incident of 2026-08-11. The first
 # version wrote status/*.json into the working tree. Once the first telemetry
 # commit made status/ a TRACKED path on main, every later run left modified
-# tracked files behind, and state-sync's push step — which does
+# tracked files behind, and state-sync's push step — which then did
 # `git checkout state 2>/dev/null || git checkout --orphan state` — could no
 # longer switch branches: checkout refuses over dirty tracked files, and the
 # fallback dies with "a branch named 'state' already exists" under `bash -e`.
@@ -16,6 +16,11 @@ description: "Regenerate status/*.json from the audit DB and commit them straigh
 # The bot kept sending; none of its audit rows were ever persisted; and every
 # later run recomputed the day from a state DB that had never seen them and
 # published a confident `emails_sent: 0`.
+#
+# That push no longer checks out anything (#9), so a dirty tree can no longer
+# break state persistence. The rule stands anyway: this step publishes to main
+# from a job that is usually mid-run, and it has no business deciding what the
+# rest of that job finds in its checkout.
 #
 # So: generate into a temp directory, build the commit with plumbing against a
 # temporary index, and restore status/ on the way out. HEAD, the branch and the
