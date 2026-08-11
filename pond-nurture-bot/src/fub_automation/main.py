@@ -2230,7 +2230,7 @@ class RuleEngine:
         # Record in audit DB so we never send twice
         self.db.upsert_congrats(person_id, deal_address, subject)
         _send_status = "dry_run_sent" if self.settings.dry_run else "sent"
-        self.db.log("closed_congrats", _send_status, person_id, {"to": to_email, "subject": subject, "deal_address": deal_address})
+        self.db.log("closed_congrats", _send_status, person_id, {"to": to_email, "subject": subject, "deal_address": deal_address, "contact_name": person_name(person)})
         LOGGER.info("Phase 3b: Congrats email sent for person %s", person_id)
         return _send_status
 
@@ -2418,6 +2418,7 @@ class RuleEngine:
             "deal_address": deal_address,
             "subject": generated.get("subject"),
             "local_spots_count": len(local_spots),
+            "contact_name": person_name(person),
         })
         LOGGER.info("Phase 3: Sent quarterly drip to person %s (stage=%s)", person_id, stage)
         return _send_status
@@ -2564,6 +2565,7 @@ class RuleEngine:
             "to": to_email,
             "subject": subject,
             "email_number": emails_sent + 1,
+            "contact_name": person_name(person),
         })
         LOGGER.info(
             "Long-term nurture drip: sent email #%s to person %s (%s)",
@@ -2850,6 +2852,7 @@ class RuleEngine:
             "email_number": emails_sent + 1,
             "property_address": prop_addr,
             "neighborhood": neighborhood,
+            "contact_name": person_name(person),
         }
         if emails_sent >= SELLER_SEQUENCE_LENGTH:
             _audit_details["longtail_angle"] = longtail_angle_for(emails_sent)
@@ -3178,6 +3181,7 @@ class RuleEngine:
                         "source": ai_source,
                         "reassigned_to": self.rules.peter_name,
                         "snippet": trigger_snippet[:200],
+                        "contact_name": person_name(person),
                     })
                     reassigned_count += 1
 
@@ -4372,6 +4376,7 @@ class RuleEngine:
                 "freshness_angle": generated.get("freshness_angle"),
                 "subject": generated.get("subject"),
                 "engagement_tier": tier,
+                "contact_name": person_name(person),
             })
             # Tier 3 Feature 2: Track which angle was used for this lead
             used_angle = generated.get("freshness_angle") or ""
@@ -5920,7 +5925,8 @@ class RuleEngine:
                     "to": to_email,
                     "subject": generated["subject"],
                     "city": city or "Texas/general",
-                    "sender": sender_email
+                    "sender": sender_email,
+                    "contact_name": person_name(person),
                 })
                 LOGGER.info("Instant welcome email successfully sent to lead %s", person_id)
                 return _send_status
@@ -6171,6 +6177,7 @@ class RuleEngine:
                         "reply_snippet": reply_snippet[:200],
                         "agent_email": agent_email,
                         "agent_name": agent_name,
+                        "contact_name": lead_name,
                     })
                     # 5. Best-Send-Time Logging (Tier 3 Feature 4) — log reply hour/day
                     try:
