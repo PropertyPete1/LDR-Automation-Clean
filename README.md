@@ -39,11 +39,15 @@ All automation runs on GitHub Actions with encrypted state persistence on the `s
 ### State Management
 
 The `state` branch contains only the encrypted SQLite database (`fub_automation.sqlite3.enc`). Each workflow:
-1. Pulls and decrypts the state DB at the start of the run
+1. Pulls and decrypts the state DB at the start of the run, remembering the blob it came from
 2. Executes the Python automation
-3. Re-encrypts and pushes the updated state DB back to the `state` branch
+3. Re-encrypts and pushes the updated state DB back to the `state` branch — **compare-and-swap, not overwrite**
 
 Encryption uses AES-256 via `openssl` with the `STATE_ENCRYPTION_KEY` secret.
+
+**Concurrent writers.** Six workflows share this one file and their cadences guarantee overlap, so step 3 checks whether the branch moved since step 1. If it did, the run *merges* what is there into its own copy — `audit_log` and the send/bounce ledgers union, person-keyed rows take the newer timestamp and never move a suppression clock backwards — and retries; git's own fast-forward check is the compare-and-swap. If the push cannot land it **fails the step**. There is no force push: a run whose rows did not persist must not look like a run that succeeded. Before this (issue #9) the push was an unconditional whole-file overwrite, which silently discarded 150 pond sends on 2026-08-11 and then discarded the repair that rebuilt them.
+
+The protocol is `pond-nurture-bot/src/fub_automation/state_sync.py`, the reconciliation rules are `state_merge.py`, and both are covered by `tests/test_state_sync.py` (real git repositories, real openssl) and `tests/test_state_merge.py`.
 
 ### Required GitHub Secrets
 

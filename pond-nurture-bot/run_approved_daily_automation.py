@@ -79,8 +79,11 @@ def write_run_telemetry() -> None:
         # path on purpose. status/ is a TRACKED path on main, so writing it here
         # would leave a modified tracked file in the checkout — which is what
         # stopped `git checkout state` in the state-sync push step on
-        # 2026-08-11 and cost a day of persisted audit rows. Local and cron runs
-        # keep the default, where dirtying a checkout costs nothing.
+        # 2026-08-11 and cost a day of persisted audit rows. That push no longer
+        # switches branches at all (#9), so a dirty tree can no longer break
+        # persistence; the override stays because the publish step owns what
+        # lands in status/ and should not be racing this write. Local and cron
+        # runs keep the default, where dirtying a checkout costs nothing.
         status_dir = Path(
             os.environ.get('TELEMETRY_STATUS_DIR')
             or Path(__file__).resolve().parent.parent / STATUS_DIRNAME

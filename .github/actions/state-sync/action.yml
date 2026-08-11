@@ -1,5 +1,39 @@
 name: "Sync SQLite State (Encrypted)"
-description: "Pull/push the SQLite audit DB from/to the 'state' branch with AES-256 encryption"
+description: "Pull/push the SQLite audit DB from/to the 'state' branch with AES-256 encryption, compare-and-swap and merge-on-conflict"
+
+# The protocol lives in pond-nurture-bot/src/fub_automation/state_sync.py, which
+# is where its docstring explains it and where tests/test_state_sync.py drives it
+# against real git repositories. This file is the wiring only.
+#
+# WHY IT IS NOT A WHOLE-FILE OVERWRITE ANY MORE (issue #9)
+#
+# Six workflows share one DB and their cadences guarantee overlap. The old push
+# encrypted whatever this job happened to hold and pushed it as a whole-file
+# blob, so a job that pulled before a sibling's push and finished after it threw
+# away everything the sibling had written — and both pushes reported success. It
+# happened twice on 2026-08-11: Daily Automation's 150 pond sends, then the PR #6
+# / #8 repair that rebuilt them, wiped by Reply Detection #459 four minutes after
+# the backfill reported success. Nothing noticed either time.
+#
+# Now: pull records the blob SHA the DB came from; push refuses to overwrite a
+# branch that has moved since, merging what is there into this run's file first
+# (row-level, per table — see state_merge.py) and retrying. Git's fast-forward
+# check is the compare-and-swap. There is no force push: after the last attempt
+# the step FAILS, which is the whole point — a run whose rows did not land must
+# not look like a run that succeeded.
+#
+# The push no longer checks out the 'state' branch. It builds the commit with
+# plumbing against a temporary index, exactly like publish-telemetry, so HEAD,
+# the current branch and the working tree are untouched. Two old hazards go with
+# it: a single modified tracked file could no longer refuse the checkout, and no
+# step after a push needs `actions/checkout` again to get .github/ back.
+#
+# So backfill-reengagement.yml's "Restore the checkout after the state push"
+# step, and the comments in daily-automation.yml / reply-detection.yml about the
+# push wiping the working tree, are now stale. They are harmless — a redundant
+# checkout is a no-op — and they are still there only because the bot that opened
+# this change cannot write to .github/workflows/. See the PR for #9.
+
 inputs:
   mode:
     description: "'pull' to fetch and decrypt state, 'push' to encrypt and commit state"
@@ -18,23 +52,11 @@ runs:
       if: inputs.mode == 'pull'
       shell: bash
       env:
+        # env:, never argv — the passphrase is handed to openssl as
+        # `-pass env:STATE_KEY` so it cannot surface in a process list or a log.
         STATE_KEY: ${{ inputs.encryption_key }}
       run: |
-        git fetch origin state:state 2>/dev/null || true
-        if git show state:pond-nurture-bot/data/fub_automation.sqlite3.enc > /dev/null 2>&1; then
-          mkdir -p pond-nurture-bot/data
-          git show state:pond-nurture-bot/data/fub_automation.sqlite3.enc > pond-nurture-bot/data/fub_automation.sqlite3.enc
-          openssl enc -aes-256-cbc -pbkdf2 -d \
-            -in pond-nurture-bot/data/fub_automation.sqlite3.enc \
-            -out pond-nurture-bot/data/fub_automation.sqlite3 \
-            -pass env:STATE_KEY
-          rm -f pond-nurture-bot/data/fub_automation.sqlite3.enc
-          echo "✅ State DB pulled and decrypted from 'state' branch"
-          ls -la pond-nurture-bot/data/fub_automation.sqlite3
-        else
-          echo "⚠️ No encrypted state DB found on 'state' branch — will start fresh"
-          mkdir -p pond-nurture-bot/data
-        fi
+        PYTHONPATH=pond-nurture-bot/src python3 -m fub_automation.state_sync pull
 
     - name: Encrypt and push state to 'state' branch
       if: inputs.mode == 'push'
@@ -43,65 +65,4 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github_token }}
         STATE_KEY: ${{ inputs.encryption_key }}
       run: |
-        if [ ! -f pond-nurture-bot/data/fub_automation.sqlite3 ]; then
-          echo "⚠️ No state DB to push"
-          exit 0
-        fi
-        # Encrypt the DB
-        openssl enc -aes-256-cbc -pbkdf2 \
-          -in pond-nurture-bot/data/fub_automation.sqlite3 \
-          -out /tmp/fub_automation.sqlite3.enc \
-          -pass env:STATE_KEY
-        echo "✅ State DB encrypted ($(wc -c < /tmp/fub_automation.sqlite3.enc) bytes)"
-        # Configure git
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        # Checkout or create state branch.
-        #
-        # The old form here was
-        #     git checkout state 2>/dev/null || git checkout --orphan state
-        # whose fallback can never fire once `state` exists — it dies with
-        # "fatal: a branch named 'state' already exists", and under this shell's
-        # -e that failed the whole job. On 2026-08-11 a single modified tracked
-        # file in the checkout (status/*.json) was enough to make the first
-        # command refuse, and Daily Automation and Reply Detection then failed
-        # at this step for sixteen hours while the bot kept sending — every
-        # audit row from those runs was lost.
-        #
-        # Persisting state must not depend on the tidiness of a working tree it
-        # does not own: -f discards local modifications to tracked files (the
-        # decrypted DB is gitignored and untouched by it), and the branch is
-        # created only when it genuinely does not exist.
-        git fetch origin state:state 2>/dev/null || true
-        if git rev-parse --verify --quiet state >/dev/null; then
-          git checkout -f state
-        else
-          git checkout --orphan state
-        fi
-        # Clean working tree
-        git rm -rf . 2>/dev/null || true
-        # Place only the encrypted file
-        mkdir -p pond-nurture-bot/data
-        cp /tmp/fub_automation.sqlite3.enc pond-nurture-bot/data/fub_automation.sqlite3.enc
-        git add pond-nurture-bot/data/fub_automation.sqlite3.enc
-        git commit -m "state: update encrypted SQLite DB [$(date -u +%Y-%m-%dT%H:%M:%SZ)]" --allow-empty
-        # Retry push up to 3 times in case another workflow pushed concurrently
-        for attempt in 1 2 3; do
-          if git push origin state; then
-            echo "✅ Encrypted state DB pushed to 'state' branch (attempt $attempt)"
-            break
-          else
-            echo "⚠️ Push failed (attempt $attempt), rebasing and retrying..."
-            git fetch origin state
-            git rebase origin/state || git rebase --abort
-            # Re-apply our encrypted file on top
-            mkdir -p pond-nurture-bot/data
-            cp /tmp/fub_automation.sqlite3.enc pond-nurture-bot/data/fub_automation.sqlite3.enc
-            git add pond-nurture-bot/data/fub_automation.sqlite3.enc
-            git commit --amend --no-edit
-            if [ $attempt -eq 3 ]; then
-              echo "❌ State push failed after 3 attempts — forcing push"
-              git push origin state --force
-            fi
-          fi
-        done
+        PYTHONPATH=pond-nurture-bot/src python3 -m fub_automation.state_sync push
