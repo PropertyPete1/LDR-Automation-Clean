@@ -141,6 +141,29 @@ STATUS_DIRNAME = "status"
 STATS_FILENAME = "daily_stats.json"
 ACTIVITY_FILENAME = "activity_log.json"
 
+# Entry types that represent a delivered email, and so must be countable in
+# emails_sent for the same local day.
+SEND_TYPES: Tuple[str, ...] = ("sent", "drip")
+
+
+class TelemetryContradiction(RuntimeError):
+    """The stats and the activity log disagree, so neither can be published.
+
+    Raised when the activity log holds more delivered emails for today than
+    daily_stats can count. The log is capped and trimmed, so it may legitimately
+    hold FEWER than the true total — it can never hold more. When it does, the
+    audit DB this run read is missing rows that a previous run demonstrably saw,
+    and every scalar computed from it is understated.
+
+    This is not hypothetical. On 2026-08-11 the daily run sent ~150 emails, its
+    state-DB push failed, and every run afterwards pulled a DB lineage without
+    them. The writer faithfully computed zeros from the DB it was given and
+    published `emails_sent: 0` on a day the log itself showed the morning's
+    sends, with names. The numbers were wrong; nothing about them looked wrong.
+    Refusing to publish leaves the last good pair in place and lets last_run_iso
+    go stale, which is what "the data is not trustworthy" should look like.
+    """
+
 
 # ── Time helpers ─────────────────────────────────────────────────────────────
 
@@ -458,6 +481,49 @@ def merge_activity(
     return [_public(entry) for entry in ordered[:limit]]
 
 
+def logged_sends_on(entries: Iterable[dict], date_str: str) -> int:
+    """Delivered-email entries in the log bearing `date_str`'s LOCAL date.
+
+    Entry timestamps are UTC, so they are converted back through the same
+    timezone daily_stats used — otherwise an evening send lands on tomorrow
+    here and today there, and the two disagree by construction.
+    """
+    count = 0
+    for entry in entries:
+        if entry.get("type") not in SEND_TYPES:
+            continue
+        ts = _parse_stored(entry.get("ts"))
+        if ts is not None and entry.get("_local_date") == date_str:
+            count += 1
+    return count
+
+
+def check_agreement(stats: dict, activity: List[dict], tz_name: str) -> None:
+    """The stats/log agreement invariant. Raises TelemetryContradiction.
+
+    emails_sent must be able to account for every delivered-email entry the log
+    shows for the same day. `>=` rather than `==` because the log is trimmed to
+    the most recent 100 and can hold fewer; it can never hold more.
+    """
+    date_str = stats["date"]
+    zone = _zone(tz_name)
+    tagged = []
+    for entry in activity:
+        ts = _parse_stored(entry.get("ts"))
+        local_date = ts.astimezone(zone).strftime("%Y-%m-%d") if ts else None
+        tagged.append({**entry, "_local_date": local_date})
+
+    logged = logged_sends_on(tagged, date_str)
+    if logged > stats["emails_sent"]:
+        raise TelemetryContradiction(
+            f"activity_log shows {logged} delivered emails on {date_str} but "
+            f"daily_stats counted only {stats['emails_sent']}. The audit DB this "
+            f"run read is missing rows a previous run already published — most "
+            f"likely the state DB was not persisted. Refusing to publish; the "
+            f"previous status files are left untouched."
+        )
+
+
 def _read_existing_activity(path: Path) -> List[object]:
     """Whatever is already on disk. Unreadable or non-array content is treated
     as empty — a corrupt file must not stop this run from publishing."""
@@ -524,6 +590,10 @@ def write_status(
 
     activity = merge_activity(_read_existing_activity(activity_path), fresh)
 
+    # Checked BEFORE either file is written, so a contradictory run leaves the
+    # last good pair on disk rather than half-replacing it.
+    check_agreement(stats, activity, tz_name)
+
     _atomic_write_json(out_dir / STATS_FILENAME, stats)
     _atomic_write_json(activity_path, activity)
     return {"daily_stats": stats, "activity_log": activity}
@@ -535,9 +605,13 @@ def write_status(
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """`python -m fub_automation.telemetry` — used by the publish step.
 
-    Never returns non-zero for a missing or unreadable DB. This runs with
-    `if: always()` after the bot; failing here would turn a successful run
-    red over a dashboard file.
+    Exit codes are the contract with that step:
+      0 — published, or nothing to publish (missing/unreadable DB). This runs
+          with `if: always()`; a dashboard file must not turn a good run red.
+      2 — the stats and the log contradict each other. Deliberately loud: the
+          run's state is wrong, not just its reporting, and a silent stale
+          dashboard is how the 2026-08-11 incident stayed invisible for 16
+          hours. The publish step skips the commit on 2.
     """
     parser = argparse.ArgumentParser(description="Write status/ telemetry from the audit DB.")
     parser.add_argument("--db", default=os.environ.get("DATABASE_PATH", "data/fub_automation.sqlite3"))
@@ -551,6 +625,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         written = write_status(args.db, args.out, tz_name=args.timezone)
+    except TelemetryContradiction as exc:
+        print(f"[telemetry] REFUSING TO PUBLISH — {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:  # noqa: BLE001
         print(f"[telemetry] Failed to write status files: {exc}", file=sys.stderr)
         return 0
