@@ -30,6 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
+    # Declared rather than inherited: state-sync pushes the encrypted DB to the
+    # 'state' branch and publish-telemetry pushes status/ to main. Both need
+    # contents:write, and neither needs anything else.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -56,6 +62,14 @@ jobs:
         run: |
           echo "=== Daily Automation — DRY_RUN=$DRY_RUN ==="
           python3 run_approved_daily_automation.py
+
+      # Must run before "Push state DB": that step checks out the 'state'
+      # branch and wipes the working tree, taking status/ with it.
+      - name: Publish telemetry to THE FLOOR
+        if: always()
+        uses: ./.github/actions/publish-telemetry
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push state DB
         if: always()

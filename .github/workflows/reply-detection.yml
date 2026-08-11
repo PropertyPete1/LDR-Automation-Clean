@@ -29,6 +29,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # state-sync pushes to the 'state' branch, publish-telemetry pushes
+    # status/ to main. Nothing here needs any other scope.
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -70,6 +75,23 @@ jobs:
           engine.scan_reply_detection()
           print('Reply detection scan complete')
           "
+
+      # This is the heartbeat for THE FLOOR. The daily run publishes once a
+      # day; at ten-minute intervals this is what keeps last_run_iso fresh and
+      # surfaces a new reply while it is still news.
+      #
+      # Speed-to-Lead (every 5 min) deliberately does NOT publish. All these
+      # jobs share one audit DB, so its welcome emails are picked up by the
+      # next run of this workflow anyway — a third publisher would only double
+      # the push contention on main for at most ten minutes of latency.
+      #
+      # Must run before "Push state DB", which checks out the 'state' branch
+      # and wipes the working tree.
+      - name: Publish telemetry to THE FLOOR
+        if: always()
+        uses: ./.github/actions/publish-telemetry
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push state DB
         if: always()

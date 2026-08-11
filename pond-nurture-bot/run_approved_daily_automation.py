@@ -44,6 +44,48 @@ def main() -> int:
         os.environ['DRY_RUN'] = 'true'
     os.environ['FUB_DISABLE_SCHEDULER'] = 'true'
 
+    # The telemetry write is in a finally so a run that dies partway still
+    # reports what it managed to do. LIFESTYLE judges freshness from
+    # last_run_iso, and a crashed run leaving yesterday's numbers on THE FLOOR
+    # looks exactly like a healthy quiet day.
+    try:
+        return run_automation()
+    finally:
+        write_run_telemetry()
+
+
+def write_run_telemetry() -> None:
+    """Publish status/daily_stats.json + status/activity_log.json.
+
+    Read-only over the audit DB and non-fatal by design: a reporting failure
+    must never change this script's exit code, because that exit code gates a
+    real email run.
+    """
+    try:
+        # Absolute `src.` form, matching run_automation()'s import. The bare
+        # `fub_automation.` form does NOT resolve from this script — src/ is
+        # not on sys.path here — and it fails inside an `except` that only
+        # prints, so the mistake is invisible. See tests/test_import_paths.py.
+        from src.fub_automation.telemetry import STATUS_DIRNAME, write_status
+
+        db_path = os.environ.get('DATABASE_PATH', 'data/fub_automation.sqlite3')
+        if not Path(db_path).exists():
+            print(f'  [telemetry] No audit DB at {db_path} — nothing to report')
+            return
+
+        # status/ lives at the repo root; this script sits one level down.
+        status_dir = Path(__file__).resolve().parent.parent / STATUS_DIRNAME
+        written = write_status(db_path, str(status_dir))
+        stats = written['daily_stats']
+        print(
+            '  [telemetry] {date}: {emails_sent} emails ({seller_drips_sent} seller drips), '
+            '{replies_needed} awaiting reply, {leads_scored} leads scored'.format(**stats)
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f'Warning: telemetry write failed: {exc}')
+
+
+def run_automation() -> int:
     from src.fub_automation.main import AuditDB, FollowUpBossClient, RuleEngine, Rules, Settings
 
     settings = Settings.from_env()

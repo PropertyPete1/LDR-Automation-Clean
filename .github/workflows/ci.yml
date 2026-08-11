@@ -27,6 +27,13 @@ name: CI
 on:
   push:
     branches: [main]
+    # The bot commits status/*.json to main on every reply-detection run —
+    # roughly 145 pushes a day. Those are dashboard numbers generated from the
+    # audit DB; no suite can be broken by them, and running three of them each
+    # time would bury every real result. Code changes still land through a PR,
+    # where the pull_request trigger below has no such exclusion.
+    paths-ignore:
+      - "status/**"
   pull_request:
     branches: [main]
 
