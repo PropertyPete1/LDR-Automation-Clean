@@ -94,6 +94,15 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
+      # state-sync's push leaves the working tree checked out on the 'state'
+      # branch, which holds nothing but the encrypted DB — no .github/, so a
+      # local composite action cannot be loaded again after it. Anything that
+      # runs after a state push has to restore the tree first. (Every other
+      # workflow gets away with it only because the push is their last step.)
+      - name: Restore the checkout after the state push
+        if: ${{ inputs.commit }}
+        uses: actions/checkout@v4
+
       # The state branch is last-writer-wins and Speed-to-Lead pushes to it on
       # its own schedule, so "we pushed" is not the same as "it is still there".
       # Re-pull from scratch and read the rows back.
