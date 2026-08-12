@@ -224,7 +224,10 @@ def run_automation() -> int:
     # Weekly ramp evaluation, before any sending, so today's cap reflects the
     # decision made from last week's guardrails.
     try:
-        from fub_automation.ramp import maybe_advance as _maybe_advance
+        # Absolute `src.` form, matching run_automation() above. The bare
+        # `fub_automation.` form does not resolve from this script and every
+        # daily run since the ramp shipped died right here — see line 65.
+        from src.fub_automation.ramp import maybe_advance as _maybe_advance
 
         with db.connect() as _con:
             _ramp = _maybe_advance(_con)
@@ -275,7 +278,7 @@ def run_automation() -> int:
     # Written even in dry-run: the guardrail cares how long the work takes, not
     # whether mail was delivered.
     try:
-        from fub_automation.ramp import record_run_duration as _record_duration
+        from src.fub_automation.ramp import record_run_duration as _record_duration
 
         _elapsed_min = (_time.monotonic() - _run_started) / 60.0
         with db.connect() as _con:
