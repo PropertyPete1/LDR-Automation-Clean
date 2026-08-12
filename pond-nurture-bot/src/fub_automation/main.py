@@ -6055,16 +6055,25 @@ class RuleEngine:
         LOGGER.info("Reply detection: checking %s leads that received bot emails in last 7 days.", len(latest_send_by_person))
         # Check which leads already have the "Replied - Paused" tag (skip them)
         already_paused = set()
-        # Also check which leads we already detected a reply for today (avoid duplicate alerts)
-        today_detections = self.db.recent_audit_rows(["reply_detected"], since)
-        already_detected_today = {int(r["person_id"]) for r in today_detections if r.get("person_id")}
+        # Leads already alerted on inside the same 7-day window as the sends —
+        # one reply is one alert, however many times the scan runs over it.
+        #
+        # Only status="alert_sent" counts. The per-lead handler at the bottom of
+        # the loop writes reply_detected/"error" rows too, and while those were
+        # in this set a single transient FUB error suppressed reply detection for
+        # that lead for a full week — the failure silencing the retry.
+        prior_detections = self.db.recent_audit_rows(["reply_detected"], since)
+        already_alerted = {
+            int(r["person_id"]) for r in prior_detections
+            if r.get("person_id") and r.get("status") == "alert_sent"
+        }
         alerts_sent = 0
         cap = 20  # Max alerts per scan to avoid flooding
         for person_id, send_time_str in latest_send_by_person.items():
             if alerts_sent >= cap:
                 LOGGER.info("Reply detection: alert cap (%s) reached. Stopping.", cap)
                 break
-            if person_id in already_detected_today:
+            if person_id in already_alerted:
                 continue
             try:
                 person = self.fub.get_person(person_id)
@@ -6084,9 +6093,7 @@ class RuleEngine:
                 # Look for incoming emails AFTER the bot email was sent
                 reply_found = None
                 for em in emails:
-                    # Incoming emails have isReceived=True or direction="incoming"
-                    is_incoming = em.get("isReceived") or em.get("direction") == "incoming" or em.get("type") == "received"
-                    if not is_incoming:
+                    if not is_inbound_message(em):
                         continue
                     em_date_str = em.get("dateCreated") or em.get("created") or em.get("date")
                     if not em_date_str:
@@ -6099,8 +6106,7 @@ class RuleEngine:
                 if not reply_found:
                     texts = self.fub.get_text_messages(person_id, limit=10)
                     for txt in texts:
-                        is_incoming = txt.get("isReceived") or txt.get("direction") == "incoming" or txt.get("type") == "received"
-                        if not is_incoming:
+                        if not is_inbound_message(txt):
                             continue
                         txt_date_str = txt.get("dateCreated") or txt.get("created") or txt.get("date")
                         if not txt_date_str:
@@ -6317,6 +6323,32 @@ def now_iso() -> str:
 
 def parse_dt(value: str) -> Optional[dt.datetime]:
     return parse_fub_datetime(value)
+
+
+def is_inbound_message(message: dict) -> bool:
+    """Did this FUB message come FROM the lead?
+
+    The field is `isIncoming`, a boolean, and it is the same field on
+    /v1/emails, /v1/textMessages and /v1/calls — it is also the field we POST
+    in log_text_message. FUB does not return `isReceived` on any of them.
+
+    scan_reply_detection used to test `isReceived`/`type == "received"` and
+    nothing else, so every message read as outgoing and the scan could not
+    detect a reply at all: 1028 leads scanned per run, zero alerts, from the
+    day it shipped (2026-07-12) until this was fixed. Nothing failed — the
+    predicate was simply never true — which is why a month of runs went green.
+
+    The legacy keys are still accepted below. They cost one dict lookup each
+    and a widened predicate can only ever find more replies; a lead going
+    unanswered is the expensive failure here, not a redundant check.
+    """
+    if message.get("isIncoming") or message.get("isReceived"):
+        return True
+    # Spelled "incoming" at some call sites and "inbound" at others; FUB itself
+    # returns neither, so accept both rather than guess.
+    if str(message.get("direction") or "").lower() in ("incoming", "inbound"):
+        return True
+    return str(message.get("type") or "").lower() == "received"
 
 def parse_fub_datetime(value: Any) -> Optional[dt.datetime]:
     if not value:
