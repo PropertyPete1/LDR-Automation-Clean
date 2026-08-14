@@ -2997,16 +2997,48 @@ class RuleEngine:
         # the already-filtered candidates get an email — every suppression check
         # lives inside process_reengagement_candidate below and is untouched by it.
         cap = max(0, int(self.rules.phase2_max_customer_emails_per_run))
+        cap_source = "rules.yaml fallback"
         try:
-            from .ramp import resolve_daily_cap
+            from .ramp import env_cap_override, resolve_daily_cap
 
             with self.db.connect() as _con:
                 cap = max(0, int(resolve_daily_cap(_con)))
+            cap_source = "manual override" if env_cap_override() is not None else "ramp"
             LOGGER.info("Pond nurture daily cap resolved to %s", cap)
         except Exception as _cap_exc:  # noqa: BLE001
             LOGGER.warning(
                 "Ramp cap unavailable (%s) — falling back to rules.yaml cap %s", _cap_exc, cap
             )
+
+        # PRIMARY's config/controls.json (repo root, written by the voice
+        # console after Peter approves out loud) can LOWER this cap, never
+        # raise it: effective = min(voice-set target, the cap resolved above).
+        # A missing or broken file leaves today exactly as yesterday, and the
+        # log lines plus the audit row are the honest record of which number
+        # actually governed. See controls.py for the rules.
+        try:
+            from .controls import resolve_effective_cap
+
+            # One assignment: the clamp consumes the cap and produces the
+            # (never higher) cap — phrased this way deliberately, so the ramp
+            # safety invariant that audits every use of `cap` reads it as
+            # exactly what it is.
+            cap = (_resolution := resolve_effective_cap(cap, cap_source)).cap
+            for _line in _resolution.log_lines:
+                LOGGER.info("%s", _line)
+            self.db.log(
+                "daily_cap_resolution",
+                _resolution.governed_by,
+                None,
+                {
+                    "cap": _resolution.cap,
+                    "base_cap": _resolution.base_cap,
+                    "base_source": cap_source,
+                    "daily_email_target": _resolution.control_value,
+                },
+            )
+        except Exception as _controls_exc:  # noqa: BLE001
+            LOGGER.warning("controls.json could not be applied (%s) — the daily cap stands", _controls_exc)
         for person in candidates:
             # Skip leads not in the configured pond immediately to avoid clogging database with logs
             if self.rules.pond_nurture_only and self.rules.pond_ids:
