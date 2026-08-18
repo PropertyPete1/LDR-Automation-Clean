@@ -454,6 +454,9 @@ def main() -> int:
                     })
             except Exception as e:
                 print(f"Failed to generate mock queue links: {e}")
+                # Same https sms-redirect shape make_sms_uri produces — a raw
+                # sms: link is dead weight in Gmail and anything email-adjacent.
+                from urllib.parse import quote
                 for m in mock_leads:
                     pending_queue.append({
                         "id": m["id"],
@@ -463,7 +466,11 @@ def main() -> int:
                         "city": m["city"],
                         "days_stale": m["days_stale"],
                         "sms_body": "Hello",
-                        "sms_link": "sms:" + m["phone"],
+                        "sms_link": (
+                            "https://fub-nurture-phfprjui.manus.space/sms-redirect"
+                            f"?phone={quote(m['phone'])}&body={quote('Hello')}"
+                            f"&agent={quote(m['agent'])}&lead_id={m['id']}"
+                        ),
                         "assigned_agent": m["agent"],
                         "assigned_agent_id": m["agent_id"]
                     })

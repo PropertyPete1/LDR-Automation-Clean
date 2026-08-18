@@ -20,6 +20,7 @@ from datetime import timezone
 import email.message
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -5645,32 +5646,54 @@ class RuleEngine:
                 elif isinstance(ph, str) and ph:
                     lead_phone = ph
                     break
-            # Build click-to-text link (sms: protocol works on mobile)
-            sms_link = f"sms:{lead_phone}" if lead_phone else ""
+            # Build click-to-text link via the dashboard's HTTPS sms-redirect —
+            # Gmail's mobile apps ignore raw sms: hrefs in email, so the link
+            # has to be a normal https URL that bounces into the SMS app.
+            from .sms_helpers import generate_personalized_sms, get_upcoming_holiday, make_sms_uri
+
+            agent_first = agent_name.split()[0] if agent_name.split() else "Agent"
+            sms_link = ""
+            sms_body = ""
+            if lead_phone:
+                raw_fn = (person.get("firstName") or "").strip()
+                lead_first = raw_fn.split()[0].capitalize() if raw_fn.split() else "there"
+                city = infer_city(person, self.rules.target_cities)
+                sms_body = generate_personalized_sms(
+                    first_name=lead_first,
+                    city=city or "Texas",
+                    days_stale=0,
+                    holiday=get_upcoming_holiday(dt.date.today()),
+                    lead_id=str(person["id"]),
+                )
+                sms_link = make_sms_uri(lead_phone, sms_body, agent_name=agent_first, lead_id=str(person["id"]))
             phone_display = lead_phone or "(no phone on file)"
+            source = display_source(person)
             subject = f"\U0001f6a8 NEW LEAD ASSIGNED: {lead_name} — Contact within 30 min!"
             html_body = (
                 f"<h2>\U0001f6a8 New Lead Assigned to You</h2>"
-                f"<p>Hi {agent_name.split()[0] if agent_name else 'Agent'},</p>"
+                f"<p>Hi {html.escape(agent_first)},</p>"
                 f"<p>A new lead has been assigned to you. Please make first contact within <strong>30 minutes</strong> "
-                f"or the lead will be reassigned to {self.rules.peter_name}.</p>"
+                f"or the lead will be reassigned to {html.escape(self.rules.peter_name)}.</p>"
                 f"<table style='border-collapse:collapse;margin:16px 0;'>"
-                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Name:</td><td style='padding:4px 12px;'>{lead_name}</td></tr>"
-                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Phone:</td><td style='padding:4px 12px;'>{phone_display}</td></tr>"
-                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Source:</td><td style='padding:4px 12px;'>{person.get('source', 'Unknown')}</td></tr>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Name:</td><td style='padding:4px 12px;'>{html.escape(lead_name)}</td></tr>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Phone:</td><td style='padding:4px 12px;'>{html.escape(phone_display)}</td></tr>"
+                f"<tr><td style='padding:4px 12px;font-weight:bold;'>Source:</td><td style='padding:4px 12px;'>{html.escape(source)}</td></tr>"
                 f"</table>"
             )
             if sms_link:
                 html_body += (
                     f"<p style='margin:20px 0;'>"
                     f"<a href='{sms_link}' style='display:inline-block;padding:12px 24px;background:#22c55e;color:white;"
-                    f"text-decoration:none;border-radius:8px;font-weight:bold;font-size:16px;'>\U0001f4f1 Tap to Text {lead_name.split()[0]}</a>"
+                    f"text-decoration:none;border-radius:8px;font-weight:bold;font-size:16px;'>\U0001f4f1 Tap to Text {html.escape(lead_name.split()[0])}</a>"
                     f"</p>"
+                    f"<p style='color:#666;font-size:12px;font-style:italic;'>Suggested: \"{html.escape(sms_body)}\"</p>"
                 )
             html_body += (
                 f"<p style='color:#666;font-size:12px;'>\u23f0 Timer: 30-min warning \u2192 60-min auto-reassignment to {self.rules.peter_name}</p>"
             )
-            plain_body = f"New lead assigned: {lead_name}\nPhone: {phone_display}\nSource: {person.get('source', 'Unknown')}\n\nPlease make first contact within 30 minutes or the lead will be reassigned to {self.rules.peter_name}."
+            plain_body = f"New lead assigned: {lead_name}\nPhone: {phone_display}\nSource: {source}\n\nPlease make first contact within 30 minutes or the lead will be reassigned to {self.rules.peter_name}."
+            if sms_link:
+                plain_body += f"\n\nTap to Text: {sms_link}\nSuggested: \"{sms_body}\""
             self.email.send(
                 agent_email,
                 subject,
@@ -5703,15 +5726,16 @@ class RuleEngine:
                 prev_agent_name = prev_user.get("name") or "Unknown Agent"
         try:
             reassign_subject = f"\u26a0\ufe0f Lead Reassigned: {lead_name} (no agent contact in {self.rules.new_lead_reassign_minutes} min)"
+            reassign_source = display_source(person)
             reassign_html = (
                 f"<h2>\u26a0\ufe0f Speed-to-Lead Reassignment</h2>"
-                f"<p><strong>{lead_name}</strong> has been automatically reassigned to you.</p>"
-                f"<p><strong>Reason:</strong> {prev_agent_name} did not make first contact within "
+                f"<p><strong>{html.escape(lead_name)}</strong> has been automatically reassigned to you.</p>"
+                f"<p><strong>Reason:</strong> {html.escape(prev_agent_name)} did not make first contact within "
                 f"{self.rules.new_lead_reassign_minutes} business minutes.</p>"
-                f"<p><strong>Source:</strong> {person.get('source', 'Unknown')}</p>"
+                f"<p><strong>Source:</strong> {html.escape(reassign_source)}</p>"
                 f"<p>Please review and reassign or contact this lead.</p>"
             )
-            reassign_plain = f"Lead Reassigned: {lead_name}\nReason: {prev_agent_name} did not make first contact within {self.rules.new_lead_reassign_minutes} business minutes.\nSource: {person.get('source', 'Unknown')}\n\nPlease review and reassign or contact this lead."
+            reassign_plain = f"Lead Reassigned: {lead_name}\nReason: {prev_agent_name} did not make first contact within {self.rules.new_lead_reassign_minutes} business minutes.\nSource: {reassign_source}\n\nPlease review and reassign or contact this lead."
             self.email.send(
                 self.rules.owner_email,
                 reassign_subject,
@@ -6374,6 +6398,15 @@ def parse_fub_datetime(value: Any) -> Optional[dt.datetime]:
 
 def person_name(person: dict) -> str:
     return person.get("name") or " ".join([person.get("firstName", ""), person.get("lastName", "")]).strip() or f"Lead {person.get('id')}"
+
+
+def display_source(person: dict) -> str:
+    """FUB reports a missing lead source as the literal string "<unspecified>",
+    which an email client parses as an HTML tag and renders as nothing."""
+    raw = str(person.get("source") or "").strip()
+    if not raw or raw.strip("<>").strip().lower() == "unspecified":
+        return "Unspecified"
+    return raw
 
 
 def infer_city_from_text(text: str, target_cities: List[str]) -> Optional[str]:
