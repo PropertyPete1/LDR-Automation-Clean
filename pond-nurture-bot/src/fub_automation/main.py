@@ -3017,6 +3017,8 @@ class RuleEngine:
         # A missing or broken file leaves today exactly as yesterday, and the
         # log lines plus the audit row are the honest record of which number
         # actually governed. See controls.py for the rules.
+        _governed_by = cap_source
+        _controls_sha = None
         try:
             from .controls import resolve_effective_cap
 
@@ -3025,6 +3027,8 @@ class RuleEngine:
             # safety invariant that audits every use of `cap` reads it as
             # exactly what it is.
             cap = (_resolution := resolve_effective_cap(cap, cap_source)).cap
+            _governed_by = _resolution.governed_by
+            _controls_sha = _resolution.controls_sha
             for _line in _resolution.log_lines:
                 LOGGER.info("%s", _line)
             self.db.log(
@@ -3036,6 +3040,7 @@ class RuleEngine:
                     "base_cap": _resolution.base_cap,
                     "base_source": cap_source,
                     "daily_email_target": _resolution.control_value,
+                    "controls_sha": _resolution.controls_sha,
                 },
             )
         except Exception as _controls_exc:  # noqa: BLE001
@@ -3048,7 +3053,9 @@ class RuleEngine:
                     continue
                     
             if cap and sent_count >= cap:
-                self.db.log("pond_nurture", "launch_cap_reached", None, {"cap": cap})
+                self.db.log("pond_nurture", "launch_cap_reached", None, {"cap": cap, "governed_by": _governed_by})
+                if _governed_by == "controls":
+                    LOGGER.info("[controls] send blocked: daily cap %s reached (daily_email_target from controls.json@%s)", cap, (_controls_sha or "unknown")[:7])
                 break
             try:
                 status = self.process_reengagement_candidate(person)

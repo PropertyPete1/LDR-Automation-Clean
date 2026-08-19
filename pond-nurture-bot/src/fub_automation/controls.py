@@ -36,6 +36,7 @@ committed-but-ignored setting is at least a visible one.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -73,6 +74,10 @@ class CapResolution:
     #: "controls" when the file lowered the cap, "ramp" when the bot's own cap
     #: held (including every fail-open case), for the audit row.
     governed_by: str = "ramp"
+    #: git blob SHA of the controls file that was read (what GitHub shows for
+    #: it), None when there was no readable file. Ties every run's log to the
+    #: exact committed bytes that governed it.
+    controls_sha: Optional[str] = None
     #: Human sentences, one per LOGGER.info call, ready to emit.
     log_lines: List[str] = field(default_factory=list)
 
@@ -100,6 +105,22 @@ def load_controls(path: Optional[Path] = None) -> Tuple[Optional[dict], Optional
         return None, "config/controls.json is not a JSON object"
 
     return parsed, None
+
+
+def controls_blob_sha(path: Optional[Path] = None) -> Optional[str]:
+    """The file's git blob SHA — the id GitHub shows for the committed file.
+
+    Computed locally (sha1 over ``blob <len>\0<bytes>``) so the log can name
+    the exact controls.json a run obeyed without shelling out to git, which
+    is not guaranteed to be on PATH where the bot runs. None when the file
+    cannot be read; the caller treats that exactly like a missing file.
+    """
+    target = path or CONTROLS_PATH
+    try:
+        data = target.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
 def _read_daily_target(controls: dict) -> Tuple[Optional[int], Optional[str]]:
@@ -152,7 +173,14 @@ def resolve_effective_cap(
         resolution.log_lines.append(
             f"controls: {why_not} — daily cap {base_cap} from {base_source}"
         )
+        # The greppable self-documentation line: every run states the clamp's
+        # status in one [controls]-prefixed sentence, engaged or not.
+        resolution.log_lines.append(
+            f"[controls] clamp fail-open ({why_not}): daily_cap={base_cap} from {base_source}"
+        )
         return resolution
+
+    resolution.controls_sha = controls_blob_sha(path)
 
     target, invalid_reason = _read_daily_target(controls)
 
@@ -185,5 +213,12 @@ def resolve_effective_cap(
             f"controls: {PAUSED_CITIES_KEY} is set ({len(paused)} cities) but NOT "
             "enforced by this bot yet"
         )
+
+    # The greppable self-documentation line, last so it reads as the verdict:
+    # which number governs today, and the exact committed file it came from.
+    sha7 = (resolution.controls_sha or "unknown")[:7]
+    resolution.log_lines.append(
+        f"[controls] clamp active: daily_cap={resolution.cap}, source=controls.json@{sha7}"
+    )
 
     return resolution
