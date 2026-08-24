@@ -61,7 +61,13 @@ def direction_of(message: dict) -> str:
 
 def describe_person(fub, email: str) -> Optional[int]:
     print(f"\n{'=' * 70}\nLEAD {clip_and_redact(email, 60)}", flush=True)
-    data = fub._request("GET", "/people", params={"email": email, "fields": "allFields"})
+    # 'id:1563' looks a lead up by person id instead — for leads whose email
+    # address we do not hold (e.g. chasing a specific FUB id from a plan).
+    if email.startswith("id:"):
+        lookup = {"id": email[3:].strip(), "fields": "allFields"}
+    else:
+        lookup = {"email": email, "fields": "allFields"}
+    data = fub._request("GET", "/people", params=lookup)
     print(f"  /people top-level keys: {sorted(data.keys())}", flush=True)
     people = data.get("people", data.get("data", []))
     if not people:
