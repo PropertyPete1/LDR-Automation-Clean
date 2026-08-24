@@ -39,7 +39,8 @@ replies_needed — POINT-IN-TIME BACKLOG, not a per-run event count. A lead
     counts when reply detection has seen them write back and nothing since
     says a human closed the loop:
 
-        reply_detected/alert_sent within REPLY_BACKLOG_DAYS
+        reply_detected/alert_sent (or /backfilled, the retro-repair's rows)
+        within REPLY_BACKLOG_DAYS
         MINUS anyone with a closing event AFTER their latest reply
 
     Closing events are (a) reply_intent_disqualification or pond_opt_out_trash
@@ -251,10 +252,13 @@ def count_replies_needed(
     # Latest reply per lead, so a lead who replied twice is one open thread and
     # only the most recent reply has to be cleared.
     latest_reply: Dict[int, str] = {}
+    # 'backfilled' alongside 'alert_sent': the retroactive repair of missed
+    # replies (backfill_missed_replies.py) writes those rows without paging
+    # anyone, and the leads behind them are waiting just the same.
     for person_id, created_at in conn.execute(
         """SELECT person_id, MAX(created_at) FROM audit_log
            WHERE created_at >= ?
-             AND action = 'reply_detected' AND status = 'alert_sent'
+             AND action = 'reply_detected' AND status IN ('alert_sent', 'backfilled')
              AND person_id IS NOT NULL
            GROUP BY person_id""",
         (since,),
@@ -383,7 +387,7 @@ def activity_entries(
         f"""SELECT created_at, person_id, action, status, details FROM audit_log
             WHERE created_at >= ?
               AND ( (action IN ({send_placeholders}) AND status = ?)
-                 OR (action = 'reply_detected' AND status = 'alert_sent')
+                 OR (action = 'reply_detected' AND status IN ('alert_sent', 'backfilled'))
                  OR (action = 'pond_keyword_reassignment' AND status = 'completed') )
             ORDER BY created_at DESC
             LIMIT ?""",

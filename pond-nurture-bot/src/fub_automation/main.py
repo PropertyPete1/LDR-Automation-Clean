@@ -4928,6 +4928,91 @@ class RuleEngine:
             self._user_cache_by_id = {int(u["id"]): u for u in self.fub.users() if u.get("id") is not None}
         return self._user_cache_by_id
 
+    # How far back an unanswered reply stays on the daily NEEDS A REPLY list.
+    # Matches the retro-repair window: nothing older can have a backfilled row.
+    NEEDS_REPLY_BACKLOG_DAYS = 14
+
+    def _collect_needs_reply(self, backlog_days: int = NEEDS_REPLY_BACKLOG_DAYS) -> List[dict]:
+        """Every lead who wrote back and has not been written back to.
+
+        Candidates are the reply_detected rows (live alerts and the retro
+        repair's 'backfilled' rows). A lead leaves the list when:
+          - a disqualification row follows the reply — they replied to leave;
+          - FUB shows ANY outbound message after their reply. "Replied -
+            Paused" blocks the bot from mailing them, so an outbound message
+            after the reply is a human answering — including Peter replying
+            from Gmail, which FUB's mailbox sync logs to the lead's timeline.
+        If FUB cannot be asked, the lead STAYS listed: showing an already-
+        answered lead costs a glance, dropping a waiting one costs the lead.
+        """
+        now = dt.datetime.now(UTC)
+        since = now - dt.timedelta(days=backlog_days)
+        candidates: Dict[int, dict] = {}
+        for row in self.db.recent_audit_rows(["reply_detected"], since):
+            if row.get("status") not in ("alert_sent", "backfilled"):
+                continue
+            pid = row.get("person_id")
+            if not pid:
+                continue
+            pid = int(pid)
+            try:
+                details = json.loads(row.get("details") or "{}")
+            except Exception:  # noqa: BLE001
+                details = {}
+            reply_at = parse_fub_datetime(details.get("reply_at")) \
+                or parse_fub_datetime(row.get("created_at"))
+            if not reply_at:
+                continue
+            entry = {
+                "person_id": pid,
+                "name": (details.get("contact_name") or "").strip() or f"Lead #{pid}",
+                "snippet": details.get("reply_snippet") or details.get("snippet") or "",
+                "channel": details.get("reply_channel") or "email",
+                "reply_at": reply_at,
+            }
+            prev = candidates.get(pid)
+            if prev is None or reply_at > prev["reply_at"]:
+                candidates[pid] = entry
+
+        if not candidates:
+            return []
+
+        # They replied to leave — nobody owes them an answer.
+        for row in self.db.recent_audit_rows(
+                ["reply_intent_disqualification", "pond_opt_out_trash"], since):
+            pid = row.get("person_id")
+            if pid:
+                candidates.pop(int(pid), None)
+
+        needs: List[dict] = []
+        for pid, entry in candidates.items():
+            answered = False
+            try:
+                messages = [
+                    *self.fub.get_emails(pid, limit=10),
+                    *self.fub.get_text_messages(pid, limit=10),
+                ]
+                for msg in messages:
+                    if is_inbound_message(msg):
+                        continue
+                    sent_ts = parse_fub_datetime(
+                        msg.get("dateCreated") or msg.get("created") or msg.get("date"))
+                    if sent_ts and sent_ts > entry["reply_at"]:
+                        answered = True
+                        break
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "NEEDS A REPLY: could not verify lead %s against FUB (%s) — "
+                    "keeping them on the list", pid, exc)
+            if not answered:
+                entry["hours_waiting"] = max(
+                    0.0, (now - entry["reply_at"]).total_seconds() / 3600.0)
+                needs.append(entry)
+
+        # Longest-waiting first: the top of the list is the person most owed.
+        needs.sort(key=lambda e: e["reply_at"])
+        return needs
+
     def send_phase2_daily_summary(self) -> None:
         if not self.rules.phase2_daily_summary_enabled:
             return
@@ -4956,7 +5041,33 @@ class RuleEngine:
                 _ua_details["person_id"] = _ua_row.get("person_id")
                 untouched_alerts.append(_ua_details)
 
-        if not rows and not deal_failed_closed_today and not untouched_alerts:
+        # NEEDS A REPLY — collected before the quiet-day gate below, because an
+        # unanswered lead makes the day worth an email even when nothing sent.
+        # A collection failure must cost the section, never the summary: the
+        # error is rendered in its place, so absence always means a bug.
+        needs_reply: List[dict] = []
+        needs_reply_error: Optional[str] = None
+        try:
+            needs_reply = self._collect_needs_reply()
+        except Exception as _nr_exc:  # noqa: BLE001
+            needs_reply_error = str(_nr_exc)
+            LOGGER.warning("NEEDS A REPLY collection failed: %s", _nr_exc)
+
+        # Auto-replies classified in the window — one FYI count line, so the
+        # filtered-out messages are visible without paging anyone over them.
+        auto_replies_recent = 0
+        try:
+            auto_replies_recent = len({
+                r.get("person_id")
+                for r in self.db.recent_audit_rows(
+                    ["auto_reply_detected"],
+                    dt.datetime.now(UTC) - dt.timedelta(days=self.NEEDS_REPLY_BACKLOG_DAYS))
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+        if not rows and not deal_failed_closed_today and not untouched_alerts \
+                and not needs_reply and not needs_reply_error:
             return
 
         # Warm leads today — the one funnel number worth seeing daily rather than
@@ -5051,12 +5162,72 @@ class RuleEngine:
                 
             counts_formatted.append(f" {emoji}  {clean_action} ({clean_status}): {count}")
 
+        # ── NEEDS A REPLY — rendered right under the header because it is the
+        # one section Peter opens this email for. Both formats are built here,
+        # once, so the plain and HTML emails can never disagree.
+        nr_plain: List[str] = []
+        nr_html: List[str] = []
+        if needs_reply_error:
+            nr_plain += [f"⚠️ NEEDS A REPLY — could not be computed: {needs_reply_error}", ""]
+            nr_html.append(
+                f'<p style="color:#b45309;"><strong>⚠️ NEEDS A REPLY</strong> — '
+                f"could not be computed: {needs_reply_error}</p>")
+        elif not needs_reply:
+            nr_plain += ["📬 NEEDS A REPLY — none. Every reply has an answer.", ""]
+            nr_html.append(
+                '<p style="color:#166534;"><strong>📬 NEEDS A REPLY — none.</strong> '
+                "Every reply has an answer.</p>")
+        else:
+            nr_plain += [
+                f"📬 NEEDS A REPLY — {len(needs_reply)} lead(s) waiting on a human",
+                "----------------------------------------",
+            ]
+            nr_html.append(
+                f'<h3 style="color:#b91c1c;">📬 NEEDS A REPLY — {len(needs_reply)} '
+                "lead(s) waiting on a human</h3>"
+                "<p>Real replies with no answer yet, longest-waiting first "
+                "(auto-replies already filtered out):</p>")
+            nr_html.append("<ul style='padding-left: 0;'>")
+            for entry in needs_reply[:30]:
+                fub_url = f"https://www.followupboss.com/2/people/view/{entry['person_id']}"
+                wait = format_hours_waiting(entry["hours_waiting"])
+                snippet = (entry["snippet"] or "(no text captured)")[:160]
+                nr_plain.append(
+                    f"• {entry['name']} — waiting {wait} — \"{snippet}\" → {fub_url}")
+                _wait_colour = "#b91c1c" if entry["hours_waiting"] >= 24 else "#b45309"
+                nr_html.append(
+                    f"<li style='margin-bottom: 10px; list-style-type: none; "
+                    f"border-left: 3px solid {_wait_colour}; padding-left: 10px;'>"
+                    f"<strong>{entry['name']}</strong> "
+                    f"<span style='color:{_wait_colour};font-weight:bold;'>waiting {wait}</span> "
+                    f"({entry['channel']})<br/>"
+                    f"<span style='color:#444;font-style:italic;'>&ldquo;{snippet}&rdquo;</span><br/>"
+                    f"<a href='{fub_url}' style='font-size:13px;'>Open in FUB →</a>"
+                    f"</li>")
+            nr_html.append("</ul>")
+            if len(needs_reply) > 30:
+                nr_plain.append(f"…and {len(needs_reply) - 30} more.")
+                nr_html.append(f"<p>…and {len(needs_reply) - 30} more.</p>")
+            nr_plain.append("")
+        if auto_replies_recent:
+            nr_plain += [
+                f"🤖 {auto_replies_recent} auto-repl{'y' if auto_replies_recent == 1 else 'ies'} "
+                "classified in the last 14 days (out-of-office etc.) — filtered out, "
+                "not counted warm.",
+                "",
+            ]
+            nr_html.append(
+                f'<p style="color:#6b7280;font-size:0.9em;">🤖 {auto_replies_recent} '
+                f"auto-repl{'y' if auto_replies_recent == 1 else 'ies'} classified in the "
+                "last 14 days (out-of-office etc.) — filtered out, not counted warm.</p>")
+
         # Plain text lines
         lines = [
             "Hi Peter! 👋",
             "",
             "Here is your clean, organized Phase 2 automation update from the last 24 hours. 🚀",
             "",
+            *nr_plain,
             "📊 QUICK METRICS SUMMARY",
             "----------------------------------------",
             *counts_formatted,
@@ -5083,6 +5254,7 @@ class RuleEngine:
         html_lines = [
             "<p>Hi Peter! 👋</p>",
             "<p>Here is your clean, organized Phase 2 automation update from the last 24 hours. 🚀</p>",
+            *nr_html,
             "<h3>📊 QUICK METRICS SUMMARY</h3>",
             "<ul>"
         ]
@@ -6587,6 +6759,13 @@ def classify_reply(
     if any(marker in combined for marker in AUTO_REPLY_MARKERS):
         return "auto_reply"
     return "human"
+
+
+def format_hours_waiting(hours: float) -> str:
+    """'41h' under two days, '3d 7h' from there — for the NEEDS A REPLY list."""
+    if hours < 48:
+        return f"{hours:.0f}h"
+    return f"{int(hours // 24)}d {int(hours % 24)}h"
 
 
 def parse_fub_datetime(value: Any) -> Optional[dt.datetime]:
