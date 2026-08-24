@@ -6423,7 +6423,7 @@ class RuleEngine:
                                     person_id, (auto_at - send_dt).total_seconds())
                         self.db.log("auto_reply_detected", "classified", person_id, {
                             "reply_at": auto_at.isoformat(),
-                            "reply_snippet": reply_message_body(auto_msg)[:200],
+                            "reply_snippet": reply_display_snippet(auto_msg)[:200],
                             "seconds_after_send": round((auto_at - send_dt).total_seconds(), 1),
                             "contact_name": (f"{person.get('firstName', '')} "
                                              f"{person.get('lastName', '')}").strip(),
@@ -6456,7 +6456,7 @@ class RuleEngine:
         never drift apart on what a detected reply does.
         """
         # REPLY DETECTED — take action
-        reply_body = reply_message_body(reply_found) or "(no body)"
+        reply_body = reply_display_snippet(reply_found)
         reply_snippet = reply_body[:300]
         reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
         LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
@@ -6548,7 +6548,7 @@ class RuleEngine:
         counting it warm would make a bad week look like a good one.
         """
         person_name_str = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
-        snippet = reply_message_body(message)[:200]
+        snippet = reply_display_snippet(message)[:200]
         channel = "email" if message.get("subject") is not None else "text"
         LOGGER.warning(
             "REPLY OPT-OUT: lead %s (%s) replied with opt-out language via %s. Trashing.",
@@ -6813,7 +6813,7 @@ class RuleEngine:
             auto_anchor = latest_outbound_before(messages, auto_at)
             self.db.log("auto_reply_detected", "classified", person_id, {
                 "reply_at": auto_at.isoformat(),
-                "reply_snippet": reply_message_body(auto_msg)[:200],
+                "reply_snippet": reply_display_snippet(auto_msg)[:200],
                 "seconds_after_send": (
                     round((auto_at - auto_anchor).total_seconds(), 1)
                     if auto_anchor else None),
@@ -6940,27 +6940,61 @@ def parse_dt(value: str) -> Optional[dt.datetime]:
 def is_inbound_message(message: dict) -> bool:
     """Did this FUB message come FROM the lead?
 
-    The field is `isIncoming`, a boolean, and it is the same field on
-    /v1/emails, /v1/textMessages and /v1/calls — it is also the field we POST
-    in log_text_message. FUB does not return `isReceived` on any of them.
+    THE fields that matter — measured, not documented. The 2026-08-24
+    diagnostic (run 32771837161) dumped this account's real email objects for
+    two known replies: they carry NO isIncoming, direction or type at all.
+    What they do carry is
 
-    scan_reply_detection used to test `isReceived`/`type == "received"` and
-    nothing else, so every message read as outgoing and the scan could not
-    detect a reply at all: 1028 leads scanned per run, zero alerts, from the
-    day it shipped (2026-07-12) until this was fixed. Nothing failed — the
-    predicate was simply never true — which is why a month of runs went green.
+        status = 'Received'                        (outbound is 'Sent' etc.)
+        relatedPeople = [{'sentByPerson': True}]   (sent BY the lead)
 
-    The legacy keys are still accepted below. They cost one dict lookup each
-    and a widened predicate can only ever find more replies; a lead going
-    unanswered is the expensive failure here, not a redundant check.
+    Both are recognised first. The docs' `isIncoming` and the older legacy
+    spellings stay accepted below — we POST isIncoming ourselves in
+    log_text_message, other FUB accounts may return it, and a widened
+    predicate can only ever find more replies; a lead going unanswered is the
+    expensive failure here, not a redundant dict lookup.
+
+    History of getting this wrong, kept as a warning: the scan shipped
+    2026-07-12 testing `isReceived` (never sent by FUB) and detected nothing
+    for six weeks; the first fix switched to `isIncoming` (documented, but
+    also never sent by THIS account) and would have detected nothing forever.
+    Only the field dump settled it.
     """
+    if str(message.get("status") or "").lower() == "received":
+        return True
+    for related in message.get("relatedPeople") or []:
+        if isinstance(related, dict) and related.get("sentByPerson"):
+            return True
     if message.get("isIncoming") or message.get("isReceived"):
         return True
-    # Spelled "incoming" at some call sites and "inbound" at others; FUB itself
-    # returns neither, so accept both rather than guess.
+    # Spelled "incoming" at some call sites and "inbound" at others; accept
+    # both rather than guess.
     if str(message.get("direction") or "").lower() in ("incoming", "inbound"):
         return True
     return str(message.get("type") or "").lower() == "received"
+
+
+# What FUB returns in place of subject/body when the account's email-content
+# sharing setting hides them from the API user. A literal string, so keyword
+# and marker scans can never match on it — classification then rests on
+# timing and the `unsubscribed` flag alone, and snippets must say so instead
+# of printing the placeholder as if it were the lead's words.
+FUB_HIDDEN_CONTENT = "[content hidden]"
+
+
+def message_content_hidden(message: dict) -> bool:
+    return any(
+        str(message.get(key) or "").strip().lower() == FUB_HIDDEN_CONTENT
+        for key in ("subject", "body", "bodyExcerpt")
+    )
+
+
+def reply_display_snippet(message: dict) -> str:
+    """What to show a human as 'the reply': the text when FUB shares it, an
+    honest pointer when the account's privacy setting hides it."""
+    if message_content_hidden(message):
+        return "(email content hidden by FUB settings — open the thread in FUB)"
+    return reply_message_body(message) or "(no body)"
 
 
 # A reply that lands this close to the send is a machine answering, not a
@@ -7013,7 +7047,20 @@ def classify_reply(
     must be honoured however fast it arrived (a compliance obligation, and the
     safe direction to over-trigger in), so the timing heuristic below must not
     be able to shadow it.
+
+    KNOWN LIMIT while the account hides email content from the API
+    (message_content_hidden): subject and body are the literal placeholder,
+    so the keyword and marker scans cannot fire — an "UNSUBSCRIBE" typed in
+    the body classifies as human and reaches Peter as a NEEDS-A-REPLY entry
+    rather than being auto-trashed. FUB's own `unsubscribed` flag (their
+    unsubscribe link) is honoured below regardless. Restoring body access is
+    an FUB admin setting, not a code change.
     """
+    # FUB's own unsubscribe-link flag on the email object — content sharing
+    # cannot hide it.
+    if message.get("unsubscribed"):
+        return "opt_out"
+
     subject = str(message.get("subject") or "").lower().strip()
     body = reply_message_body(message).lower().strip()
     combined = f"{subject} {body}"

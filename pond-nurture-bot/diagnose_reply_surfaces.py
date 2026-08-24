@@ -77,16 +77,43 @@ def describe_person(fub, email: str) -> Optional[int]:
     return pid
 
 
+def dump_item(item: dict, indent: str = "      ") -> None:
+    """Every field of one message object, values clipped and redacted — the
+    2026-08-24 run showed [CONTENT HIDDEN] payloads with no visible direction
+    flag, so the exact field inventory is the whole point."""
+    for key in sorted(item):
+        print(f"{indent}{key} = {clip_and_redact(item[key], 80)!r}", flush=True)
+
+
 def describe_messages(fub, pid: int, path: str, list_key: str, label: str) -> None:
     data = fub._request("GET", path, params={"personId": pid, "limit": 100})
     items = data.get(list_key, data.get("data", []))
     print(f"  {label}: top-level keys {sorted(data.keys())}, {len(items)} items",
           flush=True)
+    if items:
+        field_union = sorted({key for item in items for key in item})
+        print(f"    item fields (union): {field_union}", flush=True)
     for item in items[:5]:
         created = item.get("created") or item.get("dateCreated") or item.get("date")
         subject = item.get("subject") or item.get("message") or item.get("body")
         print(f"    [{direction_of(item)}] {created}  {clip_and_redact(subject, 80)}",
               flush=True)
+    if items:
+        print("    newest item, every field:", flush=True)
+        dump_item(items[0])
+        # The single-object endpoint sometimes returns more than the list —
+        # check whether direction/content appear when one email is fetched
+        # directly by id.
+        item_id = items[0].get("id")
+        if label == "/emails" and item_id is not None:
+            single = fub._request("GET", f"/emails/{item_id}")
+            body = single.get("email", single) if isinstance(single, dict) else {}
+            print(f"    GET /emails/{item_id}: top-level keys "
+                  f"{sorted(single.keys()) if isinstance(single, dict) else '?'}",
+                  flush=True)
+            if isinstance(body, dict):
+                print("    single-fetch, every field:", flush=True)
+                dump_item(body)
 
 
 def describe_notes(fub, pid: int) -> None:
