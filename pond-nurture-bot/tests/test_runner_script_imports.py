@@ -39,6 +39,7 @@ RUNNER_SCRIPTS = [
     "backfill_reengagement.py",
     "backfill_missed_replies.py",
     "backfill_ramp_state.py",
+    "diagnose_reply_surfaces.py",
     "weekly_digest.py",
     "nightly_health.py",
     "export_dashboard_data.py",
