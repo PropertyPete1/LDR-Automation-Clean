@@ -1,0 +1,114 @@
+# One-shot repair, run by hand. Not scheduled, and it should stay that way.
+#
+# Gives the volume ramp what the broken import starved it of: real
+# daily_run_duration rows (from GitHub's own record of the daily workflow's
+# runs) and a last_advanced_at clock seeded at the moment step 1 actually went
+# live (2026-08-06). It never moves step_index and never writes an advance —
+# the advance stays maybe_advance()'s decision inside the next daily run,
+# printed here as a projection. See pond-nurture-bot/backfill_ramp_state.py.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+name: Repair ramp state
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How far back to backfill run durations"
+        required: true
+        default: "10"
+      commit:
+        description: "Actually write. Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  FUB_DISABLE_SCHEDULER: "true"
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # actions: read is what lets the script read the daily workflow's run
+    # durations; contents: write is for the state branch push.
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Repair ramp state
+        working-directory: pond-nurture-bot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          python3 backfill_ramp_state.py \
+            --days "${{ inputs.days }}" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something was actually written. A dry run must never touch
+      # the state branch.
+      - name: Push state DB
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Re-pull and verify the repair survived
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Confirm the ramp state is on the state branch
+        if: ${{ inputs.commit }}
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import sqlite3, sys
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          row = c.execute(
+              'SELECT step_index, last_advanced_at FROM volume_ramp_state WHERE id=1'
+          ).fetchone()
+          durations = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='daily_run_duration'\"
+          ).fetchone()[0]
+          print(f'volume_ramp_state: step_index={row[0]}, last_advanced_at={row[1]}')
+          print(f'daily_run_duration rows: {durations}')
+          if row[1] is None or durations == 0:
+              print('ERROR: the repair is not on the state branch — another workflow '
+                    'probably overwrote it. Re-run this workflow.', file=sys.stderr)
+              sys.exit(1)
+          "

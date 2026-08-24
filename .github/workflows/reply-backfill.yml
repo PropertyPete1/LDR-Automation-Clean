@@ -1,0 +1,119 @@
+# One-shot repair, run by hand. Not scheduled, and it should stay that way.
+#
+# Retroactively processes the replies scan_reply_detection missed while its
+# inbound predicate was broken (2026-07-12 → the fix): opt-outs trashed and
+# tagged, real replies tagged "Replied - Paused" and counted warm in the week
+# they actually arrived, auto-replies classified separately. One consolidated
+# summary email to Peter instead of a burst of per-lead alerts. See
+# pond-nurture-bot/backfill_missed_replies.py for the full protocol.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+name: Backfill missed replies
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days of inbound messages to repair"
+        required: true
+        default: "14"
+      commit:
+        description: "Actually write (FUB tags/trash + state DB). Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  SMTP_HOST: ${{ secrets.SMTP_HOST }}
+  SMTP_PORT: ${{ secrets.SMTP_PORT }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+  EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Backfill missed replies
+        working-directory: pond-nurture-bot
+        # DRY_RUN is pinned inside the script from --commit; the env here
+        # cannot enable writes.
+        run: |
+          set -euo pipefail
+          python3 backfill_missed_replies.py \
+            --days "${{ inputs.days }}" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something was actually written. A dry run must never touch
+      # the state branch.
+      - name: Push state DB
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      # Re-pull rather than trusting the push: this repair exists because rows
+      # that were believed written once turned out not to be.
+      - name: Re-pull and verify the repair survived
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Confirm the backfilled rows are on the state branch
+        if: ${{ inputs.commit }}
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import sqlite3
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          backfilled = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='reply_detected' AND status='backfilled'\"
+          ).fetchone()[0]
+          autos = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='auto_reply_detected'\"
+          ).fetchone()[0]
+          optouts = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='reply_intent_disqualification'\"
+              \" AND status='opt_out_trashed'\"
+          ).fetchone()[0]
+          print(f'state branch now holds: {backfilled} backfilled replies, '
+                f'{autos} auto-reply rows, {optouts} opt-out disqualifications')
+          "

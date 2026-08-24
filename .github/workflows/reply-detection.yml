@@ -7,9 +7,16 @@ on:
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
+# cancel-in-progress is FALSE on purpose. The scan takes ~7 minutes over a
+# ~1,050-lead watch list, GitHub delays cron ticks under load, and with
+# cancel-in-progress: true every new tick killed the still-running scan
+# mid-list — 17 of 17 runs on 2026-08-24 ended "cancelled", taking the
+# telemetry publish and state push with them. With false, a new tick QUEUES
+# behind the running scan instead (GitHub keeps at most one pending run per
+# group, so they coalesce rather than pile up).
 concurrency:
   group: ldr-reply-detection
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   DRY_RUN: "false"
@@ -27,7 +34,10 @@ env:
 jobs:
   reply-detection:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # ~7 min is normal for the current watch list; 20 leaves room for a slow
+    # FUB day without the timeout killing the run between the scan's FUB
+    # writes and the state push that records them.
+    timeout-minutes: 20
 
     # state-sync pushes to the 'state' branch, publish-telemetry pushes
     # status/ to main. Nothing here needs any other scope.

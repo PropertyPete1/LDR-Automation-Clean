@@ -349,7 +349,13 @@ def test_the_repair_makes_the_cadence_check_skip_the_lead(m, db, rules, settings
     person_id = 101
     assert db.get_last_reengagement(person_id) is None, "due before the repair"
 
-    write, _ = bf.plan_backfill([note(person_id, at(8, 30))], {}, DATE)
+    # A repair of YESTERDAY's sends, so "the send was hours ago" stays true on
+    # every day this test runs — pinning 2026-08-11 here made the wall-clock
+    # assertion below expire ten days later.
+    yesterday = dt.datetime.now(CT) - dt.timedelta(days=1)
+    sent_at = yesterday.replace(hour=8, minute=30, second=0, microsecond=0)
+    write, _ = bf.plan_backfill(
+        [note(person_id, sent_at)], {}, yesterday.strftime("%Y-%m-%d"))
     conn = sqlite3.connect(db.path)
     bf.apply_rows(conn, write)
     conn.close()

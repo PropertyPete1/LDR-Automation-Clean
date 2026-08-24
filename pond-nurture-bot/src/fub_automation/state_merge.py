@@ -59,8 +59,10 @@ directions, table by table.
 A table the DB has and this module does not know about is NOT overwritten — it
 falls back to a union that cannot lose a row (see UNCLASSIFIED_FALLBACK below)
 and is reported as unclassified in the summary. test_state_merge.py fails if any
-table AuditDB creates ends up there, so the rule set has to be extended
-deliberately rather than discovered in a run log.
+table AuditDB or ramp.ensure_schema creates ends up there, so the rule set has
+to be extended deliberately rather than discovered in a run log. (The ramp half
+of that check exists because volume_ramp_state DID slip through: it is created
+by ramp.py rather than AuditDB, and the old AuditDB-only sweep never saw it.)
 """
 from __future__ import annotations
 
@@ -201,6 +203,24 @@ PERSON_ROWS: tuple[PersonRow, ...] = (
         forward_only=("last_alert_at",),
         backward_only=("first_seen_at",),
         reset_on=("assigned_user_id",),
+    ),
+    # Not a person — the volume ramp's singleton row (ramp.py, CHECK (id = 1))
+    # — but exactly this reconciliation shape: one row per key, field by field.
+    # It NEEDS a rule more than most: the unclassified fallback is a union, and
+    # a union of two disagreeing versions of a CHECK(id=1) row INSERTs a second
+    # row, which the constraint rejects — failing the whole merge and with it
+    # the push. Six workflows pull this table and only the daily run writes it,
+    # so the first advance would have made every sibling's push fail.
+    #
+    # The side that evaluated the ramp most recently wins the row (holding /
+    # hold_reason describe its evaluation); the step and both clocks are
+    # forward-only, so a recorded advance survives whichever side pushes last
+    # and the ramp can never be walked backwards by a stale copy.
+    PersonRow(
+        name="volume_ramp_state",
+        key=("id",),
+        clock=("last_evaluated_at",),
+        forward_only=("step_index", "last_advanced_at", "last_evaluated_at"),
     ),
 )
 

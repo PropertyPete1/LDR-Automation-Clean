@@ -36,6 +36,20 @@ T2 = "2026-08-11T21:28:23+00:00"      # the backfill's push
 T3 = "2026-08-11T21:32:08+00:00"      # Reply Detection #459's push, which won
 
 
+def full_schema(path: Path) -> None:
+    """Every table a production DB carries: AuditDB's plus the ramp's.
+
+    volume_ramp_state is created by ramp.ensure_schema, not AuditDB — which is
+    exactly how it escaped the schema sweep below and ran without a merge rule.
+    """
+    from fub_automation import ramp
+
+    conn = sqlite3.connect(path)
+    with conn:
+        ramp.ensure_schema(conn)
+    conn.close()
+
+
 @pytest.fixture()
 def dbs(m, tmp_path):
     """Two lineages of the same schema: ours (the running job) and theirs (the
@@ -44,6 +58,8 @@ def dbs(m, tmp_path):
     theirs = tmp_path / "theirs.sqlite3"
     m.AuditDB(str(ours))
     m.AuditDB(str(theirs))
+    full_schema(ours)
+    full_schema(theirs)
     return ours, theirs
 
 
@@ -279,6 +295,8 @@ def test_no_forward_only_column_in_any_table_ever_regresses(spec, m, dbs, tmp_pa
     ours2, theirs2 = tmp_path / "swapped-ours.sqlite3", tmp_path / "swapped-theirs.sqlite3"
     m.AuditDB(str(ours2))
     m.AuditDB(str(theirs2))
+    full_schema(ours2)
+    full_schema(theirs2)
     _insert_row(ours2, spec.name, newer)
     _insert_row(theirs2, spec.name, older)
     sm.merge_databases(str(ours2), str(theirs2))
@@ -305,7 +323,9 @@ def _synthetic_row(spec, info: list[tuple], *, when: str, counter: int, marker: 
     row = {}
     for _, name, decl_type, _, _, _ in info:
         if name in spec.key:
-            row[name] = 55
+            # 1 rather than an arbitrary id: volume_ramp_state is CHECK (id = 1)
+            # and every person-keyed table is equally happy with person_id 1.
+            row[name] = 1
         elif name in timestamps and str(decl_type).upper() == "INTEGER":
             row[name] = counter
         elif name in timestamps:
@@ -318,9 +338,13 @@ def _synthetic_row(spec, info: list[tuple], *, when: str, counter: int, marker: 
 
 
 def _insert_row(path: Path, table: str, row: dict) -> None:
+    # OR REPLACE because volume_ramp_state already holds its default singleton
+    # row (ensure_schema seeds id=1); every other table here starts empty, so
+    # for them this is a plain INSERT.
     execute(
         path,
-        f"INSERT INTO {table}({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
+        f"INSERT OR REPLACE INTO {table}({', '.join(row)}) "
+        f"VALUES ({', '.join('?' for _ in row)})",
         *row.values(),
     )
 
@@ -462,6 +486,64 @@ def test_a_person_only_the_branch_knows_about_is_carried_over(dbs):
     assert sorted(r[0] for r in rows(ours, "SELECT person_id FROM reengagement_log")) == [55, 66]
 
 
+# ── volume_ramp_state: the singleton the ramp lives in ──────────────────────
+
+
+def _ramp_row(path: Path, *, step: int, advanced: str | None, evaluated: str | None,
+              holding: int = 0, reason: str | None = None) -> None:
+    execute(path, "UPDATE volume_ramp_state SET step_index=?, last_advanced_at=?, "
+                  "last_evaluated_at=?, holding=?, hold_reason=? WHERE id=1",
+            step, advanced, evaluated, holding, reason)
+
+
+def test_a_ramp_advance_survives_a_stale_siblings_push(dbs):
+    """THE ramp race. The daily run advances the step and pushes; a reply-
+    detection run that pulled before the advance pushes four minutes later
+    still holding the old row. Whichever side merges, the advance survives —
+    this is the write path that being unclassified would have turned into a
+    failed push (a union INSERTs a second row; CHECK (id = 1) refuses it)."""
+    ours, theirs = dbs
+    # ours: the stale sibling. theirs (the branch): the daily run's advance.
+    _ramp_row(ours, step=0, advanced=None, evaluated=T1)
+    _ramp_row(theirs, step=1, advanced=T3, evaluated=T3)
+
+    sm.merge_databases(str(ours), str(theirs))
+
+    assert rows(ours, "SELECT COUNT(*) FROM volume_ramp_state")[0][0] == 1
+    assert rows(
+        ours, "SELECT step_index, last_advanced_at, last_evaluated_at FROM volume_ramp_state"
+    )[0] == (1, T3, T3)
+
+
+def test_a_ramp_advance_survives_when_the_advancer_pushes_second(dbs):
+    """The same race with the daily run landing second: its step must not be
+    walked back by the older row it merges in."""
+    ours, theirs = dbs
+    _ramp_row(ours, step=1, advanced=T3, evaluated=T3)
+    _ramp_row(theirs, step=0, advanced=None, evaluated=T1)
+
+    sm.merge_databases(str(ours), str(theirs))
+
+    assert rows(
+        ours, "SELECT step_index, last_advanced_at, last_evaluated_at FROM volume_ramp_state"
+    )[0] == (1, T3, T3)
+
+
+def test_the_newer_evaluations_hold_verdict_wins_the_row(dbs):
+    """holding/hold_reason describe an evaluation, so the side that evaluated
+    most recently speaks for them — a fresh hold is not erased by a sibling
+    still carrying last week's green."""
+    ours, theirs = dbs
+    _ramp_row(ours, step=1, advanced=T1, evaluated=T1, holding=0, reason=None)
+    _ramp_row(theirs, step=1, advanced=T1, evaluated=T3, holding=1,
+              reason="bounce/failure 3.1% (limit 2.0%)")
+
+    sm.merge_databases(str(ours), str(theirs))
+
+    assert rows(ours, "SELECT holding, hold_reason FROM volume_ramp_state")[0] == (
+        1, "bounce/failure 3.1% (limit 2.0%)")
+
+
 # ── Whole-file properties ───────────────────────────────────────────────────
 
 
@@ -476,6 +558,8 @@ def test_the_merge_is_commutative_across_the_whole_schema(dbs, m, tmp_path):
     mirror_theirs = tmp_path / "mirror-theirs.sqlite3"
     m.AuditDB(str(mirror_ours))
     m.AuditDB(str(mirror_theirs))
+    full_schema(mirror_ours)
+    full_schema(mirror_theirs)
     _populate(mirror_theirs, marker="ours", when=T1)
     _populate(mirror_ours, marker="theirs", when=T3)
 
@@ -529,6 +613,11 @@ def _populate(path: Path, *, marker: str, when: str) -> None:
                   "VALUES (55, ?, ?)", f"{marker}@example.com", when)
     execute(path, "INSERT INTO seller_send_claims(person_id, email_number, claimed_at) "
                   "VALUES (55, ?, ?)", 1 if marker == "ours" else 2, when)
+    # UPDATE, not INSERT: ensure_schema seeded the singleton, and a second row
+    # is exactly what the CHECK (id = 1) constraint exists to refuse.
+    execute(path, "UPDATE volume_ramp_state SET step_index=?, last_advanced_at=?, "
+                  "last_evaluated_at=?, holding=0, hold_reason=? WHERE id=1",
+            1 if marker == "ours" else 2, when, when, marker)
 
 
 def test_every_table_in_the_schema_has_a_merge_rule(m, tmp_path):
@@ -537,6 +626,7 @@ def test_every_table_in_the_schema_has_a_merge_rule(m, tmp_path):
     against loss but wrong against a suppression clock, so the fallback is a net,
     not a plan: adding a table to AuditDB means adding its rule to state_merge."""
     db = m.AuditDB(str(tmp_path / "schema.sqlite3"))
+    full_schema(Path(db.path))
     conn = sqlite3.connect(db.path)
     tables = {row[0] for row in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
@@ -552,6 +642,7 @@ def test_the_rules_only_name_columns_that_exist(m, tmp_path):
     """A typo in a rule is silent otherwise: a forward_only column that does not
     exist simply never protects anything."""
     db = m.AuditDB(str(tmp_path / "schema.sqlite3"))
+    full_schema(Path(db.path))
     conn = sqlite3.connect(db.path)
     for spec in (*sm.LEDGERS, *sm.PERSON_ROWS):
         columns = {r[1] for r in conn.execute(f"PRAGMA table_info({spec.name})").fetchall()}

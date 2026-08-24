@@ -224,7 +224,10 @@ def run_automation() -> int:
     # Weekly ramp evaluation, before any sending, so today's cap reflects the
     # decision made from last week's guardrails.
     try:
-        from fub_automation.ramp import maybe_advance as _maybe_advance
+        # Absolute `src.` form, matching run_automation() above. The bare
+        # `fub_automation.` form does not resolve from this script and every
+        # daily run since the ramp shipped died right here — see line 65.
+        from src.fub_automation.ramp import maybe_advance as _maybe_advance
 
         with db.connect() as _con:
             _ramp = _maybe_advance(_con)
@@ -252,6 +255,11 @@ def run_automation() -> int:
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
     engine.scan_closed_drip()  # Phase 3: quarterly check-in emails for Closed/Past Client/Sphere leads
     engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
+    # Replies to OLD threads. The scan above only watches leads emailed in the
+    # last 7 days; this walks every lead FUB says was updated in the last 2
+    # days — any inbound bumps `updated` — so a reply to a month-old thread
+    # (Joe Muñoz, 2026-08-22) is caught within a day instead of never.
+    engine.scan_wide_reply_sweep()
     engine.send_phase2_daily_summary()
     
     # Auto-refresh the dashboard data. refresh_dashboard.sh now lives in this
@@ -275,7 +283,7 @@ def run_automation() -> int:
     # Written even in dry-run: the guardrail cares how long the work takes, not
     # whether mail was delivered.
     try:
-        from fub_automation.ramp import record_run_duration as _record_duration
+        from src.fub_automation.ramp import record_run_duration as _record_duration
 
         _elapsed_min = (_time.monotonic() - _run_started) / 60.0
         with db.connect() as _con:
