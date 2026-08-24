@@ -6940,28 +6940,29 @@ def parse_dt(value: str) -> Optional[dt.datetime]:
 def is_inbound_message(message: dict) -> bool:
     """Did this FUB message come FROM the lead?
 
-    THE fields that matter — measured, not documented. The 2026-08-24
-    diagnostic (run 32771837161) dumped this account's real email objects for
-    two known replies: they carry NO isIncoming, direction or type at all.
-    What they do carry is
+    THE field that matters — measured, not documented, twice over. The
+    2026-08-24 diagnostics dumped this account's real email objects: they
+    carry NO isIncoming, direction or type at all, and `status` is stamped
+    'Received' on EVERYTHING the mailbox sync ingests — the bot's own
+    outbound sends included (run 32777950427: Stephen's genuine reply id
+    52004 and our own send to him id 51937 both read status='Received'; only
+    relatedPeople[].sentByPerson differs, True on his, False on ours). A
+    status-based predicate classified every synced send as a reply and filled
+    a whole dry-run plan with the bot answering itself.
 
-        status = 'Received'                        (outbound is 'Sent' etc.)
-        relatedPeople = [{'sentByPerson': True}]   (sent BY the lead)
+        relatedPeople = [{'sentByPerson': True}]   ← sent BY the lead
 
-    Both are recognised first. The docs' `isIncoming` and the older legacy
-    spellings stay accepted below — we POST isIncoming ourselves in
-    log_text_message, other FUB accounts may return it, and a widened
-    predicate can only ever find more replies; a lead going unanswered is the
-    expensive failure here, not a redundant dict lookup.
+    is therefore the ONE inbound signal for this account. The docs'
+    `isIncoming` and the older legacy spellings stay accepted below — we POST
+    isIncoming ourselves in log_text_message, other FUB accounts may return
+    it, and none of them can match a synced send.
 
-    History of getting this wrong, kept as a warning: the scan shipped
-    2026-07-12 testing `isReceived` (never sent by FUB) and detected nothing
-    for six weeks; the first fix switched to `isIncoming` (documented, but
-    also never sent by THIS account) and would have detected nothing forever.
-    Only the field dump settled it.
+    History of getting this wrong, kept as a warning: `isReceived` (never
+    sent by FUB) → six blind weeks; `isIncoming` (documented, never sent by
+    THIS account) → would have been blind forever; `status='Received'`
+    (sent on everything) → would have alerted on our own mail. Only field
+    dumps of BOTH directions settled it.
     """
-    if str(message.get("status") or "").lower() == "received":
-        return True
     for related in message.get("relatedPeople") or []:
         if isinstance(related, dict) and related.get("sentByPerson"):
             return True
