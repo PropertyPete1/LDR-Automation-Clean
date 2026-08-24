@@ -37,6 +37,8 @@ RUNNER_SCRIPTS = [
     "run_approved_daily_automation.py",
     "run_speed_to_lead_check.py",
     "backfill_reengagement.py",
+    "backfill_missed_replies.py",
+    "backfill_ramp_state.py",
     "weekly_digest.py",
     "nightly_health.py",
     "export_dashboard_data.py",

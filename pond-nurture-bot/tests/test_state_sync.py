@@ -46,11 +46,16 @@ KEY = "test-state-encryption-key"
 #: #9's table. The starvation argument below is arithmetic on these numbers.
 SHARED_DB_WORKFLOWS = {
     "daily-automation.yml": {"timeout": 120, "cron": "0 12 * * *"},
-    "reply-detection.yml": {"timeout": 10, "cron": "*/10 * * * *"},
+    # 20 rather than 10 since the cancellation fix: the scan alone takes ~7
+    # minutes over a ~1,050-lead watch list, and the timeout must leave room
+    # for a slow FUB day plus the telemetry publish and state push after it.
+    "reply-detection.yml": {"timeout": 20, "cron": "*/10 * * * *"},
     "speed-to-lead.yml": {"timeout": 10, "cron": "*/5 * * * *"},
     "nightly-health.yml": {"timeout": 20, "cron": "0 9 * * *"},
     "weekly-digest.yml": {"timeout": 10, "cron": "0 13 * * 1"},
     "backfill-reengagement.yml": {"timeout": 30, "cron": None},
+    "reply-backfill.yml": {"timeout": 60, "cron": None},
+    "ramp-repair.yml": {"timeout": 15, "cron": None},
 }
 
 
@@ -582,6 +587,16 @@ def test_speed_to_leads_cadence_is_untouched():
     assert _triggers(wf)["schedule"] == [{"cron": "*/5 * * * *"}]
     assert wf["jobs"]["speed-to-lead"]["timeout-minutes"] == 10
     assert wf["concurrency"]["cancel-in-progress"] is True
+
+
+def test_reply_detection_queues_rather_than_cancels_itself():
+    """With cancel-in-progress: true, every delayed cron tick killed the
+    still-running ~7-minute scan mid-list — 17 of 17 runs on 2026-08-24 ended
+    'cancelled', taking the telemetry publish and state push with them. A new
+    tick must QUEUE behind the running scan (GitHub keeps at most one pending
+    run per group, so ticks coalesce rather than pile up)."""
+    wf = _workflow("reply-detection.yml")
+    assert wf["concurrency"]["cancel-in-progress"] is False
 
 
 def test_no_two_scheduled_workflows_share_a_concurrency_group():
