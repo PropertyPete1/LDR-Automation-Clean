@@ -1,0 +1,50 @@
+# Read-only diagnostic, run by hand. Prints, for a handful of leads, every
+# FUB surface that could hold their replies: /emails, /textMessages, /notes,
+# /events, plus the person record's clocks. Exists because two dry runs proved
+# /emails and person.updated blind to inbound mail in this account — the fix
+# for reply detection depends on seeing where the replies actually live.
+#
+# Every FUB call is a GET. No state DB, no writes, nothing to commit.
+name: Diagnose reply surfaces
+
+on:
+  workflow_dispatch:
+    inputs:
+      emails:
+        description: "Comma-separated lead email addresses to inspect"
+        required: true
+        default: "joe_munoz@att.net,sjherrera987@gmail.com"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  DRY_RUN: "true"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Inspect reply surfaces
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 diagnose_reply_surfaces.py --emails "${{ inputs.emails }}"
