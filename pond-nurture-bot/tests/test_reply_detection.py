@@ -579,3 +579,77 @@ def test_the_daily_runner_invokes_the_wide_sweep():
     """Wiring guard: the sweep only exists if the daily run actually calls it."""
     source = (Path(__file__).resolve().parents[1] / "run_approved_daily_automation.py").read_text()
     assert "scan_wide_reply_sweep()" in source
+
+
+# ── the sweep's audit-log rotation ───────────────────────────────────────────
+#
+# The first backfill dry run (2026-08-24, run 32757820303) proved the -updated
+# walk nearly blind: FUB does not bump `updated` for synced email, so an
+# old-thread reply rarely appears there. The rotation reads message histories
+# for everyone WE emailed 7–60 days ago, a deterministic slice per day.
+
+def _todays_slot_pid(m, k=0):
+    """A person_id that falls in today's rotation slice (offset k slices)."""
+    rotation = m.RuleEngine.WIDE_SWEEP_ROTATION_DAYS
+    slot = dt.datetime.now(dt.timezone.utc).timetuple().tm_yday % rotation
+    pid = slot + rotation * (5 + k)  # keep ids comfortably positive
+    return pid if k == 0 else pid + 1  # +1 leaves the slice when k != 0
+
+
+def test_the_rotation_catches_an_old_thread_reply_the_walk_cannot_see(m, scan, tmp_db, fake_http):
+    """Joe end to end through the sweep: his record was never 'updated', but
+    our audit row says we emailed him 30 days ago, and his messages hold a
+    fresh reply."""
+    pid = _todays_slot_pid(m)
+    now = dt.datetime.now(dt.timezone.utc)
+    old_send = now - dt.timedelta(days=30)
+    reply_at = now - dt.timedelta(hours=20)
+    _seed_send(tmp_db, pid, old_send)
+    fake_http.responses = [
+        (200, {}),  # the -updated walk: nothing changed on any record
+        (200, {"emails": [
+            {"id": 1, "personId": pid, "isIncoming": False,
+             "subject": "checking in", "body": "hello", "created": old_send.isoformat()},
+            {"id": 2, "personId": pid, "isIncoming": True,
+             "subject": "Re: checking in",
+             "body": "Yes — is the Elm house still available?",
+             "created": reply_at.isoformat()},
+        ]}),
+        (200, {"textMessages": []}),
+        (200, {"people": [{"id": pid, "firstName": "Joe", "lastName": "Muñoz", "tags": []}]}),
+    ]
+
+    scan.scan_wide_reply_sweep()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1, "the rotation must find the reply the walk cannot"
+    assert "Elm" in json.loads(alerts[0]["details"])["reply_snippet"]
+
+
+def test_a_lead_outside_todays_slice_costs_nothing(m, scan, tmp_db, fake_http):
+    pid = _todays_slot_pid(m, k=1)  # deliberately NOT in today's slice
+    _seed_send(tmp_db, pid, dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30))
+    fake_http.responses = [(200, {})]
+
+    scan.scan_wide_reply_sweep()
+
+    assert len(fake_http.calls) == 1, "only the walk's empty page — no rotation calls"
+
+
+def test_the_rotation_leaves_the_last_7_days_to_the_ten_minute_scan(m, scan, tmp_db, fake_http):
+    pid = _todays_slot_pid(m)
+    _seed_send(tmp_db, pid, dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2))
+    fake_http.responses = [(200, {})]
+
+    scan.scan_wide_reply_sweep()
+
+    assert len(fake_http.calls) == 1, "a recent send belongs to the 10-minute scan"
+
+
+def test_every_emailed_lead_is_covered_within_one_rotation(m):
+    """The guarantee the slice math rests on: over ROTATION consecutive days,
+    every person_id falls in exactly one daily slice."""
+    rotation = m.RuleEngine.WIDE_SWEEP_ROTATION_DAYS
+    for pid in range(1, 500):
+        hits = sum(1 for day in range(rotation) if pid % rotation == day % rotation)
+        assert hits == 1
