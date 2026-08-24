@@ -238,3 +238,218 @@ def test_an_earlier_error_does_not_suppress_the_lead_for_a_week(m, scan, tmp_db,
     scan.scan_reply_detection()
 
     assert len(_alerts(tmp_db)) == 1, "an errored scan must be retried, not skipped"
+
+
+# ── classification: opt-out / auto-reply / human ─────────────────────────────
+#
+# Built from the real misses of 2026-08-22/23: an "UNSUBSCRIBE" reply that was
+# neither trashed nor tagged, and two replies that landed 2–3 seconds after the
+# send — autoresponders — that would have paged Peter as hot leads.
+
+def _disqualifications(db):
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)
+    return db.recent_audit_rows(["reply_intent_disqualification"], since)
+
+
+def _autos(db):
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)
+    return db.recent_audit_rows(["auto_reply_detected"], since)
+
+
+def test_classify_reply_precedence(m):
+    """opt_out > auto_reply > human, and opt-out cannot be shadowed by timing."""
+    send = dt.datetime(2026, 8, 23, 13, 0, tzinfo=dt.timezone.utc)
+    kw = m.RuleEngine._OPT_OUT_KEYWORDS
+    hours_later = send + dt.timedelta(hours=1)
+    seconds_later = send + dt.timedelta(seconds=2)
+
+    assert m.classify_reply({"subject": "Re: hi", "body": "UNSUBSCRIBE"}, send, hours_later, kw) == "opt_out"
+    # The compliance case that must not be lost to the auto heuristic: an
+    # unsubscribe that arrives instantly is still an unsubscribe.
+    assert m.classify_reply({"subject": "Re: hi", "body": "unsubscribe"}, send, seconds_later, kw) == "opt_out"
+    assert m.classify_reply({"subject": "Re: hi", "body": "looks great, call me"}, send, seconds_later, kw) == "auto_reply"
+    assert m.classify_reply({"subject": "Automatic reply: hi", "body": "I am away"}, send, hours_later, kw) == "auto_reply"
+    assert m.classify_reply({"subject": "Re: hi", "body": "Out of office until Monday"}, send, hours_later, kw) == "auto_reply"
+    assert m.classify_reply({"subject": "Re: hi", "body": "Yes, still looking!"}, send, hours_later, kw) == "human"
+    # Standalone STOP is a text-message convention; an email saying only
+    # "stop" has no such standard meaning and texts have no subject key.
+    assert m.classify_reply({"message": "STOP"}, send, hours_later, kw) == "opt_out"
+    assert m.classify_reply({"message": "stop by anytime"}, send, hours_later, kw) == "human"
+
+
+def test_an_unsubscribe_reply_is_trashed_and_never_counts_warm(m, scan, tmp_db, fake_http, monkeypatch):
+    """The Stephen Herrera case: 'UNSUBSCRIBE', 26 hours after a pond email.
+    Compliance-critical: trash + tag, no hot-lead alert, no WARM."""
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person",
+                        lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=26)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[{
+            "id": 1, "personId": 42, "isIncoming": True,
+            "subject": "Re: Your next home in Austin",
+            "body": "UNSUBSCRIBE",
+            "created": (sent_at + dt.timedelta(hours=25)).isoformat(),
+        }],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == [], "an unsubscribe must not page anyone as a hot lead"
+    disq = _disqualifications(tmp_db)
+    assert len(disq) == 1 and disq[0]["status"] == "opt_out_trashed"
+    assert json.loads(disq[0]["details"])["trigger"] == "reply_detection_keyword"
+    stages = [p.get("stage") for _, p in updates]
+    assert "Trash" in stages, "the lead must actually be moved to Trash"
+    tag_payloads = [p.get("tags") for _, p in updates if p.get("tags")]
+    assert any("unsubscribed" in t and "opt-out-auto-trash" in t for t in tag_payloads)
+    # And the funnel maths: a warm count over this window must be zero.
+    import sqlite3 as _sq
+    from fub_automation import funnel
+    con = _sq.connect(tmp_db.path)
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    assert funnel.new_warm_today(con, since, dt.datetime.now(dt.timezone.utc)) == 0
+    con.close()
+
+
+def test_a_reply_seconds_after_the_send_is_classified_auto(m, scan, tmp_db, fake_http, monkeypatch):
+    """The Ingrid/Claudette case: a 'reply' 2 seconds after the send is a
+    machine. Logged, but no tag, no alert, no WARM."""
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person",
+                        lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[{
+            "id": 1, "personId": 42, "isIncoming": True,
+            "subject": "Re: Your next home in Austin",
+            "body": "Thanks for reaching out! I'll get back to you soon.",
+            "created": (sent_at + dt.timedelta(seconds=2)).isoformat(),
+        }],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == []
+    assert updates == [], "an auto-reply must not tag the lead Replied - Paused"
+    autos = _autos(tmp_db)
+    assert len(autos) == 1 and autos[0]["status"] == "classified"
+    details = json.loads(autos[0]["details"])
+    assert details["seconds_after_send"] == 2.0
+    assert details["reply_at"]
+
+
+def test_the_same_auto_reply_is_not_relogged_every_scan(m, scan, tmp_db, fake_http):
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    responses = _fub_responses(
+        emails=[{
+            "id": 1, "personId": 42, "isIncoming": True,
+            "subject": "Automatic reply: Your next home",
+            "body": "I am out of the office until Monday.",
+            "created": (sent_at + dt.timedelta(minutes=10)).isoformat(),
+        }],
+        texts=[],
+    )
+    fake_http.responses = list(responses)
+    scan.scan_reply_detection()
+    fake_http.responses = list(responses)
+    scan.scan_reply_detection()
+
+    assert len(_autos(tmp_db)) == 1, "one auto-reply, one row, however many scans"
+
+
+def test_an_auto_reply_does_not_mask_a_later_real_reply(m, scan, tmp_db, fake_http):
+    """The expensive failure the old first-match loop would have had: the
+    autoresponder answers first, the person answers later the same day."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=6)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[
+            {
+                "id": 1, "personId": 42, "isIncoming": True,
+                "subject": "Automatic reply: Your next home",
+                "body": "I am out of the office.",
+                "created": (sent_at + dt.timedelta(seconds=3)).isoformat(),
+            },
+            {
+                "id": 2, "personId": 42, "isIncoming": True,
+                "subject": "Re: Your next home",
+                "body": "Back now — yes, let's set up a call this week.",
+                "created": (sent_at + dt.timedelta(hours=5)).isoformat(),
+            },
+        ],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1, "the human reply must alert even though a machine answered first"
+    assert "set up a call" in json.loads(alerts[0]["details"])["reply_snippet"]
+
+
+def test_a_new_reply_after_a_classified_auto_still_alerts(m, scan, tmp_db, fake_http):
+    """Scan 1 sees only the autoresponder; scan 2 sees a real answer as well.
+    The auto classification must not have used up the lead."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=6)
+    _seed_send(tmp_db, 42, sent_at)
+    auto_email = {
+        "id": 1, "personId": 42, "isIncoming": True,
+        "subject": "Automatic reply: Your next home",
+        "body": "I am out of the office.",
+        "created": (sent_at + dt.timedelta(seconds=3)).isoformat(),
+    }
+    human_email = {
+        "id": 2, "personId": 42, "isIncoming": True,
+        "subject": "Re: Your next home",
+        "body": "Following up properly now — still interested.",
+        "created": (sent_at + dt.timedelta(hours=5)).isoformat(),
+    }
+    fake_http.responses = _fub_responses(emails=[auto_email], texts=[])
+    scan.scan_reply_detection()
+    assert _alerts(tmp_db) == []
+
+    fake_http.responses = _fub_responses(emails=[auto_email, human_email], texts=[])
+    scan.scan_reply_detection()
+
+    assert len(_alerts(tmp_db)) == 1
+
+
+def test_the_alert_row_carries_the_leads_own_timestamp(m, scan, tmp_db, fake_http):
+    """NEEDS A REPLY measures hours waiting from when the lead wrote, not from
+    when a scan happened to notice — the row has to carry that timestamp."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=8)
+    reply_at = sent_at + dt.timedelta(hours=1)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[{
+            "id": 1, "personId": 42, "isIncoming": True,
+            "subject": "Re: hi", "body": "yes please",
+            "created": reply_at.isoformat(),
+        }],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    details = json.loads(_alerts(tmp_db)[0]["details"])
+    parsed = dt.datetime.fromisoformat(details["reply_at"])
+    assert abs((parsed - reply_at).total_seconds()) < 1
+
+
+def test_an_opted_out_lead_is_not_rescanned(m, scan, tmp_db, fake_http):
+    """Once trashed for an opt-out, later scans skip the lead without even
+    fetching it."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    tmp_db.log("reply_intent_disqualification", "opt_out_trashed", 42, {})
+    fake_http.responses = [(200, {})]
+
+    scan.scan_reply_detection()
+
+    assert fake_http.calls == [], "a disqualified lead must not cost API calls"
