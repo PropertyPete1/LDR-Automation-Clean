@@ -4984,6 +4984,32 @@ class RuleEngine:
             if pid:
                 candidates.pop(int(pid), None)
 
+        # The bot's own sends, so an automated email can never read as a human
+        # answering. Going forward "Replied - Paused" stops the bot the moment
+        # a reply is detected, but the backfilled fortnight predates the tag —
+        # the bot kept mailing some of those repliers, and those sends must
+        # not silently clear them from this list.
+        bot_sends: Dict[int, List[dt.datetime]] = {}
+        try:
+            from .funnel import EMAIL_SEND_ACTIONS as _SEND_ACTIONS
+            from .funnel import SENT_STATUSES as _SENT_STATUSES
+
+            for row in self.db.recent_audit_rows(_SEND_ACTIONS, since):
+                pid = row.get("person_id")
+                if not pid or row.get("status") not in _SENT_STATUSES:
+                    continue
+                sent_ts = parse_fub_datetime(row.get("created_at"))
+                if sent_ts:
+                    bot_sends.setdefault(int(pid), []).append(sent_ts)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("NEEDS A REPLY: could not load bot send times: %s", exc)
+
+        def _is_bot_send(pid: int, ts: dt.datetime) -> bool:
+            # FUB's logged copy and our audit row disagree by sync latency, so
+            # match on proximity rather than equality.
+            return any(abs((ts - bot_ts).total_seconds()) <= 300
+                       for bot_ts in bot_sends.get(pid, []))
+
         needs: List[dict] = []
         for pid, entry in candidates.items():
             answered = False
@@ -4995,9 +5021,8 @@ class RuleEngine:
                 for msg in messages:
                     if is_inbound_message(msg):
                         continue
-                    sent_ts = parse_fub_datetime(
-                        msg.get("dateCreated") or msg.get("created") or msg.get("date"))
-                    if sent_ts and sent_ts > entry["reply_at"]:
+                    sent_ts = message_timestamp(msg)
+                    if sent_ts and sent_ts > entry["reply_at"] and not _is_bot_send(pid, sent_ts):
                         answered = True
                         break
             except Exception as exc:  # noqa: BLE001

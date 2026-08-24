@@ -232,3 +232,33 @@ def test_auto_replies_appear_only_as_a_count(quiet_engine, tmp_db, fake_http):
     assert "1 auto-reply classified" in plain
     assert "1 auto-reply classified" in html
     assert "Ingrid" not in plain, "auto-replies are a count, not a call to action"
+
+
+def test_a_bot_send_after_the_reply_does_not_read_as_an_answer(quiet_engine, tmp_db, fake_http):
+    """The blind-fortnight case: the reply was missed, so 'Replied - Paused'
+    was never applied and the bot kept mailing the lead. That automated send —
+    present in FUB's log AND in our audit rows at (almost) the same moment —
+    must not clear them from the list. Only a human's outbound does."""
+    reply_at = dt.datetime.now(UTC) - dt.timedelta(days=3)
+    bot_send_at = reply_at + dt.timedelta(days=1)
+    _reply_row(tmp_db, 42, reply_at, status="backfilled")
+    # The audit record of the bot's send, one sync-minute off FUB's copy.
+    tmp_db.log("pond_nurture", "sent", 42, {"city": "Austin"})
+    with tmp_db.connect() as con:
+        con.execute(
+            "UPDATE audit_log SET created_at=? WHERE action='pond_nurture' AND person_id=42",
+            ((bot_send_at + dt.timedelta(seconds=45)).isoformat(),),
+        )
+    fake_http.responses = [
+        (200, {"emails": [{
+            "id": 5, "personId": 42, "isIncoming": False,
+            "subject": "Your next home in Austin",
+            "body": "automated pond nurture",
+            "created": bot_send_at.isoformat(),
+        }]}),
+        (200, {"textMessages": []}),
+    ]
+
+    needs = quiet_engine._collect_needs_reply()
+
+    assert len(needs) == 1, "an automated send is not an answer"
