@@ -181,7 +181,7 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
     from fub_automation.main import (
         SELLER_LEAD_TAG,
         SELLER_REPLIED_TAG,
-        reply_message_body,
+        reply_display_snippet,
     )
 
     person_id = int(person_detail["id"])
@@ -209,7 +209,7 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
             engine._trash_opt_out_reply(person_id, person_detail, when, msg)
         return {"kind": "opt_out", "person_id": person_id, "name": name,
                 "reply_at": when.isoformat(),
-                "snippet": reply_message_body(msg)[:120]}
+                "snippet": reply_display_snippet(msg)[:120]}
 
     if humans:
         when, msg = humans[-1]
@@ -217,7 +217,7 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
             return None
         if engine.has_any_tag(person_detail, ["Replied - Paused"]):
             return None
-        snippet = reply_message_body(msg)[:300]
+        snippet = reply_display_snippet(msg)[:300]
         channel = "email" if msg.get("subject") is not None else "text"
         if commit:
             tags = ["Replied - Paused"]
@@ -251,7 +251,7 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
         anchor = latest_outbound_before(messages, when)
         log_backdated(db, "auto_reply_detected", "classified", person_id, {
             "reply_at": when.isoformat(),
-            "reply_snippet": reply_message_body(msg)[:200],
+            "reply_snippet": reply_display_snippet(msg)[:200],
             "seconds_after_send": (round((when - anchor).total_seconds(), 1)
                                    if anchor else None),
             "contact_name": name,
@@ -259,7 +259,7 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
         }, when)
     return {"kind": "auto_reply", "person_id": person_id, "name": name,
             "reply_at": when.isoformat(),
-            "snippet": reply_message_body(msg)[:120]}
+            "snippet": reply_display_snippet(msg)[:120]}
 
 
 def run_backfill(engine, db, *, days: int, commit: bool,

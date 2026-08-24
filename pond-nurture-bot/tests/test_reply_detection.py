@@ -653,3 +653,125 @@ def test_every_emailed_lead_is_covered_within_one_rotation(m):
     for pid in range(1, 500):
         hits = sum(1 for day in range(rotation) if pid % rotation == day % rotation)
         assert hits == 1
+
+
+# ── the account's REAL email objects (diagnosed 2026-08-24, run 32771837161) ─
+#
+# This FUB account returns emails with NO isIncoming/direction/type at all.
+# Inbound is carried by status='Received' and relatedPeople[].sentByPerson,
+# and the content-sharing setting replaces subject/body with the literal
+# '[CONTENT HIDDEN]'. These tests pin the dumped payloads for Joe (id 51851)
+# and Stephen (id 52004) so the predicate can never again pass on a field the
+# account does not send.
+
+def _real_inbound_email(created, *, email_id=51851, person_id=5889):
+    """Joe's actual reply object, field for field, values redacted."""
+    return {
+        "id": email_id,
+        "created": created.isoformat(),
+        "date": created.isoformat(),
+        "status": "Received",
+        "subject": "[CONTENT HIDDEN]",
+        "bodyExcerpt": "[CONTENT HIDDEN]",
+        "bodyHtmlVisibleClean": "[CONTENT HIDDEN]",
+        "bodyHtmlHiddenClean": "[CONTENT HIDDEN]",
+        "addresses": {"to": [], "from": [], "cc": [], "bcc": []},
+        "relatedPeople": [{"personId": person_id, "sentByPerson": True,
+                           "threadId": 48582}],
+        "threadId": 48582,
+        "emailAccountId": 396015,
+        "userId": 2,
+        "read": False,
+        "bounced": False,
+        "unsubscribed": False,
+        "hasAttachments": False,
+    }
+
+
+def _real_outbound_email(created, *, email_id=51850, person_id=5889):
+    return {
+        "id": email_id,
+        "created": created.isoformat(),
+        "date": created.isoformat(),
+        "status": "Sent",
+        "subject": "[CONTENT HIDDEN]",
+        "bodyExcerpt": "[CONTENT HIDDEN]",
+        "relatedPeople": [{"personId": person_id, "sentByPerson": False,
+                           "threadId": 48582}],
+        "threadId": 48582,
+        "emailAccountId": 396015,
+        "userId": 2,
+        "bounced": False,
+        "unsubscribed": False,
+    }
+
+
+def test_status_received_is_inbound(m):
+    now = dt.datetime.now(dt.timezone.utc)
+    assert m.is_inbound_message(_real_inbound_email(now)) is True
+    assert m.is_inbound_message(_real_outbound_email(now)) is False
+    assert m.is_inbound_message({"status": "Received"}) is True
+    assert m.is_inbound_message({"status": "Sent"}) is False
+    assert m.is_inbound_message({"status": "Delivered"}) is False
+
+
+def test_sent_by_person_is_inbound(m):
+    assert m.is_inbound_message({"relatedPeople": [{"sentByPerson": True}]}) is True
+    assert m.is_inbound_message({"relatedPeople": [{"sentByPerson": False}]}) is False
+    assert m.is_inbound_message({"relatedPeople": []}) is False
+
+
+def test_hidden_content_is_detected_and_never_shown_as_the_leads_words(m):
+    now = dt.datetime.now(dt.timezone.utc)
+    hidden = _real_inbound_email(now)
+    assert m.message_content_hidden(hidden) is True
+    assert m.message_content_hidden({"subject": "Re: hi", "body": "yes"}) is False
+    snippet = m.reply_display_snippet(hidden)
+    assert "hidden" in snippet.lower() and "CONTENT HIDDEN" not in snippet
+
+
+def test_fubs_own_unsubscribe_flag_is_an_opt_out_even_with_content_hidden(m):
+    send = dt.datetime(2026, 8, 23, 13, 5, tzinfo=dt.timezone.utc)
+    reply = send + dt.timedelta(minutes=49)
+    email = _real_inbound_email(reply)
+    email["unsubscribed"] = True
+    assert m.classify_reply(email, send, reply, m.RuleEngine._OPT_OUT_KEYWORDS) == "opt_out"
+
+
+def test_hidden_content_limitation_is_pinned(m):
+    """KNOWN LIMIT until the FUB email-sharing setting is flipped: a typed
+    'UNSUBSCRIBE' lives in a hidden body, so the keyword scan cannot fire and
+    the reply classifies human — surfaced to Peter, not auto-trashed. This
+    test exists so that limitation is a documented decision, not a surprise."""
+    send = dt.datetime(2026, 8, 23, 13, 5, tzinfo=dt.timezone.utc)
+    reply = send + dt.timedelta(minutes=49)
+    email = _real_inbound_email(reply)  # body actually said UNSUBSCRIBE
+    assert m.classify_reply(email, send, reply, m.RuleEngine._OPT_OUT_KEYWORDS) == "human"
+    # Timing still classifies a machine even with content hidden.
+    instant = _real_inbound_email(send + dt.timedelta(seconds=2))
+    assert m.classify_reply(instant, send, send + dt.timedelta(seconds=2),
+                            m.RuleEngine._OPT_OUT_KEYWORDS) == "auto_reply"
+
+
+def test_the_real_payload_alerts_end_to_end(m, scan, tmp_db, fake_http):
+    """Stephen's actual shape through the whole 10-minute scan: send 13:05,
+    status='Received' reply 13:54, content hidden — one alert, honest
+    snippet."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[
+            _real_outbound_email(sent_at, email_id=52003, person_id=42),
+            _real_inbound_email(reply_at, email_id=52004, person_id=42),
+        ],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1, "the account's real payload shape must alert"
+    details = json.loads(alerts[0]["details"])
+    assert "hidden" in details["reply_snippet"].lower()
+    assert "CONTENT HIDDEN" not in details["reply_snippet"]
