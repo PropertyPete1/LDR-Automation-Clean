@@ -134,6 +134,10 @@ def test_no_lead_facing_sends_use_owner_email_as_from():
         "_send_speed_to_lead_agent_alert",
         "reassign_to_peter",
         "scan_reply_detection",
+        # The hot-lead alert send, extracted out of scan_reply_detection so
+        # the 10-minute scan and the daily wide sweep share one path. Still
+        # internal: it goes to the owning agent (or Peter), never to a lead.
+        "_handle_human_reply",
         "send_phase2_daily_summary",
     ]
 

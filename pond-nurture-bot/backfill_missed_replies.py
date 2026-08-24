@@ -64,42 +64,19 @@ UTC = dt.timezone.utc
 MAX_PAGES = 60
 
 
-def _msg_dt(message: dict):
-    from fub_automation.main import parse_fub_datetime
-
-    return parse_fub_datetime(
-        message.get("dateCreated") or message.get("created") or message.get("date"))
-
-
 def inbound_in_window(messages: List[dict], window_start: dt.datetime) -> List[Tuple[dt.datetime, dict]]:
-    """Every inbound message at/after window_start, oldest first."""
-    from fub_automation.main import is_inbound_message
+    """Every inbound message after window_start, oldest first. Delegates to
+    main.py so this repair and the live scanners can never drift apart."""
+    from fub_automation.main import inbound_messages_since
 
-    out: List[Tuple[dt.datetime, dict]] = []
-    for msg in messages:
-        if not is_inbound_message(msg):
-            continue
-        when = _msg_dt(msg)
-        if when and when >= window_start:
-            out.append((when, msg))
-    out.sort(key=lambda item: item[0])
-    return out
+    return inbound_messages_since(messages, window_start)
 
 
 def latest_outbound_before(messages: List[dict], when: dt.datetime) -> Optional[dt.datetime]:
-    """Our most recent send before `when` — the anchor the auto-reply timing
-    heuristic measures from. None when the history holds no outbound, in which
-    case timing cannot fire and only the marker/keyword rules apply."""
-    from fub_automation.main import is_inbound_message
+    """The live scanners' anchor helper, re-exported for this script's tests."""
+    from fub_automation.main import latest_outbound_before as _impl
 
-    best: Optional[dt.datetime] = None
-    for msg in messages:
-        if is_inbound_message(msg):
-            continue
-        sent = _msg_dt(msg)
-        if sent and sent < when and (best is None or sent > best):
-            best = sent
-    return best
+    return _impl(messages, when)
 
 
 def classify_window(

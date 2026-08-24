@@ -6406,85 +6406,7 @@ class RuleEngine:
                     continue
 
                 reply_at, reply_found = humans[-1]
-                # REPLY DETECTED — take action
-                reply_body = reply_message_body(reply_found) or "(no body)"
-                reply_snippet = reply_body[:300]
-                reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
-                LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
-                # 1. Tag the lead
-                tags_to_add = ["Replied - Paused"]
-                # If this is a seller lead, also add "Seller-Replied" tag for Monday digest
-                if self.has_any_tag(person, [SELLER_LEAD_TAG]):
-                    tags_to_add.append(SELLER_REPLIED_TAG)
-                    LOGGER.info("Reply detected for SELLER lead %s — adding '%s' tag", person_id, SELLER_REPLIED_TAG)
-                self.fub.update_person(person_id, {"tags": tags_to_add}, merge_tags=True)
-                # 2. Add FUB note
-                note_title = "\U0001f525 Automation: Lead Replied — All Automation Paused"
-                note_body = (
-                    f"This lead replied to an automated email. All automation has been **paused** until an agent reviews.\n\n"
-                    f"\U0001f4e8 Reply channel: {reply_channel}\n"
-                    f"\U0001f4ac Reply snippet: \"{reply_snippet}\"\n\n"
-                    f"\u2705 Action required: Review the reply and either:\n"
-                    f"  \u2022 Continue the conversation manually\n"
-                    f"  \u2022 Remove the \"Replied - Paused\" tag to resume automation\n"
-                    f"  \u2022 Move to Trash if the reply is an opt-out"
-                )
-                self.fub.add_note(person_id, note_title, note_body)
-                # 3. Send alert email to owning agent (or Peter for pond leads)
-                assigned_user_id = person.get("assignedUserId")
-                agent_email = None
-                agent_name = "Agent"
-                if assigned_user_id:
-                    user_info = self.user_cache_by_id().get(int(assigned_user_id))
-                    if user_info:
-                        agent_email = user_info.get("email")
-                        agent_name = user_info.get("name") or "Agent"
-                # For pond leads or if agent email not found, alert Peter
-                if not agent_email or person.get("assignedPondId"):
-                    agent_email = self.rules.owner_email
-                    agent_name = self.rules.peter_name
-                lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
-                alert_subject = f"\U0001f525 HOT LEAD REPLY: {lead_name} responded!"
-                alert_html = (
-                    f"<h2>\U0001f525 Lead Reply Detected</h2>"
-                    f"<p><strong>{lead_name}</strong> replied to an automated email.</p>"
-                    f"<p><strong>Channel:</strong> {reply_channel}</p>"
-                    f"<p><strong>Reply:</strong></p>"
-                    f"<blockquote>{reply_snippet}</blockquote>"
-                    f"<p><strong>Action:</strong> Review the conversation in FUB and respond personally.</p>"
-                    f"<p>All automation for this lead has been paused (tagged \"Replied - Paused\").</p>"
-                    f"<p>To resume automation later, simply remove the tag.</p>"
-                )
-                alert_plain = f"Lead Reply Detected: {lead_name} replied to an automated email.\nChannel: {reply_channel}\nReply: {reply_snippet}\n\nAction: Review the conversation in FUB and respond personally.\nAll automation for this lead has been paused (tagged 'Replied - Paused').\nTo resume automation later, simply remove the tag."
-                try:
-                    self.email.send(
-                        agent_email,
-                        alert_subject,
-                        alert_plain,
-                        from_email=self.rules.owner_email,
-                        cc=[self.rules.owner_email] if agent_email != self.rules.owner_email else [],
-                        html_body=alert_html,
-                    )
-                except Exception as mail_exc:
-                    LOGGER.warning("Reply detection: failed to send alert email for lead %s: %s", person_id, mail_exc)
-                # 4. Log to audit DB. reply_at is the lead's own timestamp, not
-                # the detection time — "hours waiting" in the daily summary is
-                # measured from when they wrote, not from when we noticed.
-                self.db.log("reply_detected", "alert_sent", person_id, {
-                    "reply_channel": reply_channel,
-                    "reply_snippet": reply_snippet[:200],
-                    "reply_at": reply_at.isoformat(),
-                    "agent_email": agent_email,
-                    "agent_name": agent_name,
-                    "contact_name": lead_name,
-                })
-                # 5. Best-Send-Time Logging (Tier 3 Feature 4) — log reply hour/day
-                try:
-                    from zoneinfo import ZoneInfo
-                    local_reply = reply_at.astimezone(ZoneInfo(self.rules.local_timezone))
-                    self.db.log_reply_time(person_id, local_reply.hour, local_reply.weekday())
-                except Exception as rt_exc:
-                    LOGGER.debug("Reply time logging failed for person %s: %s", person_id, rt_exc)
+                self._handle_human_reply(person_id, person, reply_at, reply_found)
                 alerts_sent += 1
             except Exception as exc:
                 LOGGER.exception("Reply detection: error processing lead %s: %s", person_id, exc)
@@ -6499,6 +6421,94 @@ class RuleEngine:
             _hc_ping("reply_detection")
         except Exception as _hc_exc:  # noqa: BLE001 — never break the scan
             LOGGER.warning("healthcheck ping skipped: %s", _hc_exc)
+
+    def _handle_human_reply(
+        self, person_id: int, person: dict, reply_at: dt.datetime, reply_found: dict
+    ) -> None:
+        """A real person answered: tag, note, hot-lead alert, audit row.
+
+        Shared by the 10-minute scan and the daily wide sweep so the two can
+        never drift apart on what a detected reply does.
+        """
+        # REPLY DETECTED — take action
+        reply_body = reply_message_body(reply_found) or "(no body)"
+        reply_snippet = reply_body[:300]
+        reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
+        LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
+        # 1. Tag the lead
+        tags_to_add = ["Replied - Paused"]
+        # If this is a seller lead, also add "Seller-Replied" tag for Monday digest
+        if self.has_any_tag(person, [SELLER_LEAD_TAG]):
+            tags_to_add.append(SELLER_REPLIED_TAG)
+            LOGGER.info("Reply detected for SELLER lead %s — adding '%s' tag", person_id, SELLER_REPLIED_TAG)
+        self.fub.update_person(person_id, {"tags": tags_to_add}, merge_tags=True)
+        # 2. Add FUB note
+        note_title = "\U0001f525 Automation: Lead Replied — All Automation Paused"
+        note_body = (
+            f"This lead replied to an automated email. All automation has been **paused** until an agent reviews.\n\n"
+            f"\U0001f4e8 Reply channel: {reply_channel}\n"
+            f"\U0001f4ac Reply snippet: \"{reply_snippet}\"\n\n"
+            f"\u2705 Action required: Review the reply and either:\n"
+            f"  \u2022 Continue the conversation manually\n"
+            f"  \u2022 Remove the \"Replied - Paused\" tag to resume automation\n"
+            f"  \u2022 Move to Trash if the reply is an opt-out"
+        )
+        self.fub.add_note(person_id, note_title, note_body)
+        # 3. Send alert email to owning agent (or Peter for pond leads)
+        assigned_user_id = person.get("assignedUserId")
+        agent_email = None
+        agent_name = "Agent"
+        if assigned_user_id:
+            user_info = self.user_cache_by_id().get(int(assigned_user_id))
+            if user_info:
+                agent_email = user_info.get("email")
+                agent_name = user_info.get("name") or "Agent"
+        # For pond leads or if agent email not found, alert Peter
+        if not agent_email or person.get("assignedPondId"):
+            agent_email = self.rules.owner_email
+            agent_name = self.rules.peter_name
+        lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
+        alert_subject = f"\U0001f525 HOT LEAD REPLY: {lead_name} responded!"
+        alert_html = (
+            f"<h2>\U0001f525 Lead Reply Detected</h2>"
+            f"<p><strong>{lead_name}</strong> replied to an automated email.</p>"
+            f"<p><strong>Channel:</strong> {reply_channel}</p>"
+            f"<p><strong>Reply:</strong></p>"
+            f"<blockquote>{reply_snippet}</blockquote>"
+            f"<p><strong>Action:</strong> Review the conversation in FUB and respond personally.</p>"
+            f"<p>All automation for this lead has been paused (tagged \"Replied - Paused\").</p>"
+            f"<p>To resume automation later, simply remove the tag.</p>"
+        )
+        alert_plain = f"Lead Reply Detected: {lead_name} replied to an automated email.\nChannel: {reply_channel}\nReply: {reply_snippet}\n\nAction: Review the conversation in FUB and respond personally.\nAll automation for this lead has been paused (tagged 'Replied - Paused').\nTo resume automation later, simply remove the tag."
+        try:
+            self.email.send(
+                agent_email,
+                alert_subject,
+                alert_plain,
+                from_email=self.rules.owner_email,
+                cc=[self.rules.owner_email] if agent_email != self.rules.owner_email else [],
+                html_body=alert_html,
+            )
+        except Exception as mail_exc:
+            LOGGER.warning("Reply detection: failed to send alert email for lead %s: %s", person_id, mail_exc)
+        # 4. Log to audit DB. reply_at is the lead's own timestamp, not
+        # the detection time — "hours waiting" in the daily summary is
+        # measured from when they wrote, not from when we noticed.
+        self.db.log("reply_detected", "alert_sent", person_id, {
+            "reply_channel": reply_channel,
+            "reply_snippet": reply_snippet[:200],
+            "reply_at": reply_at.isoformat(),
+            "agent_email": agent_email,
+            "agent_name": agent_name,
+            "contact_name": lead_name,
+        })
+        # 5. Best-Send-Time Logging (Tier 3 Feature 4) — log reply hour/day
+        try:
+            from zoneinfo import ZoneInfo
+            local_reply = reply_at.astimezone(ZoneInfo(self.rules.local_timezone))
+            self.db.log_reply_time(person_id, local_reply.hour, local_reply.weekday())
+        except Exception as rt_exc:
+            LOGGER.debug("Reply time logging failed for person %s: %s", person_id, rt_exc)
 
     def _trash_opt_out_reply(
         self, person_id: int, person: dict, reply_at: dt.datetime, message: dict
@@ -6549,6 +6559,150 @@ class RuleEngine:
             "person_name": person_name_str,
             "dry_run": self.settings.dry_run,
         })
+
+    #: How far back the daily wide sweep looks. Two days overlaps consecutive
+    #: daily runs, so a reply can never fall between them.
+    WIDE_SWEEP_DAYS = 2
+
+    #: Pages of 100 in the -updated walk. 15 (1,500 leads) is several times the
+    #: busiest observed day; a runaway walk must not eat the API.
+    WIDE_SWEEP_MAX_PAGES = 15
+
+    def scan_wide_reply_sweep(self, days: int = WIDE_SWEEP_DAYS) -> None:
+        """Replies to OLD threads — the miss class the 10-minute scan cannot see.
+
+        That scan only watches leads we emailed in the last 7 days, so a lead
+        answering a month-old thread (Joe Muñoz, 2026-08-22, answering a July 4
+        email) was invisible to it, and stayed invisible however many scans
+        ran. Once a day this walks every person FUB says was updated inside
+        the window — ANY inbound message bumps `updated`, so every possible
+        responder is in the walk — and runs fresh inbound through the same
+        classifier with the same actions and the same dedup rows. The watch
+        surface becomes every lead in FUB, not last week's mailing list.
+        """
+        LOGGER.info("Wide reply sweep starting (leads updated in last %s days)...", days)
+        now = dt.datetime.now(UTC)
+        window_start = now - dt.timedelta(days=days)
+        lookback = now - dt.timedelta(days=14)
+
+        already_alerted = {
+            int(r["person_id"]) for r in self.db.recent_audit_rows(["reply_detected"], lookback)
+            if r.get("person_id") and r.get("status") in ("alert_sent", "backfilled")
+        }
+        already_disqualified = {
+            int(r["person_id"]) for r in self.db.recent_audit_rows(
+                ["reply_intent_disqualification", "pond_opt_out_trash"], lookback)
+            if r.get("person_id")
+        }
+        auto_logged: Dict[int, set] = {}
+        for r in self.db.recent_audit_rows(["auto_reply_detected"], lookback):
+            pid = r.get("person_id")
+            if not pid:
+                continue
+            try:
+                logged_at = json.loads(r.get("details") or "{}").get("reply_at")
+            except Exception:  # noqa: BLE001
+                logged_at = None
+            if logged_at:
+                auto_logged.setdefault(int(pid), set()).add(logged_at)
+
+        alerts_sent = 0
+        cap = 20
+        walked = detailed = 0
+        params: Dict[str, Any] = {"sort": "-updated", "limit": 100}
+        pages = 0
+        stop = False
+        while pages < self.WIDE_SWEEP_MAX_PAGES and not stop:
+            data = self.fub._request("GET", "/people", params=dict(params))
+            people = data.get("people", data.get("data", []))
+            if not people:
+                break
+            for person_stub in people:
+                updated = parse_fub_datetime(person_stub.get("updated"))
+                if updated and updated < window_start:
+                    stop = True
+                    break
+                walked += 1
+                person_id = int(person_stub["id"])
+                if person_id in already_alerted or person_id in already_disqualified:
+                    continue
+                if self.is_excluded(person_stub):
+                    continue
+                if alerts_sent >= cap:
+                    LOGGER.info("Wide reply sweep: alert cap (%s) reached. Stopping.", cap)
+                    stop = True
+                    break
+                try:
+                    # The list payload has no lastReceivedEmail/Text — only the
+                    # individual endpoint carries the inbound clocks.
+                    person = self.fub.get_person(person_id)
+                    if not person:
+                        continue
+                    detailed += 1
+                    has_fresh_inbound = False
+                    for key in ("lastReceivedEmail", "lastReceivedText"):
+                        parsed = parse_fub_datetime(person.get(key))
+                        if parsed and parsed > window_start:
+                            has_fresh_inbound = True
+                            break
+                    if not has_fresh_inbound:
+                        continue
+                    if self.has_any_tag(person, ["Replied - Paused"]):
+                        continue
+                    if self.is_excluded(person):
+                        continue
+
+                    messages = [
+                        *self.fub.get_emails(person_id, limit=10),
+                        *self.fub.get_text_messages(person_id, limit=10),
+                    ]
+                    classified = []
+                    for when, msg in inbound_messages_since(messages, window_start):
+                        anchor = latest_outbound_before(messages, when)
+                        # No outbound in the fetched history (an old thread):
+                        # anchor far in the past so the timing heuristic cannot
+                        # fire; keywords and markers still can.
+                        send_dt = anchor or (when - dt.timedelta(days=3650))
+                        classified.append(
+                            (when, msg, classify_reply(msg, send_dt, when, self._OPT_OUT_KEYWORDS)))
+                    if not classified:
+                        continue
+                    opt_outs = [(w, m) for w, m, kind in classified if kind == "opt_out"]
+                    humans = [(w, m) for w, m, kind in classified if kind == "human"]
+                    autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
+
+                    if opt_outs:
+                        self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
+                        continue
+                    if humans:
+                        reply_at, reply_found = humans[-1]
+                        self._handle_human_reply(person_id, person, reply_at, reply_found)
+                        alerts_sent += 1
+                        continue
+                    auto_at, auto_msg = autos[-1]
+                    if auto_at.isoformat() not in auto_logged.get(person_id, set()):
+                        auto_anchor = latest_outbound_before(messages, auto_at)
+                        self.db.log("auto_reply_detected", "classified", person_id, {
+                            "reply_at": auto_at.isoformat(),
+                            "reply_snippet": reply_message_body(auto_msg)[:200],
+                            "seconds_after_send": (
+                                round((auto_at - auto_anchor).total_seconds(), 1)
+                                if auto_anchor else None),
+                            "contact_name": (f"{person.get('firstName', '')} "
+                                             f"{person.get('lastName', '')}").strip(),
+                        })
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.exception("Wide reply sweep: error processing lead %s: %s",
+                                     person_id, exc)
+                    self.db.log("reply_detected", "error", person_id, {"error": str(exc)})
+            pages += 1
+            next_cursor = data.get("_metadata", {}).get("next")
+            if not next_cursor:
+                break
+            params["next"] = next_cursor
+        LOGGER.info(
+            "Wide reply sweep complete. Walked %s recently-updated leads "
+            "(%s detail fetches), alerts sent: %s", walked, detailed, alerts_sent)
 
 
 class WebhookPayload(BaseModel):
@@ -6766,6 +6920,41 @@ def format_hours_waiting(hours: float) -> str:
     if hours < 48:
         return f"{hours:.0f}h"
     return f"{int(hours // 24)}d {int(hours % 24)}h"
+
+
+def message_timestamp(message: dict) -> Optional[dt.datetime]:
+    """When a FUB email or text happened, whichever field carries it."""
+    return parse_fub_datetime(
+        message.get("dateCreated") or message.get("created") or message.get("date"))
+
+
+def inbound_messages_since(
+    messages: List[dict], since: dt.datetime
+) -> List[Tuple[dt.datetime, dict]]:
+    """Every inbound message strictly after `since`, oldest first."""
+    out: List[Tuple[dt.datetime, dict]] = []
+    for msg in messages:
+        if not is_inbound_message(msg):
+            continue
+        when = message_timestamp(msg)
+        if when and when > since:
+            out.append((when, msg))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def latest_outbound_before(messages: List[dict], when: dt.datetime) -> Optional[dt.datetime]:
+    """Our most recent send before `when` — what the auto-reply timing
+    heuristic measures from. None when the history holds no outbound, in which
+    case timing cannot fire and only the marker/keyword rules apply."""
+    best: Optional[dt.datetime] = None
+    for msg in messages:
+        if is_inbound_message(msg):
+            continue
+        sent = message_timestamp(msg)
+        if sent and sent < when and (best is None or sent > best):
+            best = sent
+    return best
 
 
 def parse_fub_datetime(value: Any) -> Optional[dt.datetime]:

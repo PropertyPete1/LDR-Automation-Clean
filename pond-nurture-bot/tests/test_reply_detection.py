@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from pathlib import Path
 
 import pytest
 
@@ -453,3 +454,128 @@ def test_an_opted_out_lead_is_not_rescanned(m, scan, tmp_db, fake_http):
     scan.scan_reply_detection()
 
     assert fake_http.calls == [], "a disqualified lead must not cost API calls"
+
+
+# ── the daily wide sweep: replies to OLD threads ─────────────────────────────
+#
+# The 10-minute scan only watches leads emailed in the last 7 days. Joe Muñoz
+# answered a July 4 thread on August 22 — seven weeks after his last send —
+# and was structurally invisible to it. The wide sweep walks every lead FUB
+# says was updated in the window instead, so thread age no longer matters.
+
+def _sweep_responses(*, person_stub, person_detail, emails, texts):
+    """Canned responses in the order scan_wide_reply_sweep asks: the -updated
+    people page, then get_person, then emails, then texts."""
+    return [
+        (200, {"people": [person_stub]}),
+        (200, {"people": [person_detail]}),
+        (200, {"emails": emails}),
+        (200, {"textMessages": texts}),
+    ]
+
+
+def test_the_sweep_catches_a_reply_to_a_seven_week_old_thread(m, scan, tmp_db, fake_http):
+    """The Joe Muñoz case end to end: no audit send row anywhere near the
+    reply, outbound seven weeks back, reply now — alert + tag anyway."""
+    now = dt.datetime.now(dt.timezone.utc)
+    old_send = now - dt.timedelta(days=49)
+    reply_at = now - dt.timedelta(hours=10)
+    fake_http.responses = _sweep_responses(
+        person_stub={"id": 42, "updated": reply_at.isoformat()},
+        person_detail={"id": 42, "firstName": "Joe", "lastName": "Muñoz", "tags": [],
+                       "lastReceivedEmail": reply_at.isoformat()},
+        emails=[
+            {"id": 1, "personId": 42, "isIncoming": False,
+             "subject": "Your home search", "body": "checking in",
+             "created": old_send.isoformat()},
+            {"id": 2, "personId": 42, "isIncoming": True,
+             "subject": "Re: Your home search",
+             "body": "Hey — yes, actually. Is the Elm house still available?",
+             "created": reply_at.isoformat()},
+        ],
+        texts=[],
+    )
+
+    scan.scan_wide_reply_sweep()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1, "a reply to an old thread must alert"
+    details = json.loads(alerts[0]["details"])
+    assert "Elm" in details["reply_snippet"]
+    assert details["contact_name"] == "Joe Muñoz"
+
+
+def test_the_sweep_does_not_mistake_an_old_thread_reply_for_an_auto_reply(m, scan, tmp_db, fake_http):
+    """With no outbound in the fetched history at all, the timing heuristic
+    has no anchor and must not fire on an arbitrary epoch."""
+    now = dt.datetime.now(dt.timezone.utc)
+    reply_at = now - dt.timedelta(hours=5)
+    fake_http.responses = _sweep_responses(
+        person_stub={"id": 42, "updated": reply_at.isoformat()},
+        person_detail={"id": 42, "firstName": "Joe", "lastName": "Muñoz", "tags": [],
+                       "lastReceivedEmail": reply_at.isoformat()},
+        emails=[{"id": 2, "personId": 42, "isIncoming": True,
+                 "subject": "Re: hello", "body": "still interested",
+                 "created": reply_at.isoformat()}],
+        texts=[],
+    )
+
+    scan.scan_wide_reply_sweep()
+
+    assert len(_alerts(tmp_db)) == 1
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    assert tmp_db.recent_audit_rows(["auto_reply_detected"], since) == []
+
+
+def test_the_sweep_trashes_an_unsubscribe_on_an_old_thread(m, scan, tmp_db, fake_http, monkeypatch):
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person",
+                        lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    now = dt.datetime.now(dt.timezone.utc)
+    reply_at = now - dt.timedelta(hours=3)
+    fake_http.responses = _sweep_responses(
+        person_stub={"id": 43, "updated": reply_at.isoformat()},
+        person_detail={"id": 43, "firstName": "Stephen", "lastName": "Herrera", "tags": [],
+                       "lastReceivedEmail": reply_at.isoformat()},
+        emails=[{"id": 9, "personId": 43, "isIncoming": True,
+                 "subject": "Re: pond email", "body": "UNSUBSCRIBE",
+                 "created": reply_at.isoformat()}],
+        texts=[],
+    )
+
+    scan.scan_wide_reply_sweep()
+
+    assert _alerts(tmp_db) == []
+    assert "Trash" in [p.get("stage") for _, p in updates]
+    since = now - dt.timedelta(days=1)
+    disq = tmp_db.recent_audit_rows(["reply_intent_disqualification"], since)
+    assert len(disq) == 1 and disq[0]["status"] == "opt_out_trashed"
+
+
+def test_the_sweep_skips_already_alerted_leads_without_api_cost(m, scan, tmp_db, fake_http):
+    now = dt.datetime.now(dt.timezone.utc)
+    tmp_db.log("reply_detected", "alert_sent", 42, {"reply_channel": "email"})
+    fake_http.responses = [
+        (200, {"people": [{"id": 42, "updated": now.isoformat()}]}),
+    ]
+
+    scan.scan_wide_reply_sweep()
+
+    assert len(fake_http.calls) == 1, "only the people page — no detail fetch for a handled lead"
+    assert len(_alerts(tmp_db)) == 1, "no duplicate"
+
+
+def test_the_sweep_stops_at_the_window_edge(m, scan, tmp_db, fake_http):
+    now = dt.datetime.now(dt.timezone.utc)
+    stale = {"id": 7, "updated": (now - dt.timedelta(days=30)).isoformat()}
+    fake_http.responses = [(200, {"people": [stale]})]
+
+    scan.scan_wide_reply_sweep()
+
+    assert len(fake_http.calls) == 1, "a stale first lead ends the walk immediately"
+
+
+def test_the_daily_runner_invokes_the_wide_sweep():
+    """Wiring guard: the sweep only exists if the daily run actually calls it."""
+    source = (Path(__file__).resolve().parents[1] / "run_approved_daily_automation.py").read_text()
+    assert "scan_wide_reply_sweep()" in source

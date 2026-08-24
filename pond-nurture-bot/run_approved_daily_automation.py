@@ -255,6 +255,11 @@ def run_automation() -> int:
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
     engine.scan_closed_drip()  # Phase 3: quarterly check-in emails for Closed/Past Client/Sphere leads
     engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
+    # Replies to OLD threads. The scan above only watches leads emailed in the
+    # last 7 days; this walks every lead FUB says was updated in the last 2
+    # days — any inbound bumps `updated` — so a reply to a month-old thread
+    # (Joe Muñoz, 2026-08-22) is caught within a day instead of never.
+    engine.scan_wide_reply_sweep()
     engine.send_phase2_daily_summary()
     
     # Auto-refresh the dashboard data. refresh_dashboard.sh now lives in this
