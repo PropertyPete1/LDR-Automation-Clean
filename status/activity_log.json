@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-08-24T20:20:57Z",
+    "type": "needs_reply",
+    "contact_name": "Stephen Herrera",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-08-24T13:38:41Z",
     "type": "sent",
     "contact_name": "Roberto Pierre",
@@ -591,12 +597,6 @@
     "ts": "2026-08-24T13:20:48Z",
     "type": "sent",
     "contact_name": "Sumana Kar",
-    "detail": "pond nurture email — Austin"
-  },
-  {
-    "ts": "2026-08-24T13:20:39Z",
-    "type": "sent",
-    "contact_name": "Alejandra Quijano",
     "detail": "pond nurture email — Austin"
   }
 ]
