@@ -6593,17 +6593,38 @@ class RuleEngine:
     #: busiest observed day; a runaway walk must not eat the API.
     WIDE_SWEEP_MAX_PAGES = 15
 
+    #: The audit actions whose sends put a lead on a reply-watch surface —
+    #: the same list scan_reply_detection builds its 7-day watch from.
+    SWEEP_SEND_ACTIONS = ("pond_nurture", "agent_bot_email", "closed_congrats",
+                          "closed_drip", "long_term_nurture_drip",
+                          "instant_welcome_email", "seller_nurture")
+    SWEEP_SEND_STATUSES = ("sent", "email_sent", "completed")
+
+    #: The old-thread rotation: every lead emailed 7–60 days ago is re-read at
+    #: least once per this many days (person_id modulus picks today's slice),
+    #: bounding the daily cost to ~a tenth of that population.
+    WIDE_SWEEP_ROTATION_DAYS = 10
+    WIDE_SWEEP_SEND_LOOKBACK_DAYS = 60
+
     def scan_wide_reply_sweep(self, days: int = WIDE_SWEEP_DAYS) -> None:
         """Replies to OLD threads — the miss class the 10-minute scan cannot see.
 
         That scan only watches leads we emailed in the last 7 days, so a lead
         answering a month-old thread (Joe Muñoz, 2026-08-22, answering a July 4
         email) was invisible to it, and stayed invisible however many scans
-        ran. Once a day this walks every person FUB says was updated inside
-        the window — ANY inbound message bumps `updated`, so every possible
-        responder is in the walk — and runs fresh inbound through the same
-        classifier with the same actions and the same dedup rows. The watch
-        surface becomes every lead in FUB, not last week's mailing list.
+        ran. Once a day this checks two surfaces with the same classifier, the
+        same actions and the same dedup rows as the 10-minute scan:
+
+        1. Every person FUB says was updated in the last `days` days. CHEAP
+           but narrow: the first backfill dry run (2026-08-24, run
+           32757820303) proved FUB does NOT bump `updated` for synced email —
+           65 records in a fortnight that provably contained four replies —
+           so this only catches activity that also touched the record.
+        2. The audit-log rotation: every lead WE emailed 7–60 days ago (our
+           own send record, which cannot lie), one deterministic tenth per
+           day, message histories read directly. This is the surface that
+           actually finds a reply to an old thread — within at most
+           WIDE_SWEEP_ROTATION_DAYS of it arriving.
         """
         LOGGER.info("Wide reply sweep starting (leads updated in last %s days)...", days)
         now = dt.datetime.now(UTC)
@@ -6677,45 +6698,9 @@ class RuleEngine:
                     if self.is_excluded(person):
                         continue
 
-                    messages = [
-                        *self.fub.get_emails(person_id, limit=10),
-                        *self.fub.get_text_messages(person_id, limit=10),
-                    ]
-                    classified = []
-                    for when, msg in inbound_messages_since(messages, window_start):
-                        anchor = latest_outbound_before(messages, when)
-                        # No outbound in the fetched history (an old thread):
-                        # anchor far in the past so the timing heuristic cannot
-                        # fire; keywords and markers still can.
-                        send_dt = anchor or (when - dt.timedelta(days=3650))
-                        classified.append(
-                            (when, msg, classify_reply(msg, send_dt, when, self._OPT_OUT_KEYWORDS)))
-                    if not classified:
-                        continue
-                    opt_outs = [(w, m) for w, m, kind in classified if kind == "opt_out"]
-                    humans = [(w, m) for w, m, kind in classified if kind == "human"]
-                    autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
-
-                    if opt_outs:
-                        self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
-                        continue
-                    if humans:
-                        reply_at, reply_found = humans[-1]
-                        self._handle_human_reply(person_id, person, reply_at, reply_found)
+                    if self._sweep_classify_and_act(
+                            person_id, window_start, auto_logged, person=person) == "alerted":
                         alerts_sent += 1
-                        continue
-                    auto_at, auto_msg = autos[-1]
-                    if auto_at.isoformat() not in auto_logged.get(person_id, set()):
-                        auto_anchor = latest_outbound_before(messages, auto_at)
-                        self.db.log("auto_reply_detected", "classified", person_id, {
-                            "reply_at": auto_at.isoformat(),
-                            "reply_snippet": reply_message_body(auto_msg)[:200],
-                            "seconds_after_send": (
-                                round((auto_at - auto_anchor).total_seconds(), 1)
-                                if auto_anchor else None),
-                            "contact_name": (f"{person.get('firstName', '')} "
-                                             f"{person.get('lastName', '')}").strip(),
-                        })
                 except Exception as exc:  # noqa: BLE001
                     LOGGER.exception("Wide reply sweep: error processing lead %s: %s",
                                      person_id, exc)
@@ -6725,9 +6710,117 @@ class RuleEngine:
             if not next_cursor:
                 break
             params["next"] = next_cursor
+
+        # ── Surface 2: the audit-log rotation over old threads ───────────────
+        # Everyone we emailed inside the lookback but outside the 10-minute
+        # scan's 7-day watch, sliced deterministically by person_id so each
+        # lead is re-read at least every WIDE_SWEEP_ROTATION_DAYS. Message
+        # histories are read directly; nothing here trusts a FUB clock.
+        rotation_checked = 0
+        recent_cutoff = now - dt.timedelta(days=7)
+        latest_send: Dict[int, dt.datetime] = {}
+        for row in self.db.recent_audit_rows(
+                list(self.SWEEP_SEND_ACTIONS),
+                now - dt.timedelta(days=self.WIDE_SWEEP_SEND_LOOKBACK_DAYS)):
+            if row.get("status") not in self.SWEEP_SEND_STATUSES:
+                continue
+            pid = row.get("person_id")
+            sent_ts = parse_fub_datetime(row.get("created_at"))
+            if not pid or not sent_ts:
+                continue
+            pid = int(pid)
+            if pid not in latest_send or sent_ts > latest_send[pid]:
+                latest_send[pid] = sent_ts
+        slot = now.timetuple().tm_yday % self.WIDE_SWEEP_ROTATION_DAYS
+        for person_id in sorted(latest_send):
+            sent_at = latest_send[person_id]
+            if sent_at > recent_cutoff:
+                continue  # the 10-minute scan owns the last 7 days
+            if person_id % self.WIDE_SWEEP_ROTATION_DAYS != slot:
+                continue
+            if person_id in already_alerted or person_id in already_disqualified:
+                continue
+            if alerts_sent >= cap:
+                LOGGER.info("Wide reply sweep: alert cap (%s) reached in rotation. "
+                            "Stopping.", cap)
+                break
+            rotation_checked += 1
+            try:
+                # Inbound floor is the lead's own last send: a reply to it is a
+                # reply, however long ago that send was.
+                if self._sweep_classify_and_act(person_id, sent_at, auto_logged) == "alerted":
+                    alerts_sent += 1
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Wide reply sweep: error processing lead %s: %s",
+                                 person_id, exc)
+                self.db.log("reply_detected", "error", person_id, {"error": str(exc)})
+
         LOGGER.info(
             "Wide reply sweep complete. Walked %s recently-updated leads "
-            "(%s detail fetches), alerts sent: %s", walked, detailed, alerts_sent)
+            "(%s detail fetches), rotation checked %s old-thread leads, "
+            "alerts sent: %s", walked, detailed, rotation_checked, alerts_sent)
+
+    def _sweep_classify_and_act(
+        self,
+        person_id: int,
+        inbound_floor: dt.datetime,
+        auto_logged: Dict[int, set],
+        person: Optional[dict] = None,
+    ) -> str:
+        """Read one lead's messages, classify inbound after `inbound_floor`,
+        act. Returns 'alerted' | 'opt_out' | 'auto' | 'none'.
+
+        When `person` is None (the rotation path) the messages are fetched
+        FIRST and the person record only when inbound is actually found —
+        most rotation leads have nothing and cost exactly two calls.
+        """
+        messages = [
+            *self.fub.get_emails(person_id, limit=10),
+            *self.fub.get_text_messages(person_id, limit=10),
+        ]
+        classified = []
+        for when, msg in inbound_messages_since(messages, inbound_floor):
+            anchor = latest_outbound_before(messages, when)
+            # No outbound in the fetched history (an old thread): anchor far
+            # in the past so the timing heuristic cannot fire; keywords and
+            # markers still can.
+            send_dt = anchor or (when - dt.timedelta(days=3650))
+            classified.append(
+                (when, msg, classify_reply(msg, send_dt, when, self._OPT_OUT_KEYWORDS)))
+        if not classified:
+            return "none"
+
+        if person is None:
+            person = self.fub.get_person(person_id)
+            if not person:
+                return "none"
+            if self.has_any_tag(person, ["Replied - Paused"]) or self.is_excluded(person):
+                return "none"
+
+        opt_outs = [(w, m) for w, m, kind in classified if kind == "opt_out"]
+        humans = [(w, m) for w, m, kind in classified if kind == "human"]
+        autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
+
+        if opt_outs:
+            self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
+            return "opt_out"
+        if humans:
+            reply_at, reply_found = humans[-1]
+            self._handle_human_reply(person_id, person, reply_at, reply_found)
+            return "alerted"
+        auto_at, auto_msg = autos[-1]
+        if auto_at.isoformat() not in auto_logged.get(person_id, set()):
+            auto_anchor = latest_outbound_before(messages, auto_at)
+            self.db.log("auto_reply_detected", "classified", person_id, {
+                "reply_at": auto_at.isoformat(),
+                "reply_snippet": reply_message_body(auto_msg)[:200],
+                "seconds_after_send": (
+                    round((auto_at - auto_anchor).total_seconds(), 1)
+                    if auto_anchor else None),
+                "contact_name": (f"{person.get('firstName', '')} "
+                                 f"{person.get('lastName', '')}").strip(),
+            })
+        return "auto"
 
 
 class WebhookPayload(BaseModel):

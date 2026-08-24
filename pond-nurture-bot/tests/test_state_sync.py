@@ -54,7 +54,9 @@ SHARED_DB_WORKFLOWS = {
     "nightly-health.yml": {"timeout": 20, "cron": "0 9 * * *"},
     "weekly-digest.yml": {"timeout": 10, "cron": "0 13 * * 1"},
     "backfill-reengagement.yml": {"timeout": 30, "cron": None},
-    "reply-backfill.yml": {"timeout": 60, "cron": None},
+    # 90 rather than 60: the 2026-08-24 dry run spent 43 minutes in the state
+    # DB pull alone before the script even started.
+    "reply-backfill.yml": {"timeout": 90, "cron": None},
     "ramp-repair.yml": {"timeout": 15, "cron": None},
 }
 

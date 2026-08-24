@@ -191,30 +191,72 @@ def test_a_lead_already_paused_by_the_live_scanner_is_skipped(wired, tmp_db):
     assert bmr.process_person(wired, tmp_db, person, WINDOW_START, commit=True) is None
 
 
-# ── the candidate walk ───────────────────────────────────────────────────────
+# ── candidate discovery ──────────────────────────────────────────────────────
+#
+# From audit_log, NOT from FUB's -updated ordering: the first dry run
+# (2026-08-24, run 32757820303) proved that surface blind — FUB reported 65
+# records "updated" in a fortnight that provably contained four replies,
+# because synced email (inbound or outbound) never touches `updated`.
 
-class _PagingFub:
-    """Stands in for FollowUpBossClient._request over /people."""
-
-    def __init__(self, pages):
-        self.pages = pages
-        self.requests = []
-
-    def _request(self, method, path, params=None):
-        self.requests.append(dict(params or {}))
-        index = len(self.requests) - 1
-        people = self.pages[index] if index < len(self.pages) else []
-        meta = {"next": f"cur{index + 1}"} if index + 1 < len(self.pages) else {}
-        return {"people": people, "_metadata": meta}
+def _seed_audit_send(db, person_id, when, action="pond_nurture", status="sent"):
+    db.log(action, status, person_id, {})
+    with db.connect() as con:
+        con.execute(
+            "UPDATE audit_log SET created_at=? WHERE person_id=? AND action=? "
+            "AND created_at != ?",
+            (when.isoformat(), person_id, action, when.isoformat()),
+        )
 
 
-def test_the_walk_stops_at_the_window_edge():
-    inside = {"id": 1, "updated": (NOW - dt.timedelta(days=2)).isoformat()}
-    edge = {"id": 2, "updated": (NOW - dt.timedelta(days=13)).isoformat()}
-    outside = {"id": 3, "updated": (NOW - dt.timedelta(days=40)).isoformat()}
-    fub = _PagingFub([[inside], [edge, outside], [{"id": 4}]])
+def test_candidates_are_everyone_the_bot_emailed_in_the_lookback(tmp_db):
+    _seed_audit_send(tmp_db, 42, NOW - dt.timedelta(days=51))   # Joe: July send, inside 60
+    _seed_audit_send(tmp_db, 43, NOW - dt.timedelta(days=1))    # Stephen: yesterday
+    _seed_audit_send(tmp_db, 44, NOW - dt.timedelta(days=70))   # outside the lookback
+    tmp_db.log("pond_nurture", "skipped", 45, {})               # never actually emailed
 
-    walked = list(bmr.iter_recently_updated_people(fub, WINDOW_START))
+    candidates = bmr.candidates_from_audit(tmp_db, 60)
 
-    assert [p["id"] for p in walked] == [1, 2], "the walk must stop at the first stale lead"
-    assert len(fub.requests) == 2, "no page beyond the window may be fetched"
+    assert set(candidates) == {42, 43}
+    assert candidates[0] == 43, "freshest send first — the likeliest replier leads"
+
+
+def test_a_lead_with_several_sends_is_one_candidate(tmp_db):
+    _seed_audit_send(tmp_db, 42, NOW - dt.timedelta(days=20))
+    _seed_audit_send(tmp_db, 42, NOW - dt.timedelta(days=6), action="seller_nurture")
+
+    assert bmr.candidates_from_audit(tmp_db, 60) == [42]
+
+
+def test_run_backfill_reads_messages_before_any_person_fetch(wired, tmp_db, monkeypatch):
+    """The cost model the 60-minute timeout rests on: a candidate with no
+    fresh inbound costs the two message calls and nothing else."""
+    _seed_audit_send(tmp_db, 42, NOW - dt.timedelta(days=5))
+    wired._calls["emails"] = [
+        _email(NOW - dt.timedelta(days=5), inbound=False, body="pond email"),
+    ]
+    person_fetches = []
+    monkeypatch.setattr(wired.fub, "get_person",
+                        lambda pid: person_fetches.append(pid) or _person(pid))
+
+    results = bmr.run_backfill(wired, tmp_db, days=14, commit=False)
+
+    assert results == []
+    assert person_fetches == [], "no inbound → no person fetch"
+
+
+def test_run_backfill_end_to_end_finds_the_old_thread_reply(wired, tmp_db, monkeypatch):
+    """Joe end to end: send 51 days ago, reply 2 days ago — discovered from
+    the audit row, classified from the messages, no FUB clock consulted."""
+    _seed_audit_send(tmp_db, 42, NOW - dt.timedelta(days=51))
+    wired._calls["emails"] = [
+        _email(NOW - dt.timedelta(days=51), inbound=False, body="checking in"),
+        _email(NOW - dt.timedelta(days=2), inbound=True,
+               body="Yes — is the Elm house still available?"),
+    ]
+    monkeypatch.setattr(wired.fub, "get_person", lambda pid: _person(pid))
+
+    results = bmr.run_backfill(wired, tmp_db, days=14, commit=True)
+
+    assert [r["kind"] for r in results] == ["human"]
+    rows = tmp_db.recent_audit_rows(["reply_detected"], WINDOW_START - dt.timedelta(days=1))
+    assert len(rows) == 1 and rows[0]["status"] == "backfilled"

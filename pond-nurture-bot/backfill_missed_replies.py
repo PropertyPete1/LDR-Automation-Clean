@@ -13,9 +13,11 @@ autoresponders (2026-08-23) that sat unclassified.
 
 WHAT THIS DOES
 
-Walks every FUB person updated inside the window (any inbound message bumps
-`updated`), pulls their message history, and classifies each inbound message
-after our latest send with the SAME classifier the live scanner now uses
+Takes every lead the bot emailed in the last --send-lookback days (from
+audit_log — OUR authoritative record; the first dry run proved FUB's `updated`
+field blind to synced email, so no FUB ordering is trusted for discovery),
+reads each lead's message history directly, and classifies each inbound
+message in the window with the SAME classifier the live scanner now uses
 (classify_reply in main.py):
 
   opt_out — trash + unsubscribed/opt-out-auto-trash tags + FUB note, one
@@ -53,15 +55,17 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 UTC = dt.timezone.utc
 
-#: Hard stop on the -updated walk: 60 pages of 100 is far past every lead the
-#: pond can update in a fortnight, and a runaway loop must not eat the API.
-MAX_PAGES = 60
+#: The audit actions/statuses that mean a real email left the building —
+#: matching scan_reply_detection's watch-list build in main.py.
+SEND_ACTIONS = ("pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
+                "long_term_nurture_drip", "instant_welcome_email", "seller_nurture")
+SEND_STATUSES = ("sent", "email_sent", "completed")
 
 
 def inbound_in_window(messages: List[dict], window_start: dt.datetime) -> List[Tuple[dt.datetime, dict]]:
@@ -139,45 +143,39 @@ def log_backdated(db, action: str, status: str, person_id: int, details: dict,
         )
 
 
-def iter_recently_updated_people(fub, window_start: dt.datetime) -> Iterator[dict]:
-    """Every FUB person whose `updated` falls inside the window, via the same
-    cursor pagination the client uses, newest first. Any inbound message bumps
-    `updated`, so every possible responder is in this walk."""
-    from fub_automation.main import parse_fub_datetime
+def candidates_from_audit(db, send_lookback_days: int) -> List[int]:
+    """Every lead the bot emailed inside the lookback, most recent send first.
 
-    params: Dict[str, object] = {"sort": "-updated", "limit": 100}
-    pages = 0
-    while pages < MAX_PAGES:
-        data = fub._request("GET", "/people", params=dict(params))
-        people = data.get("people", data.get("data", []))
-        if not people:
-            return
-        for person in people:
-            updated = parse_fub_datetime(person.get("updated"))
-            if updated and updated < window_start:
-                return
-            yield person
-        pages += 1
-        next_cursor = data.get("_metadata", {}).get("next")
-        if not next_cursor:
-            return
-        params["next"] = next_cursor
+    Discovery deliberately does NOT come from FUB's `updated` ordering. The
+    first dry run (2026-08-24, run 32757820303) proved that surface blind on
+    real data: 65 records "updated" in a fortnight that provably contained at
+    least four replies — neither a synced send nor a synced inbound email
+    touches the person record's `updated`. Our audit_log is the authoritative
+    list of everyone we wrote to, and the messages themselves are then read
+    directly — the same surface the live 10-minute scanner detects on.
 
-
-def person_has_recent_inbound(person_detail: dict, window_start: dt.datetime) -> bool:
-    from fub_automation.main import parse_fub_datetime
-
-    for key in ("lastReceivedEmail", "lastReceivedText"):
-        value = person_detail.get(key)
-        if value:
-            parsed = parse_fub_datetime(value)
-            if parsed and parsed >= window_start:
-                return True
-    return False
+    The lookback is wider than the reply window on purpose: Joe Muñoz answered
+    on Aug 22 a thread last touched July 4, so the send that earns a lead a
+    look can be weeks older than the reply we are looking for.
+    """
+    since = dt.datetime.now(UTC) - dt.timedelta(days=send_lookback_days)
+    seen: set = set()
+    ordered: List[int] = []
+    # recent_audit_rows returns newest-first, so leads with the freshest sends
+    # — the likeliest repliers — are checked first.
+    for row in db.recent_audit_rows(list(SEND_ACTIONS), since):
+        pid = row.get("person_id")
+        if not pid or row.get("status") not in SEND_STATUSES:
+            continue
+        pid = int(pid)
+        if pid not in seen:
+            seen.add(pid)
+            ordered.append(pid)
+    return ordered
 
 
 def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
-                   commit: bool) -> Optional[dict]:
+                   commit: bool, messages: Optional[List[dict]] = None) -> Optional[dict]:
     """Classify one lead's window and (on commit) act. Returns a summary line
     dict, or None when there was nothing to do."""
     from fub_automation.main import (
@@ -190,10 +188,11 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
     name = f"{person_detail.get('firstName', '')} {person_detail.get('lastName', '')}".strip() \
         or f"Lead #{person_id}"
 
-    messages = [
-        *engine.fub.get_emails(person_id, limit=25),
-        *engine.fub.get_text_messages(person_id, limit=25),
-    ]
+    if messages is None:
+        messages = [
+            *engine.fub.get_emails(person_id, limit=25),
+            *engine.fub.get_text_messages(person_id, limit=25),
+        ]
     classified = classify_window(engine, messages, window_start)
     if not classified:
         return None
@@ -263,31 +262,46 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
             "snippet": reply_message_body(msg)[:120]}
 
 
-def run_backfill(engine, db, *, days: int, commit: bool) -> List[dict]:
+def run_backfill(engine, db, *, days: int, commit: bool,
+                 send_lookback_days: int = 60) -> List[dict]:
     window_start = dt.datetime.now(UTC) - dt.timedelta(days=days)
+    candidates = candidates_from_audit(db, send_lookback_days)
+    print(f"Candidates: {len(candidates)} leads the bot emailed in the last "
+          f"{send_lookback_days} days; looking for inbound in the last {days}.",
+          flush=True)
     results: List[dict] = []
-    scanned = detailed = 0
-    for person in iter_recently_updated_people(engine.fub, window_start):
-        scanned += 1
-        if engine.is_excluded(person):
-            continue
-        person_detail = engine.fub.get_person(int(person["id"]))
-        if not person_detail:
-            continue
-        detailed += 1
-        if not person_has_recent_inbound(person_detail, window_start):
-            continue
+    checked = with_inbound = 0
+    for person_id in candidates:
+        checked += 1
+        if checked % 250 == 0:
+            print(f"  …{checked}/{len(candidates)} message histories checked, "
+                  f"{with_inbound} with fresh inbound so far", flush=True)
         try:
-            outcome = process_person(engine, db, person_detail, window_start, commit)
+            # Straight to the messages — no person fetch, no reliance on
+            # lastReceived* clocks. Most leads have no fresh inbound and cost
+            # exactly these two calls.
+            messages = [
+                *engine.fub.get_emails(person_id, limit=25),
+                *engine.fub.get_text_messages(person_id, limit=25),
+            ]
+            if not inbound_in_window(messages, window_start):
+                continue
+            with_inbound += 1
+            person_detail = engine.fub.get_person(person_id)
+            if not person_detail or engine.is_excluded(person_detail):
+                continue
+            outcome = process_person(
+                engine, db, person_detail, window_start, commit, messages=messages)
         except Exception as exc:  # noqa: BLE001
-            print(f"  ERROR processing lead {person.get('id')}: {exc}")
+            print(f"  ERROR processing lead {person_id}: {exc}", flush=True)
             continue
         if outcome:
             results.append(outcome)
             mode = "" if commit else " [DRY RUN — nothing written]"
             print(f"  {outcome['kind']:<10} {outcome['name']} (FUB {outcome['person_id']}) "
-                  f"replied {outcome['reply_at']}: \"{outcome['snippet']}\"{mode}")
-    print(f"Walked {scanned} recently-updated leads ({detailed} detail fetches).")
+                  f"replied {outcome['reply_at']}: \"{outcome['snippet']}\"{mode}", flush=True)
+    print(f"Checked {checked} emailed leads; {with_inbound} had inbound in the window.",
+          flush=True)
     return results
 
 
@@ -333,6 +347,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         description="Retroactively process replies the broken scanner missed.")
     parser.add_argument("--days", type=int, default=14,
                         help="Window of inbound messages to repair (default 14).")
+    parser.add_argument("--send-lookback", type=int, default=60,
+                        help="How far back a bot send earns a lead a look (default 60): "
+                             "a reply in the window can answer a much older thread.")
     parser.add_argument("--commit", action="store_true",
                         help="Actually write. Without it, a dry run that prints the plan.")
     args = parser.parse_args(argv)
@@ -354,8 +371,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     engine = RuleEngine(settings, rules, FollowUpBossClient(settings), db)
 
     mode = "COMMIT" if args.commit else "DRY RUN"
-    print(f"=== Missed-reply backfill — last {args.days} days — {mode} ===")
-    results = run_backfill(engine, db, days=args.days, commit=args.commit)
+    print(f"=== Missed-reply backfill — last {args.days} days — {mode} ===", flush=True)
+    results = run_backfill(engine, db, days=args.days, commit=args.commit,
+                           send_lookback_days=args.send_lookback)
 
     counts = {}
     for r in results:

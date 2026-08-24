@@ -17,6 +17,10 @@ on:
         description: "How many days of inbound messages to repair"
         required: true
         default: "14"
+      send_lookback:
+        description: "How far back a bot send earns a lead a look (a reply can answer a much older thread)"
+        required: true
+        default: "60"
       commit:
         description: "Actually write (FUB tags/trash + state DB). Leave false for a dry run first."
         type: boolean
@@ -28,6 +32,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Unbuffered so the per-lead plan streams into the live log instead of
+  # arriving in one block at exit — the first dry run was silent for its
+  # whole runtime.
+  PYTHONUNBUFFERED: "1"
   FUB_DISABLE_SCHEDULER: "true"
   FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
   SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -41,7 +49,10 @@ env:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 90 rather than 60: the 2026-08-24 dry run spent 43 minutes in the state
+    # DB pull alone (the state branch's history is thousands of incompressible
+    # encrypted blobs), and the message walk needs its own budget on top.
+    timeout-minutes: 90
     permissions:
       contents: write
 
@@ -74,6 +85,7 @@ jobs:
           set -euo pipefail
           python3 backfill_missed_replies.py \
             --days "${{ inputs.days }}" \
+            --send-lookback "${{ inputs.send_lookback }}" \
             ${{ inputs.commit && '--commit' || '' }}
 
       # Only when something was actually written. A dry run must never touch
