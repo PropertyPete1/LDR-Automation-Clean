@@ -688,17 +688,21 @@ def _real_inbound_email(created, *, email_id=51851, person_id=5889):
     }
 
 
-def _real_outbound_email(created, *, email_id=51850, person_id=5889):
+def _real_outbound_email(created, *, email_id=51937, person_id=3346):
+    """A synced copy of the bot's own send, field for field (diagnostic run
+    32777950427, Stephen's 13:05 pond email). NOTE status='Received' — FUB
+    stamps that on everything the mailbox sync ingests, direction included."""
     return {
         "id": email_id,
         "created": created.isoformat(),
         "date": created.isoformat(),
-        "status": "Sent",
+        "status": "Received",
+        "archived": True,
         "subject": "[CONTENT HIDDEN]",
         "bodyExcerpt": "[CONTENT HIDDEN]",
         "relatedPeople": [{"personId": person_id, "sentByPerson": False,
-                           "threadId": 48582}],
-        "threadId": 48582,
+                           "threadId": 48666}],
+        "threadId": 48666,
         "emailAccountId": 396015,
         "userId": 2,
         "bounced": False,
@@ -706,13 +710,17 @@ def _real_outbound_email(created, *, email_id=51850, person_id=5889):
     }
 
 
-def test_status_received_is_inbound(m):
+def test_sent_by_person_not_status_decides_direction(m):
+    """status='Received' appears on BOTH directions in this account — a
+    predicate keyed on it classified every synced send as a reply and filled
+    dry run 32772863771's plan with the bot answering itself. Only
+    sentByPerson separates the two."""
     now = dt.datetime.now(dt.timezone.utc)
     assert m.is_inbound_message(_real_inbound_email(now)) is True
     assert m.is_inbound_message(_real_outbound_email(now)) is False
-    assert m.is_inbound_message({"status": "Received"}) is True
+    assert m.is_inbound_message({"status": "Received"}) is False, \
+        "status alone must never read as inbound — synced sends carry it too"
     assert m.is_inbound_message({"status": "Sent"}) is False
-    assert m.is_inbound_message({"status": "Delivered"}) is False
 
 
 def test_sent_by_person_is_inbound(m):
@@ -775,3 +783,23 @@ def test_the_real_payload_alerts_end_to_end(m, scan, tmp_db, fake_http):
     details = json.loads(alerts[0]["details"])
     assert "hidden" in details["reply_snippet"].lower()
     assert "CONTENT HIDDEN" not in details["reply_snippet"]
+
+
+def test_the_synced_copy_of_our_own_send_is_not_a_reply(m, scan, tmp_db, fake_http):
+    """The exact shape that poisoned dry run 32772863771: the lead's only
+    message is the mailbox-sync copy of the bot's own send, landing a couple
+    of seconds after the audit row. No alert, no tag, no auto row — nothing."""
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[_real_outbound_email(sent_at + dt.timedelta(seconds=2),
+                                     email_id=51937, person_id=42)],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == []
+    since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    assert tmp_db.recent_audit_rows(["auto_reply_detected"], since) == [], \
+        "the bot's own send echoing back must not even count as an auto-reply"

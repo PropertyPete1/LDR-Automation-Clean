@@ -99,8 +99,14 @@ def describe_messages(fub, pid: int, path: str, list_key: str, label: str) -> No
         print(f"    [{direction_of(item)}] {created}  {clip_and_redact(subject, 80)}",
               flush=True)
     if items:
-        print("    newest item, every field:", flush=True)
-        dump_item(items[0])
+        # Several items, not just the newest: the direction discriminator can
+        # only be read off a thread that holds BOTH a synced outbound send and
+        # a genuine reply — the third dry run (32772863771) classified every
+        # synced copy of our own sends as inbound, so the outbound shape is
+        # exactly what needs seeing.
+        for index, item in enumerate(items[:4]):
+            print(f"    item[{index}], every field:", flush=True)
+            dump_item(item)
         # The single-object endpoint sometimes returns more than the list —
         # check whether direction/content appear when one email is fetched
         # directly by id.
