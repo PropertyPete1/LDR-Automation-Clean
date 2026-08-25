@@ -126,14 +126,24 @@ def git(repo: Path, *args: str, check: bool = True, binary: bool = False, index:
 
 
 def fetch_state(repo: Path) -> Optional[str]:
-    """Fetch the state branch. Returns its commit SHA, or None if it has none.
+    """Fetch the state branch TIP. Returns its commit SHA, or None if it has none.
 
     Forced into a remote-tracking ref of its own: a local `state` branch would
     be refused on divergence, and this must never depend on the checkout's
     refspec (actions/checkout fetches only the branch the run started from).
+
+    --depth=1, and it is not an optimisation — it is what keeps the intraday
+    jobs alive. Every push to `state` adds a ~14 MB AES blob that git cannot
+    delta-compress, ~50 of them a day, so a FULL fetch downloads the entire
+    blob history: it crossed 9 minutes by 2026-08-24 (43 in a bad case) and on
+    2026-08-25 it blew straight through Speed-to-Lead's 10-minute job timeout,
+    killing every business-hours run — which is how Jose Brito's 30/60-minute
+    escalation silently never fired. The protocol only ever reads the tip
+    (pull decrypts it, push parents on it), so one commit is all that is
+    needed, at a constant ~14 MB.
     """
     rc, _ = git(
-        repo, "fetch", "--no-tags", "origin",
+        repo, "fetch", "--no-tags", "--depth=1", "origin",
         f"+refs/heads/{STATE_BRANCH}:refs/remotes/origin/{STATE_BRANCH}",
         check=False,
     )

@@ -633,3 +633,41 @@ def test_the_crons_and_timeouts_the_starvation_argument_rests_on_are_still_true(
         assert job_def["timeout-minutes"] == facts["timeout"], name
         schedule = _triggers(wf).get("schedule")
         assert (schedule[0]["cron"] if schedule else None) == facts["cron"], name
+
+
+def test_the_pull_is_shallow_however_long_the_branch_history_grows(job, seeded, origin):
+    """The fetch must bring ONE commit, not the branch's whole blob history.
+
+    Every push adds a ~14 MB AES blob git cannot delta, ~50 a day, so a full
+    fetch grows without bound: it crossed 9 minutes on 2026-08-24 and blew
+    through Speed-to-Lead's 10-minute timeout on 2026-08-25, killing every
+    business-hours run — the reason Jose Brito's 30/60-minute escalation never
+    fired. The protocol only ever reads the tip, so one commit is all a run
+    may download."""
+    # Grow the branch: several pushes, each a new commit on `state`.
+    for n in (2, 3, 4):
+        writer = job(f"writer-{n}")
+        assert writer.pull() == 0
+        writer.write_send(n * 100)
+        assert writer.push() == 0
+
+    remote_commits = subprocess.run(
+        ["git", "rev-list", "--count", "refs/heads/state"],
+        cwd=str(origin), capture_output=True, text=True, check=True).stdout.strip()
+    assert int(remote_commits) >= 4, "precondition: the branch has real history"
+
+    reader = job("shallow-reader")
+    assert reader.pull() == 0
+    local_commits = subprocess.run(
+        ["git", "rev-list", "--count", "refs/remotes/origin/state"],
+        cwd=str(reader.repo), capture_output=True, text=True, check=True).stdout.strip()
+    assert local_commits == "1", (
+        f"the pull downloaded {local_commits} commits of state history — the "
+        "fetch has lost --depth=1 and every intraday run will pay for the "
+        "whole blob history again")
+    # And a shallow-parented push still lands: the next writer's rows survive.
+    reader.write_send(999)
+    assert reader.push() == 0
+    verifier = job("verifier-2")
+    assert verifier.pull() == 0
+    assert 999 in people_in_audit(verifier.db)
