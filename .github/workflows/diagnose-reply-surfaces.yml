@@ -14,6 +14,23 @@ on:
         description: "Comma-separated lead email addresses to inspect"
         required: true
         default: "joe_munoz@att.net,sjherrera987@gmail.com"
+      # BRANCH-ONLY SEAM: a freshly pushed workflow file cannot be dispatched
+      # until it exists on the default branch, but a REGISTERED workflow
+      # dispatched with --ref runs the ref's file — so this registered name
+      # doubles as the launcher for the branch's assignment investigation.
+      # mode=surfaces (default) is the original behavior.
+      mode:
+        description: "surfaces (reply surfaces) or assignments (timer/gate investigation)"
+        required: false
+        default: "surfaces"
+      hours:
+        description: "assignments mode: window to inspect"
+        required: false
+        default: "48"
+      focus:
+        description: "assignments mode: person id to detail"
+        required: false
+        default: "6327"
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -44,7 +61,27 @@ jobs:
         run: pip install -r pond-nurture-bot/requirements.txt
 
       - name: Inspect reply surfaces
+        if: ${{ inputs.mode != 'assignments' }}
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
           python3 diagnose_reply_surfaces.py --emails "${{ inputs.emails }}"
+
+      - name: Pull state DB (assignments mode)
+        if: ${{ inputs.mode == 'assignments' }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Investigate assignments
+        if: ${{ inputs.mode == 'assignments' }}
+        working-directory: pond-nurture-bot
+        env:
+          DATABASE_PATH: "data/fub_automation.sqlite3"
+        run: |
+          set -euo pipefail
+          python3 investigate_assignments.py \
+            --hours "${{ inputs.hours }}" \
+            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
