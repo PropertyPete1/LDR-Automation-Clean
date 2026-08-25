@@ -190,12 +190,15 @@ PERSON_ROWS: tuple[PersonRow, ...] = (
     ),
     PersonRow(
         name="new_lead_timers",
-        # The most-progressed side describes the lead best, but every milestone
-        # is forward_only as well, so a warning or a reassignment recorded by
-        # either side survives whichever side that was.
+        # One row per timer GENERATION since the assignment watch re-arms
+        # timers on reassignment: identity is (person_id, created_at), so two
+        # generations merge as distinct rows instead of folding into one.
+        # The most-progressed side describes a generation best, and every
+        # milestone is forward_only as well, so a warning or a reassignment
+        # recorded by either side survives whichever side that was.
+        key=("person_id", "created_at"),
         clock=("reassigned_at", "canceled_at", "warned_at", "created_at"),
         forward_only=("warned_at", "reassigned_at", "canceled_at"),
-        backward_only=("created_at",),
     ),
     PersonRow(
         name="assignment_watch",

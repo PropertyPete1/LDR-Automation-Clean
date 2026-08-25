@@ -121,6 +121,15 @@ def main() -> int:
         poll_failed = True
         LOGGER.error("New-lead polling failed: %s", exc, exc_info=True)
 
+    # Assignment diffs: timers for leads REASSIGNED to an agent, which
+    # poll_new_leads (created-in-24h only) can never see. Isolated like the
+    # poll — a failure here must not stop the timer processing below.
+    try:
+        engine.scan_assignment_changes()
+    except Exception as exc:
+        poll_failed = True
+        LOGGER.error("Assignment-change scan failed: %s", exc, exc_info=True)
+
     try:
         engine.process_new_lead_timers()
         LOGGER.info("Speed-to-lead check complete at %s CT", datetime.datetime.now(CT).strftime("%H:%M:%S"))
