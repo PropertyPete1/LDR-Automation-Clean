@@ -329,12 +329,13 @@ class AuditDB:
                     message_hash TEXT
                 );
                 CREATE TABLE IF NOT EXISTS new_lead_timers (
-                    person_id INTEGER PRIMARY KEY,
+                    person_id INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     assigned_user_id INTEGER,
                     warned_at TEXT,
                     reassigned_at TEXT,
-                    canceled_at TEXT
+                    canceled_at TEXT,
+                    PRIMARY KEY (person_id, created_at)
                 );
                 CREATE TABLE IF NOT EXISTS closed_drip_log (
                     person_id INTEGER PRIMARY KEY,
@@ -436,6 +437,42 @@ class AuditDB:
                 );
                 """
             )
+            self._migrate_new_lead_timers(con)
+
+    @staticmethod
+    def _migrate_new_lead_timers(con: sqlite3.Connection) -> None:
+        """Legacy DBs: one timer per person, ever (PRIMARY KEY person_id).
+
+        The assignment watch re-arms timers when a lead is REASSIGNED, so a
+        person can legitimately hold several timer generations — identity is
+        (person_id, created_at). CREATE IF NOT EXISTS skips existing tables,
+        so a pulled state DB keeps the legacy shape until this rebuild runs.
+        Idempotent: the rebuilt table no longer matches the legacy signature.
+        """
+        row = con.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='new_lead_timers'"
+        ).fetchone()
+        if not row or "person_id INTEGER PRIMARY KEY" not in (row[0] or ""):
+            return
+        con.executescript(
+            """
+            ALTER TABLE new_lead_timers RENAME TO new_lead_timers_legacy;
+            CREATE TABLE new_lead_timers (
+                person_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                assigned_user_id INTEGER,
+                warned_at TEXT,
+                reassigned_at TEXT,
+                canceled_at TEXT,
+                PRIMARY KEY (person_id, created_at)
+            );
+            INSERT INTO new_lead_timers
+                SELECT person_id, created_at, assigned_user_id,
+                       warned_at, reassigned_at, canceled_at
+                FROM new_lead_timers_legacy;
+            DROP TABLE new_lead_timers_legacy;
+            """
+        )
 
     def log(self, action: str, status: str, person_id: Optional[int] = None, details: Optional[dict] = None) -> None:
         with self.connect() as con:
@@ -751,17 +788,29 @@ class AuditDB:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    # Milestone updates hit only the ACTIVE generation: a person can hold
+    # several timer rows once reassignment re-arming exists, and warning a
+    # long-completed generation would be recorded on the wrong incident.
     def mark_warned(self, person_id: int) -> None:
         with self.connect() as con:
-            con.execute("UPDATE new_lead_timers SET warned_at=? WHERE person_id=?", (now_iso(), person_id))
+            con.execute(
+                "UPDATE new_lead_timers SET warned_at=? WHERE person_id=? "
+                "AND canceled_at IS NULL AND reassigned_at IS NULL",
+                (now_iso(), person_id))
 
     def mark_reassigned(self, person_id: int) -> None:
         with self.connect() as con:
-            con.execute("UPDATE new_lead_timers SET reassigned_at=? WHERE person_id=?", (now_iso(), person_id))
+            con.execute(
+                "UPDATE new_lead_timers SET reassigned_at=? WHERE person_id=? "
+                "AND canceled_at IS NULL AND reassigned_at IS NULL",
+                (now_iso(), person_id))
 
     def cancel_timer(self, person_id: int) -> None:
         with self.connect() as con:
-            con.execute("UPDATE new_lead_timers SET canceled_at=? WHERE person_id=?", (now_iso(), person_id))
+            con.execute(
+                "UPDATE new_lead_timers SET canceled_at=? WHERE person_id=? "
+                "AND canceled_at IS NULL AND reassigned_at IS NULL",
+                (now_iso(), person_id))
 
     # ── Assignment safety net (untouched-assignment watch) ──
     def get_assignment_watch(self, person_id: int) -> Optional[dict]:
@@ -769,6 +818,17 @@ class AuditDB:
             con.row_factory = sqlite3.Row
             row = con.execute("SELECT * FROM assignment_watch WHERE person_id=?", (person_id,)).fetchone()
         return dict(row) if row else None
+
+    def delete_assignment_watch(self, person_id: int) -> None:
+        with self.connect() as con:
+            con.execute("DELETE FROM assignment_watch WHERE person_id=?", (person_id,))
+
+    def all_assignment_watch_rows(self) -> List[dict]:
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute(
+                "SELECT * FROM assignment_watch ORDER BY first_seen_at").fetchall()
+        return [dict(row) for row in rows]
 
     def upsert_assignment_watch(self, person_id: int, assigned_user_id: int, first_seen_at: Optional[str] = None) -> None:
         """Record the current lead→agent pair. REPLACE semantics on purpose:
@@ -4977,9 +5037,13 @@ class RuleEngine:
         if not candidates:
             return []
 
-        # They replied to leave — nobody owes them an answer.
+        # They replied to leave, or their FUB record no longer exists — either
+        # way nobody owes them an answer (lead_deleted rows come from the
+        # daily deleted-lead sweep; Stephen Herrera haunted this list for a
+        # day after his record was deleted).
         for row in self.db.recent_audit_rows(
-                ["reply_intent_disqualification", "pond_opt_out_trash"], since):
+                ["reply_intent_disqualification", "pond_opt_out_trash", "lead_deleted"],
+                since):
             pid = row.get("person_id")
             if pid:
                 candidates.pop(int(pid), None)
@@ -5459,14 +5523,24 @@ class RuleEngine:
         lines.append("")
         html_lines.append("</ul>")
 
-        # Footer & status info
+        # Footer & status info. The email cap is the LIVE ramp value, not the
+        # rules.yaml fallback — the footer said "Capped at 150" for a day
+        # while the ramp was actually running the pond at 200.
+        live_cap = self.rules.phase2_max_customer_emails_per_run
+        try:
+            from .ramp import resolve_daily_cap as _resolve_cap
+
+            with self.db.connect() as _cap_con:
+                live_cap = _resolve_cap(_cap_con)
+        except Exception as _cap_exc:  # noqa: BLE001
+            LOGGER.warning("Footer cap fell back to rules.yaml: %s", _cap_exc)
         footer_lines = [
             "⚙️ AUTOMATION SETTINGS STATUS",
             "----------------------------------------",
             "📱 SMS outreach: 🚫 Disabled",
             "🔒 Active exclusions: Only 'Trash' stage is excluded (ALL other stages eligible for daily agent follow-up warnings & 20-day pond reassignments)",
             "🏷️ Manual suppression tags: 'Do Not Nurture' & 'No AI Email' are fully respected",
-            f"📈 Launch safety caps: Capped at {self.rules.phase2_max_customer_emails_per_run} emails & {self.rules.phase2_max_reassignments_per_run} reassignments per daily run",
+            f"📈 Launch safety caps: Capped at {live_cap} emails (ramp-controlled) & {self.rules.phase2_max_reassignments_per_run} reassignments per daily run",
             "",
             "Let me know if you need any adjustments to these rules! Have an awesome day! ✨",
             "",
@@ -5480,7 +5554,7 @@ class RuleEngine:
         html_lines.append("<li>📱 SMS outreach: 🚫 Disabled</li>")
         html_lines.append("<li>🔒 Active exclusions: Only 'Trash' stage is excluded (ALL other stages eligible for daily agent follow-up warnings & 20-day pond reassignments)</li>")
         html_lines.append("<li>🏷️ Manual suppression tags: 'Do Not Nurture' & 'No AI Email' are fully respected</li>")
-        html_lines.append(f"<li>📈 Launch safety caps: Capped at {self.rules.phase2_max_customer_emails_per_run} emails & {self.rules.phase2_max_reassignments_per_run} reassignments per daily run</li>")
+        html_lines.append(f"<li>📈 Launch safety caps: Capped at {live_cap} emails (ramp-controlled) & {self.rules.phase2_max_reassignments_per_run} reassignments per daily run</li>")
         html_lines.append("</ul>")
         html_lines.append("<p>Let me know if you need any adjustments to these rules! Have an awesome day! ✨</p>")
         html_lines.append("<p>Truly,<br/><strong>Lifestyle Design Automation Bot 🤖</strong></p>")
@@ -5773,6 +5847,239 @@ class RuleEngine:
             "untouched_assignment_scan", "completed", None,
             {"candidates": len(candidates), "alerts": alerts_sent, "skips": skip_counts},
         )
+
+    #: Audit actions that mean the AUTOMATION moved a lead. A diff hit within
+    #: ASSIGNMENT_AUTOMATION_WINDOW_MIN of one of these is our own doing —
+    #: pond promotion, 20-day reassignment, speed-to-lead return — and must
+    #: not start a timer or page an agent.
+    ASSIGNMENT_AUTOMATION_ACTIONS = (
+        "stale_agent_pond_reassignment",
+        "pond_keyword_reassignment",
+        "new_lead_reassigned",
+    )
+    ASSIGNMENT_AUTOMATION_WINDOW_MIN = 30
+    #: More than this many detected moves in one run reads as a manual bulk
+    #: distribution: one digest to Peter instead of paging every agent.
+    ASSIGNMENT_BULK_THRESHOLD = 5
+    #: How far back the -updated walk looks for record changes. Wider than the
+    #: 5-minute cadence on purpose: ticks arrive 30–50 minutes apart under
+    #: GitHub's cron delays, and a re-observed change is deduplicated by the
+    #: watch table anyway.
+    ASSIGNMENT_SCAN_WINDOW_HOURS = 24
+    ASSIGNMENT_SCAN_MAX_PAGES = 5
+
+    #: Ghost sweep budget: get_person costs one API call per row checked.
+    DELETED_LEAD_SCAN_CAP = 300
+
+    def scan_deleted_leads(self) -> None:
+        """Ghosts: state rows pointing at FUB records that no longer resolve.
+
+        Stephen Herrera's record was deleted on 2026-08-24 and his NEEDS A
+        REPLY entry lived on — nothing ever re-checked that the person still
+        existed. Once a day this resolves every person the state still watches
+        (needs-reply candidates, assignment-watch rows, active timers); a lead
+        FUB no longer returns gets ONE audit row (action='lead_deleted') that
+        the needs-reply collector honours as a closing event, its watch row is
+        deleted and any active timer cancelled.
+        """
+        now = dt.datetime.now(UTC)
+        since = now - dt.timedelta(days=self.NEEDS_REPLY_BACKLOG_DAYS)
+        candidates: set = set()
+        for row in self.db.recent_audit_rows(["reply_detected"], since):
+            if row.get("status") in ("alert_sent", "backfilled") and row.get("person_id"):
+                candidates.add(int(row["person_id"]))
+        for watch in self.db.all_assignment_watch_rows():
+            candidates.add(int(watch["person_id"]))
+        for timer in self.db.active_new_lead_timers():
+            candidates.add(int(timer["person_id"]))
+        # Already marked — never pay for the same ghost twice.
+        for row in self.db.recent_audit_rows(["lead_deleted"], now - dt.timedelta(days=90)):
+            candidates.discard(int(row.get("person_id") or 0))
+
+        checked = ghosts = 0
+        for person_id in sorted(candidates):
+            if checked >= self.DELETED_LEAD_SCAN_CAP:
+                LOGGER.info("Deleted-lead sweep: cap (%s) reached; the rest wait "
+                            "for tomorrow.", self.DELETED_LEAD_SCAN_CAP)
+                break
+            checked += 1
+            try:
+                person = self.fub.get_person(person_id)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Deleted-lead sweep: could not resolve %s (%s) — "
+                               "keeping their rows", person_id, exc)
+                continue
+            if person:
+                continue
+            ghosts += 1
+            LOGGER.info("Deleted-lead sweep: FUB no longer resolves person %s — "
+                        "clearing their rows", person_id)
+            self.db.log("lead_deleted", "cleared", person_id, {
+                "sources": "needs_reply/assignment_watch/new_lead_timers",
+            })
+            self.db.delete_assignment_watch(person_id)
+            self.db.cancel_timer(person_id)
+        LOGGER.info("Deleted-lead sweep complete: %s checked, %s ghosts cleared.",
+                    checked, ghosts)
+
+    def scan_assignment_changes(self) -> None:
+        """Option A from the Aug 9 investigation: timers for REASSIGNED leads.
+
+        poll_new_leads only watches leads CREATED in the last 24h, so a lead
+        distributed to an agent later — Jose Reyes, created 07:57 on
+        2026-08-25, assigned to Laila around 15:55, never alerted — had no
+        net at all until the next day's untouched-assignment sweep. This scan
+        walks every person whose record changed inside the window (an
+        assignment change is a record edit, proven by the 2026-08-25 probe),
+        diffs assignedUserId against the stored assignment_watch pair, and on
+        a change to a non-Peter agent starts a speed-to-lead timer anchored
+        at DETECTION time plus the same instant agent alert new leads get.
+
+        Guards, from the Aug 9 report:
+          - automation-initiated moves are skipped (audit actions within
+            ASSIGNMENT_AUTOMATION_WINDOW_MIN, moves into a pond, moves to
+            Peter);
+          - a person can hold repeat timers — each detection is a new
+            (person_id, created_at) generation;
+          - more than ASSIGNMENT_BULK_THRESHOLD moves in one run is a manual
+            bulk distribution: timers still start, but Peter gets ONE digest
+            instead of every agent getting paged;
+          - the bot's own nurture sends never count as first touch
+            (lead_touched_after_creation ignores them).
+
+        First sight of a pair is a BASELINE, not a change: with no stored row
+        there is nothing to diff against, so the pair is recorded silently and
+        the next change is caught. The daily untouched-assignment sweep has
+        been seeding this table since 2026-08-10.
+        """
+        if not self.rules.new_lead_warning_enabled and not self.rules.new_lead_reassignment_enabled:
+            return
+        now = dt.datetime.now(UTC)
+        window_start = now - dt.timedelta(hours=self.ASSIGNMENT_SCAN_WINDOW_HOURS)
+        automation_window = now - dt.timedelta(minutes=self.ASSIGNMENT_AUTOMATION_WINDOW_MIN)
+
+        recently_moved_by_us = set()
+        for row in self.db.recent_audit_rows(
+                list(self.ASSIGNMENT_AUTOMATION_ACTIONS), automation_window):
+            pid = row.get("person_id")
+            if pid:
+                recently_moved_by_us.add(int(pid))
+
+        active_timer_people = {int(t["person_id"]) for t in self.db.active_new_lead_timers()}
+        excluded_agent_ids = set(getattr(self.rules, "excluded_user_ids", []))
+
+        changes: List[Tuple[dict, int]] = []
+        walked = 0
+        params: Dict[str, Any] = {"sort": "-updated", "limit": 100}
+        pages = 0
+        stop = False
+        while pages < self.ASSIGNMENT_SCAN_MAX_PAGES and not stop:
+            data = self.fub._request("GET", "/people", params=dict(params))
+            people = data.get("people", data.get("data", []))
+            if not people:
+                break
+            for stub in people:
+                updated = parse_fub_datetime(stub.get("updated"))
+                if updated and updated < window_start:
+                    stop = True
+                    break
+                walked += 1
+                person_id = int(stub["id"])
+                assigned = stub.get("assignedUserId")
+                watch = self.db.get_assignment_watch(person_id)
+
+                if not assigned:
+                    continue
+                assigned = int(assigned)
+
+                if watch is None:
+                    # Baseline: record the pair so the NEXT change diffs.
+                    if not stub.get("assignedPondId") and not self.is_excluded(stub):
+                        self.db.upsert_assignment_watch(person_id, assigned)
+                    continue
+                if int(watch["assigned_user_id"]) == assigned:
+                    continue
+
+                # ── The pair changed. Decide whether it deserves a timer. ──
+                self.db.upsert_assignment_watch(person_id, assigned)
+                reason = None
+                if person_id in recently_moved_by_us:
+                    reason = "automation_move"
+                elif stub.get("assignedPondId"):
+                    reason = "moved_into_pond"
+                elif self.rules.peter_user_id is not None and assigned == int(self.rules.peter_user_id):
+                    reason = "assigned_to_peter"
+                elif assigned in excluded_agent_ids:
+                    reason = "excluded_agent"
+                elif self.is_excluded(stub):
+                    reason = "excluded_stage_or_tag"
+                elif person_id in active_timer_people:
+                    reason = "timer_already_active"
+                if reason:
+                    self.db.log("assignment_change", "skipped", person_id, {
+                        "reason": reason, "new_assigned_user_id": assigned})
+                    continue
+                changes.append((stub, assigned))
+            pages += 1
+            cursor = data.get("_metadata", {}).get("next")
+            if not cursor or stop:
+                break
+            params["next"] = cursor
+
+        if not changes:
+            LOGGER.info("Assignment-change scan: walked %s changed records, no new "
+                        "agent assignments to arm.", walked)
+            return
+
+        bulk = len(changes) > self.ASSIGNMENT_BULK_THRESHOLD
+        users = self.user_cache_by_id()
+        for stub, assigned in changes:
+            person_id = int(stub["id"])
+            self.db.add_new_lead_timer(person_id, assigned)
+            self.db.log("new_lead_timer", "started_assignment_change", person_id, {
+                "assignedUserId": assigned,
+                "bulk": bulk,
+            })
+            LOGGER.info("Assignment change: timer armed for lead %s (agent %s)%s",
+                        person_id, assigned, " [bulk]" if bulk else "")
+            if not bulk:
+                self._send_speed_to_lead_agent_alert(stub, assigned)
+
+        if bulk:
+            self._send_bulk_assignment_digest(changes, users)
+        LOGGER.info("Assignment-change scan complete: walked %s, armed %s%s.",
+                    walked, len(changes), " (bulk digest)" if bulk else "")
+
+    def _send_bulk_assignment_digest(self, changes: List[Tuple[dict, int]],
+                                     users: Dict[int, dict]) -> None:
+        """One email to Peter for a bulk distribution, instead of paging every
+        agent individually. The timers are still armed — the 30/60 escalation
+        runs regardless — this only swaps N instant alerts for one summary."""
+        lines = [f"{len(changes)} leads were reassigned in one sweep — reading this "
+                 "as a manual distribution, so agents were not paged individually. "
+                 "Every lead still has its 30/60-minute timer armed.", ""]
+        html_rows = ""
+        for stub, assigned in changes:
+            name = f"{stub.get('firstName', '')} {stub.get('lastName', '')}".strip() \
+                or f"Lead #{stub['id']}"
+            agent = (users.get(assigned, {}) or {}).get("name") or f"user {assigned}"
+            link = f"https://www.followupboss.com/2/people/view/{stub['id']}"
+            lines.append(f"  • {name} → {agent} — {link}")
+            html_rows += (f"<li><strong>{html.escape(name)}</strong> → "
+                          f"{html.escape(str(agent))} — <a href='{link}'>Open in FUB</a></li>")
+        try:
+            self.email.send(
+                self.rules.owner_email,
+                f"📦 Bulk distribution detected: {len(changes)} leads reassigned",
+                "\n".join(lines),
+                from_email=self.rules.owner_email,
+                html_body=(f"<p>{len(changes)} leads were reassigned in one sweep — "
+                           "agents were not paged individually; every lead still has "
+                           f"its 30/60-minute timer armed.</p><ul>{html_rows}</ul>"),
+            )
+            self.db.log("assignment_bulk_digest", "sent", None, {"count": len(changes)})
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Bulk assignment digest failed: %s", exc)
 
     def poll_new_leads(self) -> None:
         if not self.rules.new_lead_warning_enabled and not self.rules.new_lead_reassignment_enabled:
@@ -6226,12 +6533,36 @@ class RuleEngine:
         # after assignment is a legitimate first touch.
         buffer = dt.timedelta(seconds=15)
 
-        # 1. Fast-path: Real call or outbound text/email — these are always human-initiated
+        # The bot's own sends are NOT touches. A pond-nurture or drip email
+        # syncs into FUB and bumps lastSentEmail exactly like an agent's mail,
+        # so an outbound clock landing within a few minutes of one of our own
+        # audit-logged sends is the automation talking, not the agent.
+        bot_send_times: List[dt.datetime] = []
+        try:
+            from .funnel import EMAIL_SEND_ACTIONS as _SEND_ACTIONS
+            from .funnel import SENT_STATUSES as _SENT_STATUSES
+
+            for row in self.db.recent_audit_rows(list(_SEND_ACTIONS), created):
+                if int(row.get("person_id") or 0) != person_id:
+                    continue
+                if row.get("status") not in _SENT_STATUSES:
+                    continue
+                sent_ts = parse_dt(row.get("created_at") or "")
+                if sent_ts:
+                    bot_send_times.append(sent_ts)
+        except Exception as _bs_exc:  # noqa: BLE001
+            LOGGER.debug("lead_touched_after_creation: bot-send lookup failed: %s", _bs_exc)
+
+        def _is_bot_send(ts: dt.datetime) -> bool:
+            return any(abs((ts - bot_ts).total_seconds()) <= 300 for bot_ts in bot_send_times)
+
+        # 1. Fast-path: Real call or outbound text/email — human-initiated,
+        #    unless the timestamp matches one of the bot's own sends.
         for key in ("lastSentEmail", "lastSentText", "lastCall"):
             value = person.get(key)
             if value:
                 parsed = parse_dt(value)
-                if parsed and parsed > created + buffer:
+                if parsed and parsed > created + buffer and not _is_bot_send(parsed):
                     return True
 
         # 2. Fast-path: lastCommunication / lastActivity moved — if it moved AND

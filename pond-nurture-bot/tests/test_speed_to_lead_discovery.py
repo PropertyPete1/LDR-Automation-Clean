@@ -342,16 +342,26 @@ class TestDedupUnderIntradayPolling:
         with engine.db.connect() as con:
             assert con.execute("SELECT COUNT(*) FROM new_lead_timers").fetchone()[0] == 1
 
-    def test_add_new_lead_timer_is_idempotent_at_the_write_layer(self, tmp_db):
-        """Belt and braces underneath the poll's own guard: even a direct double
-        write cannot produce two rows or move the anchor."""
+    def test_add_new_lead_timer_is_idempotent_per_generation(self, tmp_db):
+        """Belt and braces underneath the poll's own guard, updated for the
+        assignment watch: identity is (person_id, created_at) now, so a
+        SAME-generation double write is still ignored and cannot move the
+        anchor — but a new generation (a reassignment re-arm) is a legitimate
+        second row. Double-arming within a run is prevented by the callers'
+        active-timer checks, pinned elsewhere."""
         tmp_db.add_new_lead_timer(6270, 35, created_at="2026-08-09T10:00:00+00:00")
+        # Same generation, different agent: ignored, anchor and agent keep.
+        tmp_db.add_new_lead_timer(6270, 44, created_at="2026-08-09T10:00:00+00:00")
+        # A later generation: the reassignment watch re-arming the person.
         tmp_db.add_new_lead_timer(6270, 44, created_at="2026-08-09T17:00:00+00:00")
         with tmp_db.connect() as con:
             rows = con.execute(
-                "SELECT created_at, assigned_user_id FROM new_lead_timers"
+                "SELECT created_at, assigned_user_id FROM new_lead_timers ORDER BY created_at"
             ).fetchall()
-        assert rows == [("2026-08-09T10:00:00+00:00", 35)]
+        assert rows == [
+            ("2026-08-09T10:00:00+00:00", 35),
+            ("2026-08-09T17:00:00+00:00", 44),
+        ]
 
 
 class TestPollingFailureIsolation:

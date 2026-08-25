@@ -139,6 +139,8 @@ def test_no_lead_facing_sends_use_owner_email_as_from():
         # internal: it goes to the owning agent (or Peter), never to a lead.
         "_handle_human_reply",
         "send_phase2_daily_summary",
+        # Bulk-distribution digest — goes to Peter, never to a lead.
+        "_send_bulk_assignment_digest",
     ]
 
     # Check that from_email=self.rules.owner_email only appears in internal functions

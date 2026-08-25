@@ -251,9 +251,11 @@ def run_automation() -> int:
     # (run_speed_to_lead_check.py); this catches anything an intraday run missed
     # — cancelled job, Actions outage, FUB 5xx. Dedup makes the overlap free.
     engine.poll_new_leads()
+    engine.scan_assignment_changes()  # timers for REASSIGNED leads (backup for the 5-min job)
     engine.process_new_lead_timers()
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
     engine.scan_closed_drip()  # Phase 3: quarterly check-in emails for Closed/Past Client/Sphere leads
+    engine.scan_deleted_leads()  # Ghost sweep: drop needs-reply/watch/timer rows whose FUB record is gone
     engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
     # Replies to OLD threads. The scan above only watches leads emailed in the
     # last 7 days; this walks every lead FUB says was updated in the last 2

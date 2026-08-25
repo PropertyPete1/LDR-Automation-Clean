@@ -1,0 +1,64 @@
+# Read-only investigation, run by hand. For every lead created or changed in
+# the window: what FUB says, what the state DB says (timers, watch rows,
+# audit), and which poll_new_leads gate excluded it — evaluated with the real
+# gate code. Built for the 2026-08-25 "one alert out of a whole morning's
+# distribution" incident.
+#
+# Every FUB call is a GET; the state DB is pulled and never pushed.
+name: Investigate assignments
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Window to inspect"
+        required: true
+        default: "48"
+      focus:
+        description: "Person id to detail (notes included)"
+        required: false
+        default: "6327"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  DRY_RUN: "true"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Investigate
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 investigate_assignments.py \
+            --hours "${{ inputs.hours }}" \
+            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
