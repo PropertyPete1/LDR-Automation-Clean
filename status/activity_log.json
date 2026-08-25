@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-08-25T16:59:16Z",
+    "type": "needs_reply",
+    "contact_name": "Antony Von Palleste",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-08-25T13:56:36Z",
     "type": "drip",
     "contact_name": "Dwyhtdtgwyntb",
@@ -592,11 +598,5 @@
     "type": "sent",
     "contact_name": "Victor Soto",
     "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-08-25T13:38:00Z",
-    "type": "sent",
-    "contact_name": "Clara",
-    "detail": "pond nurture email — Austin"
   }
 ]
