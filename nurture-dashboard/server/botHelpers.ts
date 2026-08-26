@@ -80,6 +80,56 @@ export function getSharedExcludedSources(): string[] {
   return _sharedExcludedSources ?? [];
 }
 
+// ─── Compliance footer (mirror of the Python bot's append_email_footer) ─────
+// Every lead-facing marketing email must carry the unsubscribe instruction,
+// both TREC links, and the postal address — the Python senders have shipped
+// this footer (pinned by test_branding_compliance.py) since launch; annual
+// nurture was the one live sender without it (audit P0-2, 2026-08-26).
+export const TREC_IABS_URL =
+  "https://www.trec.texas.gov/sites/default/files/pdf-forms/IABS%201-2_1.pdf";
+export const TREC_CONSUMER_PROTECTION_URL =
+  "https://www.trec.texas.gov/sites/default/files/pdf-forms/CN%201-4-1_1.pdf";
+export const COMPANY_ADDRESS = "1212 Chicon St, Suite 101, Austin, TX 78702";
+
+/** Plain-text footer, byte-for-byte the shape of main.py's append_email_footer. */
+export function appendPlainTextEmailFooter(body: string): string {
+  return `${body.trim()}
+
+--
+LIFESTYLE DESIGN REALTY
+
+The Lifestyle Design Realty Team
+team@lifestyledesignrealty.com
+lifestyledesignrealty.com
+
+Information About Brokerage Services: ${TREC_IABS_URL}
+TREC Consumer Protection Notice: ${TREC_CONSUMER_PROTECTION_URL}
+${COMPANY_ADDRESS}
+
+If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you from future marketing emails.
+`;
+}
+
+/**
+ * Tags that mean a lead has permanently opted out (vs. temporary pauses like
+ * "replied - paused"). Seeing one of these both skips the send AND deactivates
+ * the lead's annual-nurture enrollment — an opted-out lead must never be one
+ * re-tagging away from a yearly email.
+ */
+export const HARD_OPT_OUT_TAGS = new Set([
+  "opt-out",
+  "opt out",
+  "opt-out-auto-trash",
+  "email opt out",
+  "unsubscribe",
+  "unsubscribed",
+  "dnc",
+  "do not contact",
+  "do not email",
+  "do not nurture",
+  "no ai email",
+]);
+
 // ─── Source-Based Exclusion ─────────────────────────────────────────────────
 // Any lead whose source matches an entry in excluded_sources is skipped by ALL automation.
 const PETER_USER_ID = 2; // Peter Allen's FUB user ID

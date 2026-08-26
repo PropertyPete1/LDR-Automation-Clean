@@ -7,6 +7,7 @@ export default function SmsRedirect() {
   const [phone, setPhone] = useState("");
   const [body, setBody] = useState("");
   const [agent, setAgent] = useState("");
+  const [accessKey, setAccessKey] = useState("");
   const [leadId, setLeadId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [redirectAttempted, setRedirectAttempted] = useState(false);
@@ -21,6 +22,7 @@ export default function SmsRedirect() {
     const phoneParam = params.get("phone") || "";
     const bodyParam = params.get("body") || "";
     const agentParam = params.get("agent") || "";
+    const keyParam = params.get("key") || "";
     const leadIdParam = params.get("lead_id") || "";
 
     if (!phoneParam) {
@@ -31,6 +33,7 @@ export default function SmsRedirect() {
     setPhone(phoneParam);
     setBody(bodyParam);
     setAgent(agentParam);
+    setAccessKey(keyParam);
 
     const parsedLeadId = leadIdParam ? parseInt(leadIdParam, 10) : null;
     if (parsedLeadId && !isNaN(parsedLeadId)) {
@@ -56,6 +59,7 @@ export default function SmsRedirect() {
         agentName: agentParam,
         messageBody: bodyParam || undefined,
         agent: agentParam,
+        ...(keyParam ? { key: keyParam } : {}),
       });
     }
 
@@ -102,6 +106,7 @@ export default function SmsRedirect() {
         agentName: agent,
         messageBody: body || undefined,
         agent: agent,
+        ...(accessKey ? { key: accessKey } : {}),
       });
     }
 

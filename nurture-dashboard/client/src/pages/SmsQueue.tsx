@@ -159,6 +159,13 @@ export default function SmsQueue() {
     return new URLSearchParams(window.location.search).get("admin") || undefined;
   }, []);
 
+  // Per-agent secret from URL ?key= param — agent identity is name + key now.
+  // Links without it (every pre-2026-08 email) get the "ask Peter" page below.
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    return new URLSearchParams(window.location.search).get("key") || undefined;
+  }, []);
+
   const [selectedAgent, setSelectedAgent] = useState<string>(() => getAgentFromUrl());
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -204,7 +211,8 @@ export default function SmsQueue() {
   const accessParams = useMemo(() => ({
     ...(adminToken ? { adminToken } : {}),
     ...(lockedAgent ? { agent: lockedAgent } : {}),
-  }), [adminToken, lockedAgent]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [adminToken, lockedAgent, urlKey]);
   const { data: rosterData } = trpc.agent.getRoster.useQuery(accessParams, { staleTime: 10 * 60_000 });
   const ROSTER_AGENT_NAMES = useMemo(() => {
     if (!rosterData?.roster) return [];
@@ -218,6 +226,7 @@ export default function SmsQueue() {
       {
         agentFilter: lockedAgent || (adminToken ? "all" : undefined),
         adminToken,
+        key: urlKey,
       },
       {
         staleTime: 3 * 60 * 1000,
@@ -241,6 +250,31 @@ export default function SmsQueue() {
   const serverAgentName: string | null = queueData?.agentName ?? null;
   // Effective lock: admins see all agents (or can filter); non-admins are locked to their URL agent
   const effectiveLock: string | null = isAdmin ? null : (lockedAgent ?? serverAgentName);
+
+  // Agent link without its per-agent key (every pre-2026-08 link), or a key
+  // the server rejected → friendly "get your new link" page, never a raw error.
+  const isStaleAgentLink =
+    (!!lockedAgent && !adminToken && !urlKey) || queueData?.staleLink === true;
+  if (isStaleAgentLink) {
+    return (
+      <div className="min-h-screen bg-[#0D0F14] flex items-center justify-center p-6">
+        <div className="text-center max-w-md">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-amber-500/10 flex items-center justify-center">
+            <Mail className="h-8 w-8 text-amber-500" />
+          </div>
+          <h1 className="text-2xl font-bold text-white mb-3">This link has been updated</h1>
+          <p className="text-gray-400 mb-6">
+            Power Queue links now include a personal security key, and this one
+            doesn&apos;t have it. Ask Peter for your new link — it&apos;s in your
+            latest daily clock-in email.
+          </p>
+          <p className="text-sm text-gray-500">
+            Once you have the new link, bookmark it and delete the old one.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // No agent param and no admin token → show "check your email" page
   if (!lockedAgent && !adminToken) {
@@ -1133,8 +1167,8 @@ export default function SmsQueue() {
                             <a
                               href={`tel:${hotLead.phone.replace(/\D/g, '')}`}
                               onClick={() => {
-                                logSentNote.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, channel: 'call' as const });
-                                recordActionMutation.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, actionType: 'hot_lead_responded', daysStale: hotLead.days_stale, isHotLead: true });
+                                logSentNote.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, channel: 'call' as const, ...accessParams });
+                                recordActionMutation.mutate({ personId: hotLead.id, agentName: hotLead.assigned_agent, actionType: 'hot_lead_responded', daysStale: hotLead.days_stale, isHotLead: true, ...accessParams });
                               }}
                               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-500 hover:bg-red-400 text-white text-xs font-bold transition-colors active:scale-[0.97]"
                             >

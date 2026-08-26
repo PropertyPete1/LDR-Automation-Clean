@@ -35,6 +35,7 @@ describe("Job 1e — admin token only ever reaches Peter's clock-in", () => {
   });
   afterEach(() => {
     delete process.env.POWER_QUEUE_ADMIN_TOKEN;
+    delete process.env.POWER_QUEUE_AGENT_KEYS;
   });
 
   it("Tiffany's clock-in contains her scoped ?agent link and NO admin token", async () => {
@@ -51,6 +52,54 @@ describe("Job 1e — admin token only ever reaches Peter's clock-in", () => {
     expect(html).toContain("/sms-queue?agent=Tiffany");
     expect(html).not.toContain("admin=");
     expect(html).not.toContain(TOKEN);
+  });
+
+  it("Tiffany's link carries HER per-agent key — and no one else's", async () => {
+    process.env.POWER_QUEUE_AGENT_KEYS = "tiffany:tiff-key-1,stefanie:stef-key-2";
+    const { sendClockinEmail } = await import("./botHelpers");
+    await sendClockinEmail({
+      botName: "Tiffany's Lifestyle Bot",
+      agentFirstName: "Tiffany",
+      agentLastName: "Proske",
+      agentEmail: "tiffany@lifestyledesignrealty.com",
+      leadsQueued: 3,
+      powerQueueCount: 5,
+    });
+    const html = lastHtml();
+    expect(html).toContain("/sms-queue?agent=Tiffany&key=tiff-key-1");
+    expect(html, "another agent's key must never leak into this email").not.toContain("stef-key-2");
+    expect(html).not.toContain("admin=");
+  });
+
+  it("JSON-format POWER_QUEUE_AGENT_KEYS works too", async () => {
+    process.env.POWER_QUEUE_AGENT_KEYS = '{"tiffany":"tiff-json-key"}';
+    const { sendClockinEmail } = await import("./botHelpers");
+    await sendClockinEmail({
+      botName: "Tiffany's Lifestyle Bot",
+      agentFirstName: "Tiffany",
+      agentLastName: "Proske",
+      agentEmail: "tiffany@lifestyledesignrealty.com",
+      leadsQueued: 3,
+      powerQueueCount: 5,
+    });
+    expect(lastHtml()).toContain("agent=Tiffany&key=tiff-json-key");
+  });
+
+  it("an agent with NO configured key still gets a link (queue shows the friendly page)", async () => {
+    process.env.POWER_QUEUE_AGENT_KEYS = "stefanie:stef-key-2";
+    const { sendClockinEmail } = await import("./botHelpers");
+    await sendClockinEmail({
+      botName: "Tiffany's Lifestyle Bot",
+      agentFirstName: "Tiffany",
+      agentLastName: "Proske",
+      agentEmail: "tiffany@lifestyledesignrealty.com",
+      leadsQueued: 3,
+      powerQueueCount: 5,
+    });
+    const html = lastHtml();
+    expect(html).toContain("/sms-queue?agent=Tiffany");
+    expect(html).not.toContain("key=");
+    expect(html).not.toContain("stef-key-2");
   });
 
   it("Peter's clock-in DOES carry the admin token (admin=all)", async () => {

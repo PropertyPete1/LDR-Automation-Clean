@@ -26,11 +26,63 @@ import { writeObservation } from "./db";
 import { annualNurtureLeads } from "../drizzle/schema";
 import { eq, and, or, isNull, lt, sql } from "drizzle-orm";
 import nodemailer from "nodemailer";
+import {
+  appendPlainTextEmailFooter,
+  getSharedSuppressionTags,
+  HARD_OPT_OUT_TAGS,
+} from "./botHelpers";
+import { isLeadSuppressed } from "./compliance";
 
 const FUB_BASE = "https://api.followupboss.com/v1";
 const FUB_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_EMAILS_PER_RUN = 20;
 const DAYS_BETWEEN_EMAILS = 365;
+
+// ── Suppression gate (audit P0-2) ────────────────────────────────────────────
+// Annual nurture honours the SAME suppression set as every other sender. The
+// one carve-out: "annual nurture only" is in the shared list precisely so the
+// OTHER senders skip these leads — for this sender it is the enrollment tag,
+// not a suppression.
+
+export interface SuppressionVerdict {
+  reason: string;
+  /** Permanent classes (opt-out tags, FUB unsubscribe flags, the compliance
+   * registry) also deactivate the enrollment; temporary tags only skip. */
+  deactivate: boolean;
+}
+
+export async function annualSuppressionVerdict(
+  personId: number,
+  fubData: any,
+  lowerTags: string[]
+): Promise<SuppressionVerdict | null> {
+  // 1. The compliance registry — the strongest signal we own.
+  if (await isLeadSuppressed(personId)) {
+    return { reason: "compliance registry (suppressedLeads)", deactivate: true };
+  }
+
+  // 2. FUB's own unsubscribe flags (same fields the Python is_excluded checks).
+  if (
+    fubData?.unsubscribed ||
+    fubData?.emailOptOut ||
+    fubData?.unsubscribedEmail ||
+    fubData?.isUnsubscribed
+  ) {
+    return { reason: "FUB unsubscribed/emailOptOut flag", deactivate: true };
+  }
+
+  // 3. The shared suppression tag list, minus this sender's own enrollment tag.
+  const suppressionTags = new Set(
+    getSharedSuppressionTags().filter((t) => t !== "annual nurture only")
+  );
+  for (const tag of lowerTags) {
+    if (suppressionTags.has(tag)) {
+      return { reason: `suppression tag "${tag}"`, deactivate: HARD_OPT_OUT_TAGS.has(tag) };
+    }
+  }
+
+  return null;
+}
 
 // ── FUB helpers ──────────────────────────────────────────────────────────────
 
@@ -256,6 +308,37 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
           continue;
         }
 
+        // Suppression gate — same set as every other sender (audit P0-2). An
+        // opt-out class hit also deactivates the enrollment so the lead can
+        // never be one re-run away from another yearly email.
+        const suppression = await annualSuppressionVerdict(lead.personId, fubData, tags);
+        if (suppression) {
+          result.skipped++;
+          result.details.push(
+            `SUPPRESSED (${suppression.reason}): ${lead.leadName}` +
+            (suppression.deactivate ? " — enrollment deactivated" : "")
+          );
+          if (suppression.deactivate) {
+            await db.update(annualNurtureLeads)
+              .set({ active: false })
+              .where(eq(annualNurtureLeads.id, lead.id));
+          }
+          await writeObservation({
+            source: "annual_nurture",
+            severity: "info",
+            category: "suppressed_skip",
+            message: `Annual nurture suppressed lead ${lead.personId} — ${suppression.reason}`,
+            detail: JSON.stringify({
+              personId: lead.personId,
+              reason: suppression.reason,
+              deactivated: suppression.deactivate,
+            }),
+            autoFixable: 0,
+            runId,
+          });
+          continue;
+        }
+
         // Check if lead has a valid email
         const leadEmail = lead.email || (fubData.emails?.[0]?.value ?? "");
         if (!leadEmail || !leadEmail.includes("@")) {
@@ -275,12 +358,14 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
           enrolledMonths
         );
 
-        // Send email
+        // Send email — always with the standard compliance footer
+        // (unsubscribe instruction + TREC IABS/CPN links + postal address),
+        // the same footer every Python sender ships.
         await transporter.sendMail({
           from: `"Peter Allen - Lifestyle Design Realty" <${fromEmail}>`,
           to: leadEmail,
           subject: email.subject,
-          text: email.body,
+          text: appendPlainTextEmailFooter(email.body),
         });
 
         // Post FUB note

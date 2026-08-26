@@ -20,7 +20,7 @@
  */
 
 import { eq } from "drizzle-orm";
-import { suppressedLeads } from "../drizzle/schema";
+import { annualNurtureLeads, suppressedLeads } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { getDb, writeObservation } from "./db";
 
@@ -146,8 +146,13 @@ export async function suppressLead(opts: SuppressLeadOptions): Promise<SuppressL
       console.warn(`[compliance] Could not fetch FUB person ${personId}:`, fetchErr);
     }
 
-    // 3. Set FUB stage to "Trash" and add "opt-out" tag (preserving existing tags)
-    const updatedTags = Array.from(new Set([...currentTags, "opt-out"]));
+    // 3. Set FUB stage to "Trash" and add "opt-out" tag (preserving existing
+    //    tags — except "Annual Nurture Only", which is stripped: an opted-out
+    //    lead must not remain enrolled in ANY send flow, the yearly one included)
+    const updatedTags = Array.from(new Set([
+      ...currentTags.filter((t) => t.toLowerCase() !== "annual nurture only"),
+      "opt-out",
+    ]));
     try {
       await fubPut(`/people/${personId}`, {
         stage: "Trash",
@@ -180,6 +185,7 @@ export async function suppressLead(opts: SuppressLeadOptions): Promise<SuppressL
       `  • Lead stage set to "Trash"`,
       `  • "opt-out" tag added`,
       `  • Lead removed from all automated outreach (emails, texts, bot nurture)`,
+      `  • Annual nurture enrollment deactivated (if any)`,
       `  • Suppression recorded in compliance registry`,
     ].filter(Boolean).join("\n");
 
@@ -206,6 +212,16 @@ export async function suppressLead(opts: SuppressLeadOptions): Promise<SuppressL
         });
       } catch (dbErr) {
         console.warn(`[compliance] DB insert failed for person ${personId}:`, dbErr);
+      }
+
+      // 5b. Neutralize the annual-nurture flow: any enrollment row for this
+      // lead goes inactive, so the yearly sender can never pick them up again.
+      try {
+        await db.update(annualNurtureLeads)
+          .set({ active: false })
+          .where(eq(annualNurtureLeads.personId, personId));
+      } catch (annualErr) {
+        console.warn(`[compliance] Annual-nurture deactivation failed for person ${personId}:`, annualErr);
       }
     }
 

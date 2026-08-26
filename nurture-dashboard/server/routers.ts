@@ -21,7 +21,7 @@ import { getLeadMemories, formatMemoriesForContext, autoExtractAndStore } from "
 import { createHeartbeatJob } from "./_core/heartbeat";
 import { parse as parseCookie } from "cookie";
 import { getActiveAgents, normalizeAgentName, getBotStatusRoster } from "./agentRegistry";
-import { requireAdmin, requireAdminOrAgent, requirePersonOwnership, accessFields } from "./queueAccess";
+import { requireAdmin, requireAdminOrAgent, requirePersonOwnership, requirePersonOwnershipForNoteLog, resolveQueueAccess, adminTokenIsValid, accessFields } from "./queueAccess";
 import { stripDraftReasoning } from "./draftParser";
 
 const execAsync = promisify(exec);
@@ -227,37 +227,40 @@ export const appRouter = router({
       .input(z.object({
         agentFilter: z.string().optional(),
         adminToken: z.string().optional(),
+        key: z.string().optional(),
       }))
       .query(async ({ input }) => {
         // ── URL-param-based access control (no login required) ─────────────
-        // Each agent gets their own link with ?agent=Name. The server scopes
-        // results to that agent. Admin override: pass ?admin=TOKEN&agent=all
-        // to see the full queue.
-        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
-          input.adminToken === ENV.powerQueueAdminToken);
-
-        if (isAdmin) {
+        // Each agent's link is ?agent=Name&key=<per-agent secret>; the server
+        // scopes results to that agent. Admin override: ?admin=TOKEN&agent=all.
+        // A roster-valid name WITHOUT its key is a pre-2026-08 link: return the
+        // staleLink flag so the client shows the "ask Peter for your new link"
+        // page instead of an empty queue.
+        if (adminTokenIsValid(input.adminToken)) {
           // Admin token valid — return full queue or filtered to requested agent
           const filter = input.agentFilter === "all" ? undefined : input.agentFilter;
           const leads = await getPendingQueue(ENV.fubApiKey, filter);
-          return { leads, isAdmin: true, agentName: null };
+          return { leads, isAdmin: true, agentName: null, staleLink: false };
         }
 
         // Non-admin: agent param is REQUIRED and scopes the result
         if (!input.agentFilter || input.agentFilter === "all") {
           // No agent specified and no admin token → empty result
-          return { leads: [], isAdmin: false, agentName: null };
+          return { leads: [], isAdmin: false, agentName: null, staleLink: false };
         }
 
-        // Validate agent name against the live roster
-        const agents = await getActiveAgents(undefined, ENV.fubApiKey);
-        const matched = agents.find(a =>
-          a.slug === input.agentFilter!.toLowerCase() ||
-          a.name.toLowerCase() === input.agentFilter!.toLowerCase()
-        );
-        const effectiveFilter = matched ? matched.name : "__no_such_agent__";
-        const leads = await getPendingQueue(ENV.fubApiKey, effectiveFilter);
-        return { leads, isAdmin: false, agentName: matched?.name ?? null };
+        const access = await resolveQueueAccess({
+          agent: input.agentFilter,
+          key: input.key,
+        });
+        if (access.type === "stale_link") {
+          return { leads: [], isAdmin: false, agentName: access.agentName, staleLink: true };
+        }
+        if (access.type !== "agent") {
+          return { leads: [], isAdmin: false, agentName: null, staleLink: false };
+        }
+        const leads = await getPendingQueue(ENV.fubApiKey, access.agentName);
+        return { leads, isAdmin: false, agentName: access.agentName, staleLink: false };
       }),
 
     /**
@@ -271,8 +274,7 @@ export const appRouter = router({
       .input(z.object({ adminToken: z.string().optional() }))
       .query(async ({ input }) => {
         // Only admin token holders can see pond SMS leads
-        const isAdmin = !!(input.adminToken && ENV.powerQueueAdminToken &&
-          input.adminToken === ENV.powerQueueAdminToken);
+        const isAdmin = adminTokenIsValid(input.adminToken);
         if (!isAdmin) return [];
         return getPondSmsOnlyLeads(ENV.fubApiKey);
       }),
@@ -309,7 +311,10 @@ export const appRouter = router({
         })
       )
       .mutation(async ({ input }) => {
-        await requirePersonOwnership(input, input.personId);
+        // Keyless exception (see requirePersonOwnershipForNoteLog): the Python
+        // bot's emailed tap-to-text links land here with ?agent=Name and no
+        // key. Write-only, ownership still verified, nothing read back.
+        await requirePersonOwnershipForNoteLog(input, input.personId);
         const { personId, messageBody, channel } = input;
 
         // Dynamic: normalize agentName via agentRegistry (Golden Rule — no hardcoded names)

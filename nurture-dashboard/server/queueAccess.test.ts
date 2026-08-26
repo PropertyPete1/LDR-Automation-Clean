@@ -3,6 +3,10 @@ import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { clearPersonOwnerCache } from "./queueAccess";
 
+// Per-agent Power Queue keys (2026-08: agent identity = name + key)
+process.env.POWER_QUEUE_AGENT_KEYS =
+  "peter:peter-key,steven:steven-key,stefanie:stefanie-key,tiffany:tiffany-key,laila:laila-key,jason:jason-key,irma:irma-key,abby:abby-key";
+
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock("./_core/env", () => ({
@@ -212,7 +216,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ notes: [] }),
       });
-      const result = await caller().leads.getNotes({ personId: 123, agent: "Steven" });
+      const result = await caller().leads.getNotes({ personId: 123, agent: "Steven", key: "steven-key" });
       expect(result).toBeDefined();
     });
 
@@ -242,7 +246,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      const result = await caller().leads.getLastInbound({ personId: 123, agent: "Jason" });
+      const result = await caller().leads.getLastInbound({ personId: 123, agent: "Jason", key: "jason-key" });
       expect(result).toBeDefined();
     });
 
@@ -263,7 +267,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      const result = await caller().fub.getLatestInboundSms({ personId: 123, agent: "Tiffany" });
+      const result = await caller().fub.getLatestInboundSms({ personId: 123, agent: "Tiffany", key: "tiffany-key" });
       expect(result).toBeDefined();
     });
   });
@@ -280,7 +284,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("agent.getRoster succeeds with valid agent", async () => {
-      const result = await caller().agent.getRoster({ agent: "Steven" });
+      const result = await caller().agent.getRoster({ agent: "Steven", key: "steven-key" });
       expect(result).toBeDefined();
     });
 
@@ -307,7 +311,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     });
 
     it("agent.getLeads succeeds with valid agent", async () => {
-      const result = await caller().agent.getLeads({ agentName: "Steven", agent: "Steven" });
+      const result = await caller().agent.getLeads({ agentName: "Steven", agent: "Steven", key: "steven-key" });
       expect(result).toBeDefined();
     });
 
@@ -347,7 +351,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       const result = await caller().ai.draftSms({
         leadName: "Test",
         assignedAgent: "Steven",
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toHaveProperty("draft");
     });
@@ -361,7 +365,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("ai.chat succeeds with valid agent", async () => {
       const result = await caller().ai.chat({
         messages: [{ role: "user", content: "Hello" }],
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toHaveProperty("content");
     });
@@ -404,7 +408,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         memoryText: "test",
         category: "market_knowledge",
         importanceScore: 3,
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toEqual({ success: true });
     });
@@ -426,7 +430,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         draftText: "test",
         draftType: "outbound",
         action: "sent",
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toEqual({ success: true });
     });
@@ -451,7 +455,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       });
       const result = await caller().compliance.markUnsubscribe({
         personId: 123,
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toBeDefined();
     });
@@ -499,7 +503,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       const result = await caller().leads.logSentNote({
         personId: 123,
         agentName: "Steven",
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toEqual({ success: true });
     });
@@ -525,7 +529,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         personId: 123,
         agentName: "Steven",
         snoozeUntil: "2026-08-01",
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toBeDefined();
     });
@@ -556,7 +560,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         personId: 123,
         agentName: "Steven",
         actionType: "texted",
-        agent: "Steven",
+        agent: "Steven", key: "steven-key",
       });
       expect(result).toBeDefined();
     });
@@ -569,7 +573,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
   describe("Invalid agent names are rejected", () => {
     it("rejects a non-roster agent name", async () => {
       await expect(
-        caller().leads.getNotes({ personId: 123, agent: "hacker" })
+        caller().leads.getNotes({ personId: 123, agent: "hacker", key: "hacker-key" })
       ).rejects.toThrow("Valid agent or admin token required");
     });
 
@@ -652,7 +656,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       // First fetch: person lookup → assigned to Jason (fubUserId=37)
       mockPersonLookup(37);
       await expect(
-        caller().leads.getNotes({ personId: 999, agent: "tiffany" })
+        caller().leads.getNotes({ personId: 999, agent: "tiffany", key: "tiffany-key" })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
 
@@ -664,7 +668,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ notes: [{ body: "test note" }] }),
       });
-      const result = await caller().leads.getNotes({ personId: 999, agent: "jason" });
+      const result = await caller().leads.getNotes({ personId: 999, agent: "jason", key: "jason-key" });
       expect(result).toBeDefined();
       expect(result.notes.length).toBeGreaterThanOrEqual(0);
     });
@@ -684,7 +688,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("leads.getLastInbound: wrong agent → UNAUTHORIZED", async () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
-        caller().leads.getLastInbound({ personId: 999, agent: "tiffany" })
+        caller().leads.getLastInbound({ personId: 999, agent: "tiffany", key: "tiffany-key" })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
 
@@ -694,7 +698,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      const result = await caller().leads.getLastInbound({ personId: 999, agent: "jason" });
+      const result = await caller().leads.getLastInbound({ personId: 999, agent: "jason", key: "jason-key" });
       expect(result).toBeDefined();
     });
 
@@ -703,7 +707,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("fub.getLatestInboundSms: wrong agent → UNAUTHORIZED", async () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
-        caller().fub.getLatestInboundSms({ personId: 999, agent: "laila" })
+        caller().fub.getLatestInboundSms({ personId: 999, agent: "laila", key: "laila-key" })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
 
@@ -713,7 +717,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      const result = await caller().fub.getLatestInboundSms({ personId: 999, agent: "jason" });
+      const result = await caller().fub.getLatestInboundSms({ personId: 999, agent: "jason", key: "jason-key" });
       expect(result).toBeDefined();
     });
 
@@ -723,7 +727,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
         caller().leads.logSentNote({
-          personId: 999, agentName: "Tiffany", messageBody: "hi", agent: "tiffany",
+          personId: 999, agentName: "Tiffany", messageBody: "hi", agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -736,7 +740,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         json: async () => ({ note: { id: 1 } }),
       });
       const result = await caller().leads.logSentNote({
-        personId: 999, agentName: "Jason", messageBody: "hi", agent: "jason",
+        personId: 999, agentName: "Jason", messageBody: "hi", agent: "jason", key: "jason-key",
       });
       expect(result).toBeDefined();
     });
@@ -747,7 +751,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
         caller().leads.snoozeLead({
-          personId: 999, agentName: "Tiffany", snoozeUntil: "2026-08-01", agent: "tiffany",
+          personId: 999, agentName: "Tiffany", snoozeUntil: "2026-08-01", agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -760,7 +764,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         json: async () => ({ note: { id: 1 } }),
       });
       const result = await caller().leads.snoozeLead({
-        personId: 999, agentName: "Jason", snoozeUntil: "2026-08-01", agent: "jason",
+        personId: 999, agentName: "Jason", snoozeUntil: "2026-08-01", agent: "jason", key: "jason-key",
       });
       expect(result).toBeDefined();
     });
@@ -770,13 +774,13 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("leads.unsnoozeLead: wrong agent → UNAUTHORIZED", async () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
-        caller().leads.unsnoozeLead({ personId: 999, agentName: "Tiffany", agent: "tiffany" })
+        caller().leads.unsnoozeLead({ personId: 999, agentName: "Tiffany", agent: "tiffany", key: "tiffany-key" })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
 
     it("leads.unsnoozeLead: correct agent → works", async () => {
       mockPersonLookup(37); // assigned to Jason
-      const result = await caller().leads.unsnoozeLead({ personId: 999, agentName: "Jason", agent: "jason" });
+      const result = await caller().leads.unsnoozeLead({ personId: 999, agentName: "Jason", agent: "jason", key: "jason-key" });
       expect(result).toEqual({ success: true });
     });
 
@@ -786,7 +790,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
         caller().leads.recordAction({
-          personId: 999, agentName: "Tiffany", actionType: "texted", agent: "tiffany",
+          personId: 999, agentName: "Tiffany", actionType: "texted", agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -794,7 +798,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("leads.recordAction: correct agent → works", async () => {
       mockPersonLookup(37); // assigned to Jason
       const result = await caller().leads.recordAction({
-        personId: 999, agentName: "Jason", actionType: "texted", agent: "jason",
+        personId: 999, agentName: "Jason", actionType: "texted", agent: "jason", key: "jason-key",
       });
       expect(result).toEqual({ success: true });
     });
@@ -805,7 +809,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
         caller().ai.draftSms({
-          leadName: "Test Lead", personId: 999, assignedAgent: "Tiffany", agent: "tiffany",
+          leadName: "Test Lead", personId: 999, assignedAgent: "Tiffany", agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -823,7 +827,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         json: async () => ({ content: [{ type: "text", text: "Hey Test Lead! How's the search going?" }] }),
       });
       const result = await caller().ai.draftSms({
-        leadName: "Test Lead", personId: 999, assignedAgent: "Jason", agent: "jason",
+        leadName: "Test Lead", personId: 999, assignedAgent: "Jason", agent: "jason", key: "jason-key",
       });
       expect(result).toHaveProperty("draft");
     });
@@ -836,7 +840,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         caller().ai.chat({
           messages: [{ role: "user", content: "hi" }],
           leadContext: { id: 999, name: "Test Lead" },
-          agent: "tiffany",
+          agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -846,7 +850,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       const result = await caller().ai.chat({
         messages: [{ role: "user", content: "hi" }],
         leadContext: { id: 999, name: "Test Lead", assigned_agent: "Jason" },
-        agent: "jason",
+        agent: "jason", key: "jason-key",
       });
       expect(result).toHaveProperty("content");
     });
@@ -857,7 +861,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
         caller().compliance.markUnsubscribe({
-          personId: 999, reason: "agent_marked", agent: "tiffany",
+          personId: 999, reason: "agent_marked", agent: "tiffany", key: "tiffany-key",
         })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
@@ -865,7 +869,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("compliance.markUnsubscribe: correct agent → works", async () => {
       mockPersonLookup(37); // assigned to Jason
       const result = await caller().compliance.markUnsubscribe({
-        personId: 999, reason: "agent_marked", agent: "jason",
+        personId: 999, reason: "agent_marked", agent: "jason", key: "jason-key",
       });
       expect(result).toEqual({ success: true });
     });
@@ -883,13 +887,13 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("compliance.isLeadSuppressed: wrong agent → UNAUTHORIZED", async () => {
       mockPersonLookup(37); // assigned to Jason
       await expect(
-        caller().compliance.isLeadSuppressed({ personId: 999, agent: "tiffany" })
+        caller().compliance.isLeadSuppressed({ personId: 999, agent: "tiffany", key: "tiffany-key" })
       ).rejects.toThrow("Lead is not assigned to your queue");
     });
 
     it("compliance.isLeadSuppressed: correct agent → works", async () => {
       mockPersonLookup(37); // assigned to Jason
-      const result = await caller().compliance.isLeadSuppressed({ personId: 999, agent: "jason" });
+      const result = await caller().compliance.isLeadSuppressed({ personId: 999, agent: "jason", key: "jason-key" });
       expect(result).toEqual({ suppressed: false });
     });
 
@@ -898,7 +902,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
     it("leads.getNotes: person not found in FUB → UNAUTHORIZED", async () => {
       mockPersonNotFound();
       await expect(
-        caller().leads.getNotes({ personId: 99999, agent: "jason" })
+        caller().leads.getNotes({ personId: 99999, agent: "jason", key: "jason-key" })
       ).rejects.toThrow("Lead not found or not assigned to any agent");
     });
 
@@ -913,7 +917,7 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason" });
+      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason", key: "jason-key" });
 
       const fetchCallsAfterFirst = mockFetch.mock.calls.length;
 
@@ -922,11 +926,114 @@ describe("Security Hardening: resolveQueueAccess gating", () => {
         ok: true, status: 200, headers: { get: () => null },
         json: async () => ({ textMessages: [] }),
       });
-      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason" });
+      await caller().leads.getLastInbound({ personId: uniquePersonId, agent: "jason", key: "jason-key" });
 
       // Only 1 new fetch (the textMessages call), NOT 2 (no person lookup)
       const fetchCallsAfterSecond = mockFetch.mock.calls.length;
       expect(fetchCallsAfterSecond - fetchCallsAfterFirst).toBe(1);
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6. PER-AGENT KEYS (2026-08-26, audit P0-3): a name alone is not an identity
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("Per-agent keys: ?agent=Name alone no longer grants access", () => {
+  beforeEach(() => {
+    mockFetch.mockClear();
+    clearPersonOwnerCache();
+  });
+
+  it("a roster-valid agent WITHOUT a key gets the stale-link message, not access", async () => {
+    await expect(
+      caller().leads.getNotes({ personId: 123, agent: "Steven" })
+    ).rejects.toThrow(/POWER_QUEUE_LINK_EXPIRED/);
+  });
+
+  it("a roster-valid agent with the WRONG key gets the stale-link message", async () => {
+    await expect(
+      caller().leads.getNotes({ personId: 123, agent: "Steven", key: "tiffany-key" })
+    ).rejects.toThrow(/POWER_QUEUE_LINK_EXPIRED/);
+  });
+
+  it("an unknown agent name still gets the generic denial (no roster oracle)", async () => {
+    await expect(
+      caller().leads.getNotes({ personId: 123, agent: "Ghost", key: "ghost-key" })
+    ).rejects.toThrow("Valid agent or admin token required");
+  });
+
+  it("the right key for the right agent passes (and ownership still applies)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 1 }), // Steven owns 123
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ notes: [] }),
+    });
+    const result = await caller().leads.getNotes({ personId: 123, agent: "Steven", key: "steven-key" });
+    expect(result).toBeDefined();
+  });
+
+  it("a valid key still cannot read another agent's lead (ownership intact)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 20 }), // Tiffany's lead
+    });
+    await expect(
+      caller().leads.getNotes({ personId: 123, agent: "Steven", key: "steven-key" })
+    ).rejects.toThrow("not assigned to your queue");
+  });
+
+  it("the admin token is unchanged: same token, agent param optional", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ notes: [] }),
+    });
+    const result = await caller().leads.getNotes({ personId: 123, adminToken: "test_admin_token" });
+    expect(result).toBeDefined();
+  });
+
+  it("getPendingQueue flags a keyless agent link as stale instead of erroring", async () => {
+    const result = await caller().fub.getPendingQueue({ agentFilter: "Steven" });
+    expect(result.staleLink).toBe(true);
+    expect(result.leads).toEqual([]);
+  });
+
+  it("getPendingQueue serves the queue when the key is right", async () => {
+    const result = await caller().fub.getPendingQueue({ agentFilter: "Steven", key: "steven-key" });
+    expect(result.staleLink).toBe(false);
+    expect(result.isAdmin).toBe(false);
+    expect(result.agentName).toBe("Steven");
+  });
+
+  it("logSentNote keeps working from keyless emailed links (write-only exception)", async () => {
+    // The Python bot's digest emails link to /sms-redirect with ?agent=Name and
+    // no key; the resulting FUB note is what the touch audit trail depends on.
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 1 }), // Steven owns 123
+    });
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ id: 555 }), // POST /notes
+    });
+    const result = await caller().leads.logSentNote({
+      personId: 123,
+      agentName: "Steven",
+      agent: "Steven",
+    });
+    expect(result).toBeDefined();
+  });
+
+  it("logSentNote's keyless path still refuses another agent's lead", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => ({ assignedUserId: 20 }), // Tiffany's lead
+    });
+    await expect(
+      caller().leads.logSentNote({ personId: 123, agentName: "Steven", agent: "Steven" })
+    ).rejects.toThrow("not assigned to your queue");
   });
 });

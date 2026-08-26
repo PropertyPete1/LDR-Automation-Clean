@@ -19,10 +19,15 @@ export default function AgentDirectory() {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("agent") ?? "";
   }, []);
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("key") ?? "";
+  }, []);
   const accessParams = useMemo(() => ({
     ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
     ...(urlAgent ? { agent: urlAgent } : {}),
-  }), [urlAdminToken, urlAgent]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [urlAdminToken, urlAgent, urlKey]);
 
   const { data: rosterData } = trpc.agent.getRoster.useQuery(accessParams, { staleTime: 10 * 60_000 });
   const AGENTS = (rosterData?.roster ?? []).map(a => ({

@@ -264,10 +264,15 @@ export default function AgentDashboard() {
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("admin") ?? "";
   }, []);
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("key") ?? "";
+  }, []);
   const accessParams = useMemo(() => ({
     ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
     ...(agentName ? { agent: agentName } : {}),
-  }), [urlAdminToken, agentName]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [urlAdminToken, agentName, urlKey]);
 
   const [textedLeads, setTextedLeads] = useState<Record<number, boolean>>(() => {
     try {

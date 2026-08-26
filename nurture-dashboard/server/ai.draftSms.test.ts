@@ -2,6 +2,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+// Per-agent Power Queue keys (2026-08: agent identity = name + key)
+process.env.POWER_QUEUE_AGENT_KEYS =
+  "peter:peter-key,steven:steven-key,stefanie:stefanie-key,tiffany:tiffany-key,laila:laila-key,jason:jason-key,irma:irma-key,abby:abby-key";
+
 // Mock ENV
 vi.mock("./_core/env", () => ({
   ENV: {
@@ -112,7 +116,7 @@ describe("ai.draftSms", () => {
       leadCity: "Austin",
       daysStale: 18,
       assignedAgent: "Steven",
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result).toHaveProperty("draft");
@@ -134,7 +138,7 @@ describe("ai.draftSms", () => {
       leadCity: "San Antonio",
       daysStale: 21,
       assignedAgent: "Stefanie",
-      agent: "Stefanie",
+      agent: "Stefanie", key: "stefanie-key",
     });
 
     expect(result.draft).not.toMatch(/^"/);
@@ -156,7 +160,7 @@ describe("ai.draftSms", () => {
       daysStale: 17,
       assignedAgent: "Peter",
       notes: "Interested in 3BR near Riverwalk, budget $400k",
-      agent: "Peter",
+      agent: "Peter", key: "peter-key",
     });
 
     // Verify it called Anthropic API directly
@@ -183,7 +187,7 @@ describe("ai.draftSms", () => {
       leadCity: "Austin",
       daysStale: 10,
       assignedAgent: "Steven",
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     const [url] = mockFetch.mock.calls[0];

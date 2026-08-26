@@ -3,6 +3,10 @@ import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { clearPersonOwnerCache } from "./queueAccess";
 
+// Per-agent Power Queue keys (2026-08: agent identity = name + key)
+process.env.POWER_QUEUE_AGENT_KEYS =
+  "peter:peter-key,steven:steven-key,stefanie:stefanie-key,tiffany:tiffany-key,laila:laila-key,jason:jason-key,irma:irma-key,abby:abby-key";
+
 // Mock fetch for FUB person ownership lookups
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
@@ -125,7 +129,7 @@ describe("ai.chat", () => {
         assigned_agent: "Steven",
         sms_body: "Hey Sarah, hope you had a great week!",
       },
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result).toHaveProperty("content");
@@ -172,7 +176,7 @@ describe("ai.chat", () => {
         notes: "Interested in 3BR, budget around $350k | Called back last week",
         last_inbound_text: "Yes I am still interested, what are the rates?",
       },
-      agent: "Stefanie",
+      agent: "Stefanie", key: "stefanie-key",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -232,7 +236,7 @@ describe("ai.chat", () => {
         name: "Test Lead",
         assigned_agent: "Steven",
       },
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -273,7 +277,7 @@ describe("ai.chat", () => {
         name: "Test Lead 2",
         assigned_agent: "Steven",
       },
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(mockInvokeLLM).toHaveBeenCalledOnce();
@@ -294,7 +298,7 @@ describe("copilot.saveMemory", () => {
       memoryText: "Steven's leads are mostly in Austin and prefer new construction",
       category: "market_knowledge",
       importanceScore: 3,
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result).toEqual({ success: true });
@@ -312,7 +316,7 @@ describe("copilot.logFeedback", () => {
       leadCity: "San Antonio",
       draftType: "outbound",
       action: "sent",
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result).toEqual({ success: true });
@@ -328,7 +332,7 @@ describe("copilot.logFeedback", () => {
       leadCity: "Austin",
       draftType: "outbound",
       action: "regenerated",
-      agent: "Tiffany",
+      agent: "Tiffany", key: "tiffany-key",
     });
 
     expect(result).toEqual({ success: true });
