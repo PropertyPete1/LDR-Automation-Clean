@@ -219,11 +219,15 @@ def test_a_legacy_state_db_migrates_to_timer_generations(m, tmp_path):
     m.AuditDB(str(path))
 
 
-# ── the bot's own sends are not touches ──────────────────────────────────────
+# ── the touched check: only the assigned agent, only at/after the anchor ─────
+# Policy 2026-08-26: a speed-to-lead timer is cancelled as "touched" ONLY by
+# the ASSIGNED AGENT's own activity, timestamped at or after the timer's
+# anchor. Bot sends stay excluded, as before.
 
 def test_a_nurture_send_does_not_count_as_first_touch(watch_engine, tmp_db, fake_http):
     """The pond email syncs into FUB and bumps lastSentEmail like an agent's
-    mail — matched against our own audit send, it must not cancel a timer."""
+    mail — its /emails row carries the API-key user (2), not the agent, and it
+    matches our own audit send. It must not cancel a timer."""
     send_ts = NOW - dt.timedelta(hours=1)
     tmp_db.log("pond_nurture", "sent", 42, {})
     with tmp_db.connect() as con:
@@ -231,18 +235,101 @@ def test_a_nurture_send_does_not_count_as_first_touch(watch_engine, tmp_db, fake
                     ((send_ts + dt.timedelta(seconds=40)).isoformat(),))
     person = _stub(42, 9)
     person["lastSentEmail"] = send_ts.isoformat()
-    fake_http.responses = [(200, {})]  # notes lookup finds nothing
+    bot_email = {"id": 51937, "created": send_ts.isoformat(), "userId": 2,
+                 "relatedPeople": [{"personId": 42, "sentByPerson": False}]}
+    fake_http.responses = [
+        (200, {"emails": [bot_email]}),  # the synced copy of our own send
+        (200, {}),                       # notes lookup finds nothing
+    ]
 
     anchor = NOW - dt.timedelta(hours=3)
-    assert watch_engine.lead_touched_after_creation(person, anchor) is False
+    assert watch_engine.lead_touched_after_creation(person, anchor, assigned_user_id=9) is False
 
 
-def test_a_real_outbound_email_still_counts_as_touch(watch_engine, tmp_db, fake_http):
+def test_the_assigned_agents_own_email_counts_as_touch(watch_engine, tmp_db, fake_http):
     person = _stub(42, 9)
-    person["lastSentEmail"] = (NOW - dt.timedelta(hours=1)).isoformat()
+    sent_at = NOW - dt.timedelta(hours=1)
+    person["lastSentEmail"] = sent_at.isoformat()
+    agent_email = {"id": 52001, "created": sent_at.isoformat(), "userId": 9,
+                   "relatedPeople": [{"personId": 42, "sentByPerson": False}]}
+    fake_http.responses = [(200, {"emails": [agent_email]})]
 
     anchor = NOW - dt.timedelta(hours=3)
-    assert watch_engine.lead_touched_after_creation(person, anchor) is True
+    assert watch_engine.lead_touched_after_creation(person, anchor, assigned_user_id=9) is True
+
+
+def test_someone_elses_activity_is_not_the_agents_touch(watch_engine, tmp_db, fake_http):
+    """Another agent texting and noting the lead after the anchor is real human
+    activity — but not the ASSIGNED agent's, so the timer must keep running."""
+    anchor = NOW - dt.timedelta(minutes=20)
+    person = _stub(42, 9)
+    person["lastSentText"] = (anchor + dt.timedelta(minutes=5)).isoformat()
+    other_text = {"id": 5, "created": (anchor + dt.timedelta(minutes=5)).isoformat(),
+                  "userId": 11, "isIncoming": False, "message": "following up"}
+    other_note = {"id": 8, "created": (anchor + dt.timedelta(minutes=6)).isoformat(),
+                  "createdById": 11, "subject": "Spoke with them"}
+    fake_http.responses = [
+        (200, {"textMessages": [other_text]}),
+        (200, {"notes": [other_note]}),
+    ]
+
+    assert watch_engine.lead_touched_after_creation(person, anchor, assigned_user_id=9) is False
+
+
+def test_the_agents_own_note_at_the_anchor_instant_counts(watch_engine, tmp_db, fake_http):
+    """AT OR AFTER means the anchor instant itself qualifies — no grace buffer
+    shaves off a note the agent wrote the second the alert landed."""
+    anchor = NOW - dt.timedelta(minutes=20)
+    person = _stub(42, 9)
+    note = {"id": 9, "created": anchor.isoformat(), "createdById": 9,
+            "subject": "Called — left voicemail"}
+    fake_http.responses = [(200, {"notes": [note]})]
+
+    assert watch_engine.lead_touched_after_creation(person, anchor, assigned_user_id=9) is True
+
+
+def test_a_pre_timer_note_never_cancels_the_timer(watch_engine, tmp_db, fake_http):
+    """The Jose Brito case: his record carried a note from 13:23; the
+    assignment-change timer was anchored 13:57. Under the old rule the touch
+    anchor was back-dated to the lead's FUB creation, so the pre-timer note
+    cancelled the escalation. Activity from before the timer existed — even
+    the assigned agent's own — must never cancel it."""
+    anchor = NOW - dt.timedelta(minutes=10)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    person = _stub(42, 9)
+    person["created"] = (NOW - dt.timedelta(days=30)).isoformat()
+    pre_timer_note = {"id": 7, "created": (anchor - dt.timedelta(minutes=34)).isoformat(),
+                      "createdById": 9, "subject": "Left a voicemail"}
+    fake_http.responses = [
+        (200, {"people": [person]}),        # get_person
+        (200, {"notes": [pre_timer_note]}),  # 13:23 vs a 13:57 anchor
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert [t["person_id"] for t in _active_timers(tmp_db)] == [42], \
+        "the pre-timer note cancelled the timer — the Brito bug is back"
+    assert _audit(tmp_db, "new_lead_timer") == []
+
+
+def test_the_assigned_agents_text_after_the_alert_cancels(watch_engine, tmp_db, fake_http):
+    """Five minutes after the speed-to-lead alert, the assigned agent texts the
+    lead — exactly the response the alert asks for, and it must cancel."""
+    anchor = NOW - dt.timedelta(minutes=20)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    person = _stub(42, 9)
+    person["lastSentText"] = (anchor + dt.timedelta(minutes=5)).isoformat()
+    agent_text = {"id": 6, "created": (anchor + dt.timedelta(minutes=5)).isoformat(),
+                  "userId": 9, "isIncoming": False, "message": "Hi! Just saw your inquiry"}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"textMessages": [agent_text]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert _active_timers(tmp_db) == []
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["canceled_touched"]
 
 
 # ── ghost sweep ──────────────────────────────────────────────────────────────

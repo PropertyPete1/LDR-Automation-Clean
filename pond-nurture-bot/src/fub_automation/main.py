@@ -1076,6 +1076,10 @@ class FollowUpBossClient:
         data = self._request("GET", "/emails", params={"personId": person_id, "limit": min(limit, 100)})
         return data.get("emails", data.get("data", []))
 
+    def get_calls(self, person_id: int, limit: int = 100) -> List[dict]:
+        data = self._request("GET", "/calls", params={"personId": person_id, "limit": min(limit, 100)})
+        return data.get("calls", data.get("data", []))
+
     def assign_to_pond(self, person_id: int, pond_id: int) -> dict:
         payload = {"assignedPondId": int(pond_id)}
         if self.settings.dry_run:
@@ -5614,15 +5618,14 @@ class RuleEngine:
             if not person:
                 self.db.cancel_timer(person_id)
                 continue
-            # Timer created_at is the DETECTION anchor (drives the 30/60-min
-            # budget). For touch detection, use the earlier of detection time
-            # and the lead's real FUB creation — an agent who touched the lead
-            # between creation and detection must still cancel the timer.
-            touch_anchor = created
-            person_created = parse_dt(person.get("created") or "")
-            if person_created and person_created < touch_anchor:
-                touch_anchor = person_created
-            if self.lead_touched_after_creation(person, touch_anchor):
+            # Timer created_at is the anchor for BOTH the 30/60-min budget and
+            # the touch check. Policy (2026-08-26): only the ASSIGNED AGENT's
+            # own activity, at or after this anchor, cancels — the Jose Brito
+            # timer (armed 13:57) was killed by a note from 13:23 when the
+            # anchor was back-dated to the lead's FUB creation.
+            assigned_for_touch = person.get("assignedUserId") or timer.get("assigned_user_id")
+            if assigned_for_touch and self.lead_touched_after_creation(
+                    person, created, assigned_user_id=int(assigned_for_touch)):
                 self.db.cancel_timer(person_id)
                 self.db.log("new_lead_timer", "canceled_touched", person_id)
                 continue
@@ -6516,13 +6519,25 @@ class RuleEngine:
                 contact_tags.add(str(t).lower())
         return bool(contact_tags.intersection({t.lower() for t in tags}))
 
-    def lead_touched_after_creation(self, person: dict, created: dt.datetime) -> bool:
-        """Return True only if a HUMAN agent touched this lead after it was created.
+    def lead_touched_after_creation(self, person: dict, created: dt.datetime,
+                                    assigned_user_id: Optional[int] = None) -> bool:
+        """Return True only if a HUMAN agent touched this lead after `created`.
 
-        Automation-generated notes (subject starts with 'Automation:') are explicitly
-        excluded so they cannot satisfy the speed-to-lead first-touch requirement.
-        Only real agent actions — calls, outbound texts, outbound emails, or a
-        non-automation note — count as a qualifying touch.
+        Two modes:
+
+        - assigned_user_id given (speed-to-lead timers — new-lead AND
+          assignment-change, policy of 2026-08-26): ONLY activity by that
+          agent, timestamped AT OR AFTER `created` (the timer's anchor),
+          counts. Notes/calls/texts from anyone else, or from before the
+          timer existed, never cancel — the Jose Brito timer (armed 13:57)
+          was killed by a 13:23 note under the old any-human rule.
+
+        - assigned_user_id None (untouched-assignment daily sweep): any
+          human touch after the anchor counts, as before.
+
+        In both modes, automation-generated notes (subject starts with
+        'Automation:') and the bot's own audit-logged sends are excluded so
+        they cannot satisfy the first-touch requirement.
 
         IMPORTANT: FUB does NOT reliably bump lastCommunication/lastActivity for
         manual notes or unlogged calls. Therefore we ALWAYS check notes directly
@@ -6555,6 +6570,10 @@ class RuleEngine:
 
         def _is_bot_send(ts: dt.datetime) -> bool:
             return any(abs((ts - bot_ts).total_seconds()) <= 300 for bot_ts in bot_send_times)
+
+        if assigned_user_id is not None:
+            return self._touched_by_assigned_agent(
+                person, person_id, created, int(assigned_user_id), _is_bot_send)
 
         # 1. Fast-path: Real call or outbound text/email — human-initiated,
         #    unless the timestamp matches one of the bot's own sends.
@@ -6616,6 +6635,102 @@ class RuleEngine:
         # the 60-min reassignment timer the moment the 30-min warning note is posted,
         # preventing reassignment from ever firing. Only explicit human actions
         # (calls, texts, emails, non-automation notes) count as a qualifying touch.
+        return False
+
+    def _touched_by_assigned_agent(self, person: dict, person_id: int,
+                                   anchor: dt.datetime, agent_id: int,
+                                   is_bot_send) -> bool:
+        """Strict touch check for speed-to-lead timers (policy 2026-08-26).
+
+        A timer is cancelled ONLY by activity that is provably the assigned
+        agent's own — a note they created, a text/email they sent, a call
+        they were on — timestamped at or after the timer's anchor. The
+        person-level lastX stamps carry no author, so they gate which channel
+        APIs are worth querying but can never prove a touch by themselves.
+        Anything unattributable, from anyone else, or from before the anchor
+        contributes nothing; so does an API error (fail closed — an outage
+        must not cancel a timer, per the ONLY in the policy).
+        """
+        def _row_ts(row: dict) -> Optional[dt.datetime]:
+            return parse_dt(row.get("created") or row.get("createdAt") or "")
+
+        def _stamp_at_or_after(*keys: str) -> bool:
+            for key in keys:
+                value = person.get(key)
+                if value:
+                    parsed = parse_dt(value)
+                    if parsed and parsed >= anchor:
+                        return True
+            return False
+
+        # Outbound texts — /textMessages rows carry the sending agent's userId.
+        if _stamp_at_or_after("lastSentText"):
+            try:
+                for msg in self.fub.get_text_messages(person_id, limit=20):
+                    ts = _row_ts(msg)
+                    if ts is None or ts < anchor or is_inbound_message(msg):
+                        continue
+                    if int(msg.get("userId") or 0) != agent_id or is_bot_send(ts):
+                        continue
+                    LOGGER.info("touched_by_assigned_agent: person %s — agent %s text at %s",
+                                person_id, agent_id, ts.isoformat())
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("touched_by_assigned_agent: text lookup failed for person %s: %s",
+                               person_id, exc)
+
+        # Outbound emails — /emails rows carry userId too (the bot's own synced
+        # sends carry the API-key user's id and are additionally excluded by the
+        # audit-log time match in is_bot_send).
+        if _stamp_at_or_after("lastSentEmail"):
+            try:
+                for mail in self.fub.get_emails(person_id, limit=20):
+                    ts = _row_ts(mail)
+                    if ts is None or ts < anchor or is_inbound_message(mail):
+                        continue
+                    if int(mail.get("userId") or 0) != agent_id or is_bot_send(ts):
+                        continue
+                    LOGGER.info("touched_by_assigned_agent: person %s — agent %s email at %s",
+                                person_id, agent_id, ts.isoformat())
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("touched_by_assigned_agent: email lookup failed for person %s: %s",
+                               person_id, exc)
+
+        # Calls the agent was on — either direction is the agent working the lead.
+        if _stamp_at_or_after("lastCall", "lastIncomingCall"):
+            try:
+                for call in self.fub.get_calls(person_id, limit=20):
+                    ts = _row_ts(call)
+                    if ts is None or ts < anchor:
+                        continue
+                    if int(call.get("userId") or 0) != agent_id:
+                        continue
+                    LOGGER.info("touched_by_assigned_agent: person %s — agent %s call at %s",
+                                person_id, agent_id, ts.isoformat())
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("touched_by_assigned_agent: call lookup failed for person %s: %s",
+                               person_id, exc)
+
+        # Notes — ALWAYS checked: FUB does not reliably bump any lastX stamp
+        # for a manually written note.
+        try:
+            for note in self.fub.get_notes(person_id, limit=10):
+                ts = _row_ts(note)
+                if ts is None or ts < anchor:
+                    continue
+                if str(note.get("subject") or note.get("title") or "").startswith("Automation:"):
+                    continue
+                if int(note.get("createdById") or 0) != agent_id:
+                    continue
+                LOGGER.info("touched_by_assigned_agent: person %s — agent %s note at %s",
+                            person_id, agent_id, ts.isoformat())
+                return True
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("touched_by_assigned_agent: note lookup failed for person %s: %s",
+                           person_id, exc)
+
         return False
 
     def scan_reply_detection(self) -> None:
