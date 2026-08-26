@@ -194,8 +194,6 @@ def main() -> int:
     is_valid_fub_key = fub_api_key and (fub_api_key.startswith("fka_") or "fub_" in fub_api_key or "fka_" in fub_api_key)
     if is_valid_fub_key and nurtured_pids:
         import requests
-        headers = {"Authorization": "Basic " + os.environ.get('FUB_API_KEY', '')} # FUB uses Basic auth with API key as username, empty password
-        # We can also fallback to basic auth via requests auth parameter
         for pid in nurtured_pids[:5]: # Limit to max 5 to prevent hanging or rate limits
             try:
                 url = f"https://api.followupboss.com/v1/people/{pid}"

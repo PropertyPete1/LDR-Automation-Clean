@@ -28,11 +28,10 @@ description: "Pull/push the SQLite audit DB from/to the 'state' branch with AES-
 # it: a single modified tracked file could no longer refuse the checkout, and no
 # step after a push needs `actions/checkout` again to get .github/ back.
 #
-# So backfill-reengagement.yml's "Restore the checkout after the state push"
-# step, and the comments in daily-automation.yml / reply-detection.yml about the
-# push wiping the working tree, are now stale. They are harmless — a redundant
-# checkout is a no-op — and they are still there only because the bot that opened
-# this change cannot write to .github/workflows/. See the PR for #9.
+# The stale artifacts of the old checkout-based push (backfill-reengagement's
+# "Restore the checkout" step and the wipes-the-working-tree comments in
+# daily-automation.yml / reply-detection.yml) have since been removed; every
+# workflow comment now describes the plumbing push above.
 
 inputs:
   mode:

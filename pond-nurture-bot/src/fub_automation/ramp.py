@@ -46,7 +46,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import sqlite3
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 # ── Schedule ─────────────────────────────────────────────────────────────────
 

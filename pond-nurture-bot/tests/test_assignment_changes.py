@@ -393,3 +393,80 @@ def test_the_footer_reports_the_ramp_cap_not_the_yaml_fallback(watch_engine, tmp
     assert "Capped at 200 emails (ramp-controlled)" in plain
     assert "Capped at 200 emails (ramp-controlled)" in html_body
     assert "Capped at 150" not in plain
+
+
+# ── the escalations themselves ───────────────────────────────────────────────
+# Until 2026-08-26 nothing drove a timer ACROSS the 30/60-minute lines — the
+# suite pinned discovery, dedup, anchors and cancellation, but never that an
+# old-enough timer actually warns or reassigns. new_lead_timer_mode="24_7"
+# makes the elapsed-minutes math wall-clock so the tests hold at any hour.
+
+def test_the_thirty_minute_warning_actually_fires(watch_engine, tmp_db, fake_http):
+    watch_engine.rules.new_lead_timer_mode = "24_7"
+    watch_engine.settings.dry_run = False  # let the FUB writes hit the fake
+    anchor = NOW - dt.timedelta(minutes=35)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    fake_http.responses = [
+        (200, {"people": [_stub(42, 9)]}),  # get_person
+        (200, {}),                          # touch check: no notes
+        (200, {"id": 900}),                 # POST /tasks
+        (200, {"id": 901}),                 # POST /notes — the warning
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    posts = [c for c in fake_http.calls if c.method == "POST"]
+    assert [c.url.rsplit("/", 1)[-1] for c in posts] == ["tasks", "notes"]
+    task, note = posts
+    assert task.json["personId"] == 42 and task.json["assignedUserId"] == 9
+    assert note.json["subject"] == "Automation: speed-to-lead warning", \
+        "the Automation: prefix is what stops the warning counting as a touch"
+    assert "@Laila Maria" in note.json["body"]
+    with tmp_db.connect() as con:
+        row = con.execute(
+            "SELECT warned_at, reassigned_at FROM new_lead_timers WHERE person_id=42"
+        ).fetchone()
+    assert row[0] is not None and row[1] is None, \
+        "warned, not reassigned — the 60-minute line has not been crossed"
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_warning")] == ["created"]
+    assert [t["person_id"] for t in _active_timers(tmp_db)] == [42], \
+        "a warning must not resolve the timer"
+
+
+def test_the_sixty_minute_reassignment_actually_fires(watch_engine, tmp_db, fake_http):
+    """An unwarned timer crossing 60 business minutes gets the late warning
+    AND the reassignment to Peter, in that order, with the audit trail."""
+    watch_engine.rules.new_lead_timer_mode = "24_7"
+    watch_engine.settings.dry_run = False
+    anchor = NOW - dt.timedelta(minutes=65)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    fake_http.responses = [
+        (200, {"people": [_stub(42, 9)]}),  # get_person
+        (200, {}),                          # touch check: no notes
+        (200, {"id": 901}),                 # POST /notes — late warning
+        (200, {}),                          # PUT /people/42 — assignedUserId
+        (200, {}),                          # PUT /people/42 — merge tag
+        (200, {"id": 902}),                 # POST /notes — reassignment note
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    note_posts = [c for c in fake_http.calls
+                  if c.method == "POST" and c.url.endswith("/notes")]
+    assert [c.json["subject"] for c in note_posts] == [
+        "Automation: speed-to-lead reassignment",
+        "Automation: reassigned for no first touch",
+    ]
+    puts = [c for c in fake_http.calls if c.method == "PUT"]
+    assert puts and puts[0].url.endswith("/people/42")
+    assert puts[0].json == {"assignedUserId": 2}, "the lead goes back to Peter"
+    with tmp_db.connect() as con:
+        row = con.execute(
+            "SELECT warned_at, reassigned_at FROM new_lead_timers WHERE person_id=42"
+        ).fetchone()
+    assert row[0] is not None and row[1] is not None
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_warning")] == ["created_at_reassignment"]
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_reassigned")] == ["completed"]
+    assert _active_timers(tmp_db) == [], "a reassigned timer leaves the active set"
+    args, _ = watch_engine._sent_emails[-1]
+    assert args[0] == watch_engine.rules.owner_email, "Peter gets the reassignment email"

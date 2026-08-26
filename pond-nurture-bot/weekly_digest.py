@@ -400,7 +400,6 @@ def format_power_queue_section(stats: list | None) -> str:
         )
 
     total_actions = sum(a.get("totalActions", 0) for a in stats)
-    total_hot = sum(a.get("hotLeadsResponded", 0) for a in stats)
 
     return f"""
     <h2>\U0001f4f1 Power Queue Activity</h2>

@@ -14,7 +14,6 @@ Configure those in environment variables and config/rules.yaml.
 from __future__ import annotations
 
 import base64
-import dataclasses
 import datetime as dt
 from datetime import timezone
 import email.message
@@ -437,6 +436,17 @@ class AuditDB:
                 );
                 """
             )
+            # Read-path indexes (2026-08-26). audit_log is append-only and never
+            # pruned; recent_audit_rows filters on action+created_at and several
+            # consumers scan by person_id — both were full-table scans. Indexes
+            # are schema-only: state_merge reconciles rows per table and never
+            # copies index objects, so merging with an un-indexed sibling is fine.
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_log_action_created "
+                "ON audit_log(action, created_at)")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_audit_log_person "
+                "ON audit_log(person_id)")
             self._migrate_new_lead_timers(con)
 
     @staticmethod
@@ -2310,7 +2320,6 @@ class RuleEngine:
             LOGGER.info("Phase 3 closed drip is disabled by rules.yaml (phase3_closed_drip_enabled: false)")
             return
 
-        eligible_stages_lower = {s.lower() for s in self.rules.phase3_eligible_stages}
         # Fetch all people in eligible stages
         candidates: List[dict] = []
         for stage in self.rules.phase3_eligible_stages:
@@ -3844,23 +3853,8 @@ class RuleEngine:
         local_date = dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()
         holiday = get_upcoming_holiday(local_date)
 
-        # City focus for SMS personalization (still used for tap-to-text suggestions)
-        city_focus = "San Antonio"
-        if people:
-            city_counts = {}
-            for person in people:
-                city, _, _ = self.customer_nurture_context(person)
-                if city and city != "Other":
-                    city_counts[city] = city_counts.get(city, 0) + 1
-            if city_counts:
-                city_focus = max(city_counts, key=city_counts.get)
-        else:
-            agent_id_map = {
-                33: "DFW", 31: "San Antonio", 35: "San Antonio",
-                28: "Austin", 20: "Austin", 16: "Austin",
-                1: "Austin", 2: "San Antonio",
-            }
-            city_focus = agent_id_map.get(int(assigned_user_id), "San Antonio")
+        # (A city-focus computation lived here until 2026-08-26. Nothing read its
+        # result, and it burned one FUB notes GET per lead in the digest.)
 
         # Build both HTML and Plain Text bodies for the email
         if lead_count == 0:
@@ -6459,13 +6453,6 @@ class RuleEngine:
             sender_email = self.sender_email_for_person(person)
             to_email = emails[0].get("value") or emails[0].get("email")
             
-            # Determine agent first name for per-bot From-name display
-            _assigned_uid = person.get("assignedUserId")
-            _agent_first = "Peter"  # default
-            if _assigned_uid:
-                _agent_user = self.user_cache_by_id().get(int(_assigned_uid), {})
-                _agent_name = _agent_user.get("name") or _agent_user.get("firstName") or ""
-                _agent_first = str(_agent_name).strip().split()[0] if str(_agent_name).strip() else ""
             from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
             if to_email:
                 self.email.send(
@@ -6770,7 +6757,6 @@ class RuleEngine:
             return
         LOGGER.info("Reply detection: checking %s leads that received bot emails in last 7 days.", len(latest_send_by_person))
         # Check which leads already have the "Replied - Paused" tag (skip them)
-        already_paused = set()
         # Leads already alerted on inside the same 7-day window as the sends —
         # one reply is one alert, however many times the scan runs over it.
         #

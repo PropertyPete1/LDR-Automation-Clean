@@ -73,7 +73,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sqlite3
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, Optional, Set
 
 # Actions whose 'sent' status means a real email left the building.
 EMAIL_SEND_ACTIONS: tuple[str, ...] = (

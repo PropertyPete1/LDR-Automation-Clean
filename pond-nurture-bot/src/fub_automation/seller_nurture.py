@@ -23,13 +23,12 @@ Reply Handling: Stop sequence, tag "Seller-Replied" in FUB, include in Monday di
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import logging
 import re
 import textwrap
 from datetime import timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 LOGGER = logging.getLogger("fub_automation.seller_nurture")
 
@@ -183,7 +182,6 @@ def generate_seller_email(
         dict with keys: subject, email_body
     """
     first_name = person.get("firstName") or "there"
-    person_id = int(person.get("id") or 0)
     today_str = dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
     # Location context for personalization
