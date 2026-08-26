@@ -270,13 +270,18 @@ class TestNewLeadTimerAnchor:
             ).fetchone()
         assert row == (None, None, None), "0 business minutes elapsed — nothing should fire"
 
-    def test_touch_before_detection_still_cancels_timer(self, engine, fake_http):
+    def test_touch_before_detection_no_longer_cancels_timer(self, engine, fake_http):
+        """REVERSED 2026-08-26 (the Brito case): activity from before the timer
+        existed does not count. The agent must respond to THIS alert — their
+        10h-old text predates the anchor and leaves the timer running."""
         engine.db.add_new_lead_timer(6270, 35)  # detected just now
-        # Agent texted 10h ago — after creation (20h ago) but before detection
         person = _person(6270, agent_id=35, created=_iso(20), lastSentText=_iso(10))
-        fake_http.responses = [(200, {"people": [person]})]
+        fake_http.responses = [
+            (200, {"people": [person]}),  # get_person
+            (200, {"notes": []}),         # no post-anchor notes by the agent
+        ]
         engine.process_new_lead_timers()
         with engine.db.connect() as con:
             row = con.execute("SELECT canceled_at FROM new_lead_timers WHERE person_id=6270").fetchone()
-        assert row[0] is not None, "pre-detection agent touch must cancel the timer"
-        assert _audit(engine.db, "new_lead_timer", "canceled_touched")
+        assert row[0] is None, "a pre-anchor touch cancelled the timer — policy regression"
+        assert not _audit(engine.db, "new_lead_timer", "canceled_touched")
