@@ -161,58 +161,8 @@ def run_automation() -> int:
     # ── DISABLED: Daily deals/captions/videos email content removed (replaced by Power Queue) ──
     # The video generation, PDF deal sheets, and social media captions are no longer sent
     # to agents in the clock-in email. Power Queue handles all lead engagement now.
-    if False:  # Disabled 2026-06-25
-        print("Generating fresh daily personalized videos for agents...")
-        import subprocess, glob, re, json
-        subprocess.run(["python3", "/home/ubuntu/fub_automation/generate_personalized_videos.py"], check=True)
-        
-        # Upload the freshly rendered videos to S3 to refresh the CDN links
-        print("Uploading fresh videos to CDN...")
-        video_files = sorted(glob.glob("/home/ubuntu/webdev-static-assets/videos/LDR_Promo_*.mp4"))
-        new_cdn_map = {}  # agent_key -> new CDN URL
-        for vf in video_files:
-            result = subprocess.run(["manus-upload-file", "--webdev", vf], capture_output=True, text=True)
-            output = result.stdout.strip()
-            # manus-upload-file returns the CDN URL on stdout
-            cdn_url = output.split()[-1] if output else ""
-            if cdn_url.startswith("http"):
-                # Extract agent name from filename: LDR_Promo_steven_austin_10s.mp4 -> steven
-                fname = os.path.basename(vf)
-                m = re.match(r"LDR_Promo_(\w+)_", fname)
-                if m:
-                    new_cdn_map[m.group(1).lower()] = cdn_url
-                    print(f"  Uploaded {fname} -> {cdn_url}")
-        
-        if new_cdn_map:
-            # Auto-patch VIDEO_CDN_MAP in server/_core/index.ts
-            server_index = "/home/ubuntu/fub_nurture_dashboard/server/_core/index.ts"
-            with open(server_index, "r") as f:
-                content = f.read()
-            for agent_key, url in new_cdn_map.items():
-                content = re.sub(
-                    rf'({agent_key}:\s*")[^"]+"',
-                    rf'\g<1>{url}"',
-                    content
-                )
-            with open(server_index, "w") as f:
-                f.write(content)
-            print(f"Auto-patched VIDEO_CDN_MAP in server/_core/index.ts for: {list(new_cdn_map.keys())}")
-
-            # Auto-patch video_cdn_map in main.py
-            main_py = "/home/ubuntu/fub_automation/src/fub_automation/main.py"
-            with open(main_py, "r") as f:
-                main_content = f.read()
-            for agent_key, url in new_cdn_map.items():
-                main_content = re.sub(
-                    rf'("{agent_key}":\s*")[^"]+"',
-                    rf'\g<1>{url}"',
-                    main_content
-                )
-            with open(main_py, "w") as f:
-                f.write(main_content)
-            print(f"Auto-patched video_cdn_map in main.py for: {list(new_cdn_map.keys())}")
-
-        print("Daily video generation and CDN refresh completed successfully!")
+    # (The video/CDN generation block that lived here was removed 2026-08-26 — it was
+    # disabled behind `if False` since 2026-06-25 and targeted the retired /home/ubuntu VM.)
 
     # Wall clock for the runtime guardrail. The ramp must be able to see that a
     # run is creeping toward the workflow's timeout-minutes, and nothing inside

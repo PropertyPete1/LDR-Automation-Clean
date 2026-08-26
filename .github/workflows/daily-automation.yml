@@ -68,8 +68,9 @@ jobs:
           echo "=== Daily Automation — DRY_RUN=$DRY_RUN ==="
           python3 run_approved_daily_automation.py
 
-      # Must run before "Push state DB": that step checks out the 'state'
-      # branch and wipes the working tree, taking status/ with it.
+      # Runs before "Push state DB" so telemetry reflects this run even if the
+      # push fails. (The push uses plumbing and no longer touches the working
+      # tree — the old wipes-the-checkout hazard is gone since #9.)
       - name: Publish telemetry to THE FLOOR
         if: always()
         uses: ./.github/actions/publish-telemetry

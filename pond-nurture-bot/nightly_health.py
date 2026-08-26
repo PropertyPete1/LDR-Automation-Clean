@@ -26,7 +26,7 @@ import subprocess
 import sys
 import email.message
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 AUTO_DIR    = Path(os.environ.get("AUTO_DIR", str(Path(__file__).resolve().parent)))
@@ -81,7 +81,7 @@ def run_audit(label: str = "pre-fix") -> dict:
         return {"passed": 1, "total": 1, "score_pct": 100.0, "failures": [],
                 "note": "audit script not present — skipped"}
     try:
-        result = subprocess.run(
+        subprocess.run(
             ["python3", str(AUDIT_PY)],
             cwd=str(AUTO_DIR),
             capture_output=True,
@@ -838,7 +838,6 @@ def verify_note_writes(dry_run: bool) -> None:
 
     Any send missing its corresponding FUB note = integrity error reported in the 4am email.
     """
-    global note_integrity_errors
     if not DB_PATH.exists():
         warnings.append("SQLite DB not found — skipping note-write verification")
         return
@@ -969,7 +968,6 @@ def detect_bounces_and_unsubscribes(dry_run: bool) -> None:
     Opt-out → tag 'unsubscribe' + FUB note.
     Daily counts reported in 4am email.
     """
-    global bounce_unsub_counts
     import requests
 
     fub_api_key = os.environ.get("FUB_API_KEY", "")
@@ -1401,7 +1399,6 @@ def expand_audit_checks(dry_run: bool) -> None:
         # Skip dynamic routes and already-checked ones
         if ":" in route:
             continue
-        route_key = route.strip("/").replace("-", "_") or "root"
         check_label = f'"D: auto-expanded — route {route}"'
         if check_label in audit_content:
             continue
@@ -1466,7 +1463,6 @@ def send_morning_email(
 
     pre_score  = pre_audit.get("score_pct", 0)
     post_score = post_audit.get("score_pct", 0)
-    pre_pass   = pre_audit.get("passed", 0)
     post_pass  = post_audit.get("passed", 0)
     total      = post_audit.get("total", pre_audit.get("total", 0))
     failures   = post_audit.get("failures", [])

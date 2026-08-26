@@ -95,8 +95,9 @@ jobs:
       # next run of this workflow anyway — a third publisher would only double
       # the push contention on main for at most ten minutes of latency.
       #
-      # Must run before "Push state DB", which checks out the 'state' branch
-      # and wipes the working tree.
+      # Runs before "Push state DB" so telemetry reflects this run even if the
+      # push fails. (The push uses plumbing and no longer touches the working
+      # tree — the old wipes-the-checkout hazard is gone since #9.)
       - name: Publish telemetry to THE FLOOR
         if: always()
         uses: ./.github/actions/publish-telemetry
