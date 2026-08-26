@@ -43,10 +43,15 @@ export function CopilotSmsDraft({
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("agent") ?? "";
   }, []);
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("key") ?? "";
+  }, []);
   const accessParams = useMemo(() => ({
     ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
     ...(urlAgent ? { agent: urlAgent } : {}),
-  }), [urlAdminToken, urlAgent]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [urlAdminToken, urlAgent, urlKey]);
   const openGlobalCopilot = () => {
     window.dispatchEvent(
       new CustomEvent("copilot:open-with-lead", {

@@ -59,14 +59,19 @@ export function AgentCopilot({ leads: propLeads, initialLead }: AgentCopilotProp
     if (typeof window === "undefined") return "";
     return new URLSearchParams(window.location.search).get("agent") ?? "";
   }, []);
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("key") ?? "";
+  }, []);
   const accessParams = useMemo(() => ({
     ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
     ...(urlAgent ? { agent: urlAgent } : {}),
-  }), [urlAdminToken, urlAgent]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [urlAdminToken, urlAgent, urlKey]);
 
   // Self-fetch leads so the lead selector works on any page
   const { data: fetchedLeads } = trpc.fub.getPendingQueue.useQuery(
-    { agentFilter: urlAgent || undefined, adminToken: urlAdminToken || undefined },
+    { agentFilter: urlAgent || undefined, adminToken: urlAdminToken || undefined, key: urlKey || undefined },
     {
       staleTime: 5 * 60 * 1000, // cache for 5 minutes
       enabled: !propLeads && !!(urlAdminToken || urlAgent), // only fetch if no leads were passed as props and we have access

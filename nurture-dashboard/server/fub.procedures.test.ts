@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { clearPersonOwnerCache } from "./queueAccess";
 
+// Per-agent Power Queue keys (2026-08: agent identity = name + key)
+process.env.POWER_QUEUE_AGENT_KEYS =
+  "peter:peter-key,steven:steven-key,stefanie:stefanie-key,tiffany:tiffany-key,laila:laila-key,jason:jason-key,irma:irma-key,abby:abby-key";
+
 // Mock the LLM helper
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn().mockResolvedValue({
@@ -89,7 +93,7 @@ describe("leads.logSentNote", () => {
       personId: 42,
       agentName: "Steven",
       messageBody: "Hey John, hope you're doing well!",
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result.success).toBe(true);
@@ -130,7 +134,7 @@ describe("leads.logSentNote", () => {
       personId: 99,
       agentName: "Irma",
       messageBody: "Hey, just checking in!",
-      agent: "Irma",
+      agent: "Irma", key: "irma-key",
     });
     expect(result).toEqual({ success: true });
     // Confirm FUB was called (second fetch is the note POST)
@@ -164,7 +168,7 @@ describe("leads.logSentNote", () => {
     const result = await caller.leads.logSentNote({
       personId: 42,
       agentName: "Laila",
-      agent: "Laila",
+      agent: "Laila", key: "laila-key",
     });
 
     expect(result.success).toBe(true);
@@ -199,7 +203,7 @@ describe("leads.logSentNote", () => {
     const result = await caller.leads.logSentNote({
       personId: 43,
       agentName: "laila",
-      agent: "laila",
+      agent: "laila", key: "laila-key",
     });
 
     expect(result.success).toBe(true);
@@ -228,7 +232,7 @@ describe("ai.draftReply", () => {
       leadCity: "Austin",
       assignedAgent: "Steven",
       inboundMessage: "Hey I'm interested in seeing that house on Oak Street",
-      agent: "Steven",
+      agent: "Steven", key: "steven-key",
     });
 
     expect(result.draft).toBeTruthy();
@@ -292,7 +296,7 @@ describe("leads.logSentNote email channel", () => {
       agentName: "Peter",
       messageBody: "Still looking for a home in Austin?",
       channel: "email",
-      agent: "Peter",
+      agent: "Peter", key: "peter-key",
     });
 
     expect(result.success).toBe(true);

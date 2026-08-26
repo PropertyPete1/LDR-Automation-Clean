@@ -92,10 +92,15 @@ export default function Home() {
 
   // ── Live data ─────────────────────────────────────────────────────────────
   // Build access params for admin-gated procedures
+  const urlKey = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("key")?.trim() || null;
+  }, []);
   const accessParams = useMemo(() => ({
     ...(urlAdminToken ? { adminToken: urlAdminToken } : {}),
     ...(urlAgent ? { agent: urlAgent } : {}),
-  }), [urlAdminToken, urlAgent]);
+    ...(urlKey ? { key: urlKey } : {}),
+  }), [urlAdminToken, urlAgent, urlKey]);
 
   const { data, isLoading, error, refetch, isRefetching } = trpc.fub.getDashboardStats.useQuery(
     accessParams,

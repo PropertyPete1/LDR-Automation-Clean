@@ -1558,6 +1558,41 @@ export async function resolveAgentBotRow(
  * and the agent first name, produce the Power Queue display name and slug.
  * Precedence: agent_bots row → legacy fallback map → title-cased first name.
  */
+/**
+ * Per-agent Power Queue secret from POWER_QUEUE_AGENT_KEYS, keyed by roster
+ * slug (lowercase first name). Same env var and formats as the nurture
+ * dashboard's queueAccess.ts — the two apps must be deployed with the SAME
+ * value or clock-in links won't open the queue. Formats:
+ *   JSON:  {"stefanie":"tokA","laila":"tokB"}
+ *   pairs: stefanie:tokA,laila:tokB
+ * Read lazily on every call (no cache): the clock-in job runs once a day and
+ * a rotated key must take effect without a redeploy.
+ */
+export function getPowerQueueAgentKey(slugOrName: string): string | null {
+  const raw = (process.env.POWER_QUEUE_AGENT_KEYS ?? "").trim();
+  if (!raw) return null;
+  const wanted = slugOrName.trim().toLowerCase();
+  try {
+    if (raw.startsWith("{")) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      for (const [slug, tok] of Object.entries(parsed)) {
+        if (slug.toLowerCase() === wanted && typeof tok === "string" && tok) return tok;
+      }
+      return null;
+    }
+    for (const pair of raw.split(",")) {
+      const idx = pair.indexOf(":");
+      if (idx > 0 && pair.slice(0, idx).trim().toLowerCase() === wanted) {
+        const tok = pair.slice(idx + 1).trim();
+        if (tok) return tok;
+      }
+    }
+  } catch (e) {
+    console.error("[botHelpers] POWER_QUEUE_AGENT_KEYS could not be parsed:", e);
+  }
+  return null;
+}
+
 export function derivePowerQueueName(
   row: { powerQueueName: string | null; agentFirstName: string } | null,
   agentFirstName: string
@@ -1611,12 +1646,18 @@ export async function sendClockinEmail(opts: {
   const pqAgentName = isCombined ? null : derivePowerQueueName(agentRow, agentFirstName);
   const pqAdminToken = process.env.POWER_QUEUE_ADMIN_TOKEN ?? "";
   // Peter (combined or solo) gets the admin URL showing ALL agents;
-  // other agents get their scoped URL.
+  // other agents get their scoped URL WITH their per-agent key (2026-08-26:
+  // a bare ?agent=Name stopped being an identity — the queue now requires
+  // ?agent=Name&key=<secret from POWER_QUEUE_AGENT_KEYS>).
   const isPeter = isCombined || agentFirstName.toLowerCase() === "peter";
+  const pqAgentKey = pqAgentName
+    ? getPowerQueueAgentKey(pqAgentName) ?? getPowerQueueAgentKey(agentFirstName)
+    : null;
   const powerQueueUrl = isPeter && pqAdminToken
     ? `${OLD_DASHBOARD_BASE}/sms-queue?admin=${encodeURIComponent(pqAdminToken)}&agent=all`
     : pqAgentName
-      ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}`
+      ? `${OLD_DASHBOARD_BASE}/sms-queue?agent=${encodeURIComponent(pqAgentName)}` +
+        (pqAgentKey ? `&key=${encodeURIComponent(pqAgentKey)}` : "")
       : `${OLD_DASHBOARD_BASE}/sms-queue`;
   // Derive the slug: prefer explicit botSlug param, then agent_bots row, then fallback map
   const agentSlug = isCombined ? null : deriveDashboardSlug(opts.botSlug, agentRow, agentFirstName);
