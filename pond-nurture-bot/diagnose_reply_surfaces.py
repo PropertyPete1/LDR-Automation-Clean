@@ -46,9 +46,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 def clip_and_redact(text: object, limit: int = 100) -> str:
     """First `limit` chars, with email addresses and phone numbers masked —
-    enough to recognise a reply, not enough to republish contact details."""
+    enough to recognise a reply, not enough to republish contact details.
+
+    The domain survives the mask ('[email@gmail.com]'): the 2026-08-28 false
+    positive was third-party mail on a lead's record, and telling the lead's
+    address apart from a lender's is exactly what the dump has to show."""
     flat = re.sub(r"\s+", " ", str(text or "")).strip()
-    flat = re.sub(r"\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[email]", flat)
+    flat = re.sub(r"\b[\w.%+-]+@([\w.-]+\.[A-Za-z]{2,})\b", r"[email@\1]", flat)
     flat = re.sub(r"\+?\d[\d\s().-]{7,}\d", "[phone]", flat)
     return flat[:limit]
 
@@ -88,7 +92,16 @@ def dump_item(item: dict, indent: str = "      ") -> None:
     2026-08-24 run showed [CONTENT HIDDEN] payloads with no visible direction
     flag, so the exact field inventory is the whole point."""
     for key in sorted(item):
-        print(f"{indent}{key} = {clip_and_redact(item[key], 80)!r}", flush=True)
+        # relatedPeople is the direction discriminator AND (hypothesis for the
+        # 2026-08-28 false positive) where a third-party correspondent would
+        # show up — one clipped repr hides exactly the entry that matters, so
+        # each related person gets its own full line.
+        if key == "relatedPeople" and isinstance(item[key], list):
+            print(f"{indent}relatedPeople: {len(item[key])} entries", flush=True)
+            for pos, rel in enumerate(item[key]):
+                print(f"{indent}  [{pos}] {clip_and_redact(rel, 300)!r}", flush=True)
+            continue
+        print(f"{indent}{key} = {clip_and_redact(item[key], 160)!r}", flush=True)
 
 
 def describe_messages(fub, pid: int, path: str, list_key: str, label: str) -> None:
@@ -110,7 +123,7 @@ def describe_messages(fub, pid: int, path: str, list_key: str, label: str) -> No
         # a genuine reply — the third dry run (32772863771) classified every
         # synced copy of our own sends as inbound, so the outbound shape is
         # exactly what needs seeing.
-        for index, item in enumerate(items[:4]):
+        for index, item in enumerate(items[:6]):
             print(f"    item[{index}], every field:", flush=True)
             dump_item(item)
         # The single-object endpoint sometimes returns more than the list —
