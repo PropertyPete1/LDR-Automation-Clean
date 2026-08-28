@@ -5005,6 +5005,19 @@ class RuleEngine:
         """
         now = dt.datetime.now(UTC)
         since = now - dt.timedelta(days=backlog_days)
+        # Alerts the repair sweep voided as false positives (a third party's
+        # email, not the lead's) — those leads are not waiting on anyone.
+        voided = set()
+        for row in self.db.recent_audit_rows(["reply_false_positive_cleared"], since):
+            pid = row.get("person_id")
+            if not pid:
+                continue
+            try:
+                cleared_reply_at = json.loads(row.get("details") or "{}").get("reply_at")
+            except Exception:  # noqa: BLE001
+                cleared_reply_at = None
+            if cleared_reply_at:
+                voided.add((int(pid), cleared_reply_at))
         candidates: Dict[int, dict] = {}
         for row in self.db.recent_audit_rows(["reply_detected"], since):
             if row.get("status") not in ("alert_sent", "backfilled"):
@@ -5020,6 +5033,8 @@ class RuleEngine:
             reply_at = parse_fub_datetime(details.get("reply_at")) \
                 or parse_fub_datetime(row.get("created_at"))
             if not reply_at:
+                continue
+            if (pid, str(details.get("reply_at"))) in voided:
                 continue
             entry = {
                 "person_id": pid,
@@ -5153,8 +5168,38 @@ class RuleEngine:
         except Exception:  # noqa: BLE001
             pass
 
+        # Unverified inbound — email on a lead's record that the thread-
+        # lineage gate refused to treat as a reply (third-party mail, or a
+        # genuine reply on a brand-new thread). Listed by name so a human
+        # reviews each one; never paged, never tagged, never counted WARM.
+        # Last 24h only: nothing acknowledges these, so a wider window would
+        # re-list the same lender email every day until it aged out — the
+        # FUB note on the record is the durable pointer, this line is news.
+        unverified_inbound: List[dict] = []
+        try:
+            seen_unverified = set()
+            for r in self.db.recent_audit_rows(
+                    ["unverified_inbound"],
+                    dt.datetime.now(UTC) - dt.timedelta(days=1)):
+                pid = r.get("person_id")
+                if not pid or int(pid) in seen_unverified:
+                    continue
+                seen_unverified.add(int(pid))
+                try:
+                    _uv_details = json.loads(r.get("details") or "{}")
+                except Exception:  # noqa: BLE001
+                    _uv_details = {}
+                unverified_inbound.append({
+                    "person_id": int(pid),
+                    "name": (_uv_details.get("contact_name") or "").strip()
+                            or f"Lead #{pid}",
+                })
+        except Exception as _uv_exc:  # noqa: BLE001
+            LOGGER.warning("Unverified-inbound collection failed: %s", _uv_exc)
+
         if not rows and not deal_failed_closed_today and not untouched_alerts \
-                and not needs_reply and not needs_reply_error:
+                and not needs_reply and not needs_reply_error \
+                and not unverified_inbound:
             return
 
         # Warm leads today — the one funnel number worth seeing daily rather than
@@ -5307,6 +5352,26 @@ class RuleEngine:
                 f'<p style="color:#6b7280;font-size:0.9em;">🤖 {auto_replies_recent} '
                 f"auto-repl{'y' if auto_replies_recent == 1 else 'ies'} classified in the "
                 "last 14 days (out-of-office etc.) — filtered out, not counted warm.</p>")
+        if unverified_inbound:
+            _uv_names = ", ".join(
+                f"{e['name']} (https://www.followupboss.com/2/people/view/{e['person_id']})"
+                for e in unverified_inbound[:10])
+            nr_plain += [
+                f"❓ UNVERIFIED INBOUND — {len(unverified_inbound)} lead(s) received "
+                "email on a thread the automation never started (third-party mail, "
+                f"or a reply on a brand-new thread). Review: {_uv_names}",
+                "",
+            ]
+            nr_html.append(
+                f'<p style="color:#92400e;font-size:0.9em;">❓ '
+                f"<strong>UNVERIFIED INBOUND — {len(unverified_inbound)}</strong> "
+                "lead(s) received email on a thread the automation never started "
+                "(third-party mail, or a reply on a brand-new thread). Review: "
+                + ", ".join(
+                    f"<a href='https://www.followupboss.com/2/people/view/{e['person_id']}'>"
+                    f"{e['name']}</a>"
+                    for e in unverified_inbound[:10])
+                + ".</p>")
 
         # Plain text lines
         lines = [
@@ -6752,6 +6817,22 @@ class RuleEngine:
             pid = row.get("person_id")
             if pid and pid not in latest_send_by_person:
                 latest_send_by_person[int(pid)] = row["created_at"]
+        # Thread-lineage anchors over the wide sweep's 60-day horizon, NOT
+        # the 7-day watch window: a lead answers whichever of our emails
+        # sits in their inbox, and on normal cadence that anchor's audit
+        # row is routinely 8+ days old — bounding it to the watch window
+        # downgraded those genuine replies to review.
+        send_times_by_person: Dict[int, List[dt.datetime]] = {}
+        for row in self.db.recent_audit_rows(
+                email_actions,
+                dt.datetime.now(UTC) - dt.timedelta(
+                    days=self.WIDE_SWEEP_SEND_LOOKBACK_DAYS)):
+            pid = row.get("person_id")
+            if not pid or row.get("status") not in ("sent", "email_sent", "completed"):
+                continue
+            sent_ts = parse_fub_datetime(row.get("created_at"))
+            if sent_ts:
+                send_times_by_person.setdefault(int(pid), []).append(sent_ts)
         if not latest_send_by_person:
             LOGGER.info("Reply detection: no recent bot emails found in last 7 days. Nothing to scan.")
             return
@@ -6765,10 +6846,7 @@ class RuleEngine:
         # in this set a single transient FUB error suppressed reply detection for
         # that lead for a full week — the failure silencing the retry.
         prior_detections = self.db.recent_audit_rows(["reply_detected"], since)
-        already_alerted = {
-            int(r["person_id"]) for r in prior_detections
-            if r.get("person_id") and r.get("status") in ("alert_sent", "backfilled")
-        }
+        already_alerted = self._unvoided_alert_pids(prior_detections, since)
         # Leads whose reply already got them trashed as an opt-out — their tags
         # would make is_excluded skip them anyway, but checking here saves the
         # get_person call.
@@ -6792,6 +6870,11 @@ class RuleEngine:
                 logged_at = None
             if logged_at:
                 auto_logged.setdefault(int(pid), set()).add(logged_at)
+        # Unverified inbound already recorded, keyed like auto_logged: the
+        # same lender email must not be re-logged every ten minutes, but it
+        # must NOT suppress the lead either — a verified reply arriving after
+        # third-party mail still alerts.
+        unverified_logged = self._unverified_inbound_logged(since)
         alerts_sent = 0
         cap = 20  # Max alerts per scan to avoid flooding
         for person_id, send_time_str in latest_send_by_person.items():
@@ -6817,7 +6900,10 @@ class RuleEngine:
                 # first — not just the first match. One lead can hold an
                 # autoresponder AND a real answer, and acting on whichever came
                 # first would let the machine's reply hide the person's.
-                emails = self.fub.get_emails(person_id, limit=10)
+                # 25 emails, not 10: the lineage anchor (the synced copy of
+                # our send) must be IN the fetch, and busy records — exactly
+                # the ones accumulating third-party mail — push it out.
+                emails = self.fub.get_emails(person_id, limit=25)
                 texts = self.fub.get_text_messages(person_id, limit=10)
                 inbound: List[Tuple[dt.datetime, dict]] = []
                 for msg in [*emails, *texts]:
@@ -6839,11 +6925,41 @@ class RuleEngine:
                 humans = [(w, m) for w, m, kind in classified if kind == "human"]
                 autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
 
-                if opt_outs:
+                # Thread lineage: only an inbound on a thread we started may
+                # tag, page, trash, or count WARM. Third-party mail FUB
+                # attached to the record (the 2026-08-28 lender false
+                # positive) fails this and is surfaced for review instead.
+                # Opt-outs are gated too — FUB's `unsubscribed` flag rides
+                # on synced third-party mail, and trashing the LEAD off a
+                # stranger's unsubscribe click would be strictly worse than
+                # the false page this fix exists to prevent. Texts and
+                # unsubscribes from our own threads still trash.
+                messages = [*emails, *texts]
+                bot_sends = send_times_by_person.get(person_id, [])
+                verified_opt_outs = [
+                    (w, m) for w, m in opt_outs
+                    if reply_thread_verified(m, messages, bot_sends)
+                ]
+                if verified_opt_outs:
                     # Compliance path: trash + tag, no hot-lead alert, and no
                     # reply_detected row — an unsubscribe must never count WARM.
-                    self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
+                    self._trash_opt_out_reply(person_id, person, *verified_opt_outs[-1])
                     continue
+                verified = [
+                    (w, m) for w, m in humans
+                    if reply_thread_verified(m, messages, bot_sends)
+                ]
+                unverified = sorted(
+                    [(w, m) for w, m in [*humans, *opt_outs]
+                     if not reply_thread_verified(m, messages, bot_sends)],
+                    key=lambda item: item[0])
+
+                if not verified and unverified:
+                    self._handle_unverified_inbound(
+                        person_id, person, *unverified[-1],
+                        already_logged=unverified_logged)
+                    continue
+                humans = verified
 
                 if not humans:
                     # Machine mail only. Recorded so the backlog maths and the
@@ -6967,6 +7083,129 @@ class RuleEngine:
         except Exception as rt_exc:
             LOGGER.debug("Reply time logging failed for person %s: %s", person_id, rt_exc)
 
+    def _handle_unverified_inbound(
+        self,
+        person_id: int,
+        person: dict,
+        reply_at: dt.datetime,
+        msg: dict,
+        already_logged: Optional[Dict[int, set]] = None,
+    ) -> None:
+        """Inbound email on a thread we never started: review, never HOT.
+
+        The 2026-08-28 false positive — a lender's email FUB attached to
+        Angie Gonzalez's record — paged Peter, tagged her 'Replied - Paused'
+        and counted her WARM off a message she never wrote. This path is
+        what that email gets instead: an audit row (the daily summary reads
+        it), one FUB note per thread, and nothing else. No tag, no hot-lead
+        alert, no reply_detected row, so it can never count WARM or pause
+        automation.
+
+        A genuine reply that starts a brand-new thread lands here too — the
+        documented cost of the lineage gate. It stays visible to a human;
+        it just cannot page one.
+        """
+        already_logged = already_logged if already_logged is not None else {}
+        reply_key = reply_at.isoformat()
+        if reply_key in already_logged.get(person_id, set()):
+            return
+        thread_id = msg.get("threadId")
+        contact_name = (f"{person.get('firstName', '')} "
+                        f"{person.get('lastName', '')}").strip() or f"Lead #{person_id}"
+        LOGGER.info("Unverified inbound for lead %s (thread %s) — review, not HOT",
+                    person_id, thread_id)
+        # One note per thread: the rows carry thread_id, so a second email on
+        # the same lender thread adds a row but not another note.
+        noted_threads = self._unverified_noted_threads(person_id)
+        self.db.log("unverified_inbound", "review", person_id, {
+            "reply_at": reply_key,
+            "thread_id": str(thread_id) if thread_id is not None else None,
+            "reply_snippet": reply_display_snippet(msg)[:200],
+            "contact_name": contact_name,
+        })
+        already_logged.setdefault(person_id, set()).add(reply_key)
+        if str(thread_id) not in noted_threads:
+            self.fub.add_note(
+                person_id,
+                "Automation: unverified inbound email — review",
+                ("An email arrived on this lead's record on a thread the "
+                 "automation never started (it may be third-party "
+                 "correspondence, or a reply on a brand-new thread). "
+                 "Automation was NOT paused and no hot-lead alert was sent.\n\n"
+                 f"\U0001f4e8 Thread: {thread_id}\n"
+                 f"\U0001f4ac Snippet: \"{reply_display_snippet(msg)[:300]}\"\n\n"
+                 "✅ If this is really the lead replying, respond "
+                 "personally and add the \"Replied - Paused\" tag by hand."),
+            )
+
+    def _unverified_noted_threads(self, person_id: int) -> set:
+        """Threads already carrying an 'unverified inbound' note, read from
+        this lead's unverified_inbound rows — cheaper than paging FUB notes.
+
+        Backfilled rows don't count: the backfill writes rows without notes,
+        and treating them as noted would silently turn 'one note per thread'
+        into zero notes for any thread the backfill saw first."""
+        since = dt.datetime.now(UTC) - dt.timedelta(days=60)
+        threads = set()
+        for r in self.db.recent_audit_rows(["unverified_inbound"], since):
+            if r.get("person_id") and int(r["person_id"]) == person_id:
+                try:
+                    details = json.loads(r.get("details") or "{}")
+                except Exception:  # noqa: BLE001
+                    details = {}
+                thread = details.get("thread_id")
+                if thread is not None and not details.get("backfilled"):
+                    threads.add(str(thread))
+        return threads
+
+    def _unverified_inbound_logged(self, since: dt.datetime) -> Dict[int, set]:
+        """reply_at timestamps already recorded per lead, auto_logged-style."""
+        logged: Dict[int, set] = {}
+        for r in self.db.recent_audit_rows(["unverified_inbound"], since):
+            pid = r.get("person_id")
+            if not pid:
+                continue
+            try:
+                logged_at = json.loads(r.get("details") or "{}").get("reply_at")
+            except Exception:  # noqa: BLE001
+                logged_at = None
+            if logged_at:
+                logged.setdefault(int(pid), set()).add(logged_at)
+        return logged
+
+    def _unvoided_alert_pids(self, rows: List[dict], since: dt.datetime) -> set:
+        """People whose reply alert still stands.
+
+        A reply_false_positive_cleared row (the repair sweep's undo) names
+        the reply_at of the alert it voided. Without this, a cleared lead
+        stayed in already_alerted for the whole dedup window — blind to a
+        genuine reply arriving right after the false one was cleaned up.
+        """
+        voided = set()
+        for r in self.db.recent_audit_rows(["reply_false_positive_cleared"], since):
+            pid = r.get("person_id")
+            if not pid:
+                continue
+            try:
+                reply_at = json.loads(r.get("details") or "{}").get("reply_at")
+            except Exception:  # noqa: BLE001
+                reply_at = None
+            if reply_at:
+                voided.add((int(pid), reply_at))
+        alerted = set()
+        for r in rows:
+            pid = r.get("person_id")
+            if not pid or r.get("status") not in ("alert_sent", "backfilled"):
+                continue
+            try:
+                reply_at = json.loads(r.get("details") or "{}").get("reply_at")
+            except Exception:  # noqa: BLE001
+                reply_at = None
+            if reply_at and (int(pid), reply_at) in voided:
+                continue
+            alerted.add(int(pid))
+        return alerted
+
     def _trash_opt_out_reply(
         self, person_id: int, person: dict, reply_at: dt.datetime, message: dict
     ) -> None:
@@ -7063,10 +7302,8 @@ class RuleEngine:
         window_start = now - dt.timedelta(days=days)
         lookback = now - dt.timedelta(days=14)
 
-        already_alerted = {
-            int(r["person_id"]) for r in self.db.recent_audit_rows(["reply_detected"], lookback)
-            if r.get("person_id") and r.get("status") in ("alert_sent", "backfilled")
-        }
+        already_alerted = self._unvoided_alert_pids(
+            self.db.recent_audit_rows(["reply_detected"], lookback), lookback)
         already_disqualified = {
             int(r["person_id"]) for r in self.db.recent_audit_rows(
                 ["reply_intent_disqualification", "pond_opt_out_trash"], lookback)
@@ -7083,6 +7320,26 @@ class RuleEngine:
                 logged_at = None
             if logged_at:
                 auto_logged.setdefault(int(pid), set()).add(logged_at)
+        unverified_logged = self._unverified_inbound_logged(lookback)
+
+        # Every bot send in the rotation lookback, per lead: the rotation's
+        # floor AND both surfaces' thread-lineage anchors, so it is built
+        # once, before either surface runs.
+        latest_send: Dict[int, dt.datetime] = {}
+        send_times: Dict[int, List[dt.datetime]] = {}
+        for row in self.db.recent_audit_rows(
+                list(self.SWEEP_SEND_ACTIONS),
+                now - dt.timedelta(days=self.WIDE_SWEEP_SEND_LOOKBACK_DAYS)):
+            if row.get("status") not in self.SWEEP_SEND_STATUSES:
+                continue
+            pid = row.get("person_id")
+            sent_ts = parse_fub_datetime(row.get("created_at"))
+            if not pid or not sent_ts:
+                continue
+            pid = int(pid)
+            send_times.setdefault(pid, []).append(sent_ts)
+            if pid not in latest_send or sent_ts > latest_send[pid]:
+                latest_send[pid] = sent_ts
 
         alerts_sent = 0
         cap = 20
@@ -7131,7 +7388,9 @@ class RuleEngine:
                         continue
 
                     if self._sweep_classify_and_act(
-                            person_id, window_start, auto_logged, person=person) == "alerted":
+                            person_id, window_start, auto_logged, person=person,
+                            bot_sends=send_times.get(person_id, []),
+                            unverified_logged=unverified_logged) == "alerted":
                         alerts_sent += 1
                 except Exception as exc:  # noqa: BLE001
                     LOGGER.exception("Wide reply sweep: error processing lead %s: %s",
@@ -7150,19 +7409,6 @@ class RuleEngine:
         # histories are read directly; nothing here trusts a FUB clock.
         rotation_checked = 0
         recent_cutoff = now - dt.timedelta(days=7)
-        latest_send: Dict[int, dt.datetime] = {}
-        for row in self.db.recent_audit_rows(
-                list(self.SWEEP_SEND_ACTIONS),
-                now - dt.timedelta(days=self.WIDE_SWEEP_SEND_LOOKBACK_DAYS)):
-            if row.get("status") not in self.SWEEP_SEND_STATUSES:
-                continue
-            pid = row.get("person_id")
-            sent_ts = parse_fub_datetime(row.get("created_at"))
-            if not pid or not sent_ts:
-                continue
-            pid = int(pid)
-            if pid not in latest_send or sent_ts > latest_send[pid]:
-                latest_send[pid] = sent_ts
         slot = now.timetuple().tm_yday % self.WIDE_SWEEP_ROTATION_DAYS
         for person_id in sorted(latest_send):
             sent_at = latest_send[person_id]
@@ -7180,7 +7426,10 @@ class RuleEngine:
             try:
                 # Inbound floor is the lead's own last send: a reply to it is a
                 # reply, however long ago that send was.
-                if self._sweep_classify_and_act(person_id, sent_at, auto_logged) == "alerted":
+                if self._sweep_classify_and_act(
+                        person_id, sent_at, auto_logged,
+                        bot_sends=send_times.get(person_id, []),
+                        unverified_logged=unverified_logged) == "alerted":
                     alerts_sent += 1
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("Wide reply sweep: error processing lead %s: %s",
@@ -7198,16 +7447,23 @@ class RuleEngine:
         inbound_floor: dt.datetime,
         auto_logged: Dict[int, set],
         person: Optional[dict] = None,
+        bot_sends: Optional[List[dt.datetime]] = None,
+        unverified_logged: Optional[Dict[int, set]] = None,
     ) -> str:
         """Read one lead's messages, classify inbound after `inbound_floor`,
-        act. Returns 'alerted' | 'opt_out' | 'auto' | 'none'.
+        act. Returns 'alerted' | 'opt_out' | 'auto' | 'unverified' | 'none'.
 
         When `person` is None (the rotation path) the messages are fetched
         FIRST and the person record only when inbound is actually found —
         most rotation leads have nothing and cost exactly two calls.
+
+        `bot_sends` are the lead's audit-logged send times, the
+        thread-lineage anchors (reply_thread_verified): a human-classified
+        inbound on a thread none of our sends belongs to is surfaced as
+        unverified instead of alerting.
         """
         messages = [
-            *self.fub.get_emails(person_id, limit=10),
+            *self.fub.get_emails(person_id, limit=25),
             *self.fub.get_text_messages(person_id, limit=10),
         ]
         classified = []
@@ -7233,11 +7489,29 @@ class RuleEngine:
         humans = [(w, m) for w, m, kind in classified if kind == "human"]
         autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
 
-        if opt_outs:
-            self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
+        anchors = bot_sends or []
+        # Opt-outs need lineage too: FUB's `unsubscribed` flag rides on
+        # synced third-party mail, and trashing the LEAD off a stranger's
+        # unsubscribe click is the worst version of the Angie incident.
+        # Texts and genuine unsubscribes from our own threads still trash.
+        verified_opt_outs = [(w, m) for w, m in opt_outs
+                             if reply_thread_verified(m, messages, anchors)]
+        if verified_opt_outs:
+            self._trash_opt_out_reply(person_id, person, *verified_opt_outs[-1])
             return "opt_out"
-        if humans:
-            reply_at, reply_found = humans[-1]
+        verified = [(w, m) for w, m in humans
+                    if reply_thread_verified(m, messages, anchors)]
+        unverified = sorted(
+            [(w, m) for w, m in [*humans, *opt_outs]
+             if not reply_thread_verified(m, messages, anchors)],
+            key=lambda item: item[0])
+        if not verified and unverified:
+            self._handle_unverified_inbound(
+                person_id, person, *unverified[-1],
+                already_logged=unverified_logged)
+            return "unverified"
+        if verified:
+            reply_at, reply_found = verified[-1]
             self._handle_human_reply(person_id, person, reply_at, reply_found)
             return "alerted"
         auto_at, auto_msg = autos[-1]
@@ -7405,6 +7679,66 @@ def is_inbound_message(message: dict) -> bool:
     if str(message.get("direction") or "").lower() in ("incoming", "inbound"):
         return True
     return str(message.get("type") or "").lower() == "received"
+
+
+# Sync latency between our audit row and FUB's copy of the same send. The
+# same ±300s _collect_needs_reply already uses to prove "this outbound was
+# the bot" — one constant so the two proofs can never drift apart.
+BOT_SEND_MATCH_SECONDS = 300
+
+
+def reply_thread_verified(
+    message: dict,
+    messages: List[dict],
+    bot_sends: List[dt.datetime],
+    tolerance_seconds: int = BOT_SEND_MATCH_SECONDS,
+) -> bool:
+    """Does this inbound email sit on a thread WE started with this lead?
+
+    sentByPerson alone cannot be trusted: the 2026-08-28 false positive
+    (Angie Gonzalez, person 6340, run 33218198212) was a LENDER's email on
+    the lead's record — 'Re: Lender Intro Irene and Angie', a thread between
+    third parties that FUB attached to the lead and stamped
+    relatedPeople=[{personId: 6340, sentByPerson: True}], indistinguishable
+    field-for-field from a genuine reply. addresses{} is empty and
+    subject/body are '[content hidden]' on this account, so counterpart
+    addresses and subject lineage are unreadable through the API.
+
+    What IS readable, measured on both directions: threadId (never hidden)
+    and created timestamps (never hidden). A genuine reply shares its
+    threadId with the synced copy of our own send (Stephen Herrera's reply
+    52004 and our send 51937, both thread 48666), and our synced sends land
+    within seconds of their audit rows. So: an inbound email is a verified
+    lead reply only when its thread also holds a non-inbound email whose
+    timestamp matches an audit-logged bot send within `tolerance_seconds`.
+
+    Messages with no threadId are exempt (returns True): text messages, and
+    any account whose emails carry real direction flags but no threads —
+    for those the gate would only remove signal it cannot replace.
+
+    The cost, stated plainly: a genuine reply that starts a BRAND-NEW
+    thread (or whose anchor send never synced back to FUB) fails this and
+    is surfaced as "unverified inbound — review" instead of HOT LEAD. That
+    is the chosen direction to be wrong in: it still reaches a human, it
+    just cannot page one or pause automation on a stranger's email.
+    """
+    thread = message.get("threadId")
+    if thread is None:
+        return True
+    for other in messages:
+        if other is message:
+            continue
+        if str(other.get("threadId")) != str(thread):
+            continue
+        if is_inbound_message(other):
+            continue
+        sent = message_timestamp(other)
+        if not sent:
+            continue
+        if any(abs((sent - bot_ts).total_seconds()) <= tolerance_seconds
+               for bot_ts in bot_sends):
+            return True
+    return False
 
 
 # What FUB returns in place of subject/body when the account's email-content

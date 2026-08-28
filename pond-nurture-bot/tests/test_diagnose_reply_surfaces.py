@@ -18,12 +18,17 @@ _spec.loader.exec_module(drs)  # type: ignore[union-attr]
 
 
 def test_redaction_masks_emails_and_phones():
+    """The local part is the contact detail and must go; the DOMAIN survives
+    on purpose — the 2026-08-28 false positive was a lender's email on a
+    lead's record, and the dump has to show 'this counterpart is
+    @somelender.com, not the lead' without republishing an address."""
     body = ("Please reach me at joe_munoz@att.net or 512-555-0142 instead — "
             "and my office line is (512) 555 0100.")
     out = drs.clip_and_redact(body, 200)
-    assert "att.net" not in out
+    assert "joe_munoz" not in out
+    assert "[email@att.net]" in out
     assert "0142" not in out and "0100" not in out
-    assert "[email]" in out and "[phone]" in out
+    assert "[phone]" in out
 
 
 def test_redaction_clips_and_flattens():

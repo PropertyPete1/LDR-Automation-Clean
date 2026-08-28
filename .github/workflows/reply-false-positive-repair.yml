@@ -1,0 +1,121 @@
+# One-shot repair, run by hand. Not scheduled, and it should stay that way.
+#
+# Re-judges recent reply alerts with the thread-lineage gate
+# (reply_thread_verified in main.py — the 2026-08-28 Angie Gonzalez fix:
+# third-party mail FUB attached to a lead's record was passing the
+# sentByPerson inbound test and paging Peter). False positives are listed;
+# on commit their "Replied - Paused" tag is removed and a
+# reply_false_positive_cleared row voids the alert so the scans re-arm and
+# NEEDS A REPLY / replies_needed drop the phantom entry. Opt-out trashings
+# are re-judged for the report only — never auto-reversed.
+# See pond-nurture-bot/sweep_reply_false_positives.py for the full protocol.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+name: Repair reply false positives
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "How many days of reply alerts to re-judge"
+        required: true
+        default: "7"
+      commit:
+        description: "Actually write (FUB tags/notes + state DB). Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  # Unbuffered so the per-lead verdicts stream into the live log instead of
+  # arriving in one block at exit.
+  PYTHONUNBUFFERED: "1"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Re-judge reply alerts
+        working-directory: pond-nurture-bot
+        # DRY_RUN is pinned inside the script from --commit; the env here
+        # cannot enable writes.
+        run: |
+          set -euo pipefail
+          python3 sweep_reply_false_positives.py \
+            --days "${{ inputs.days }}" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something was actually written. A dry run must never touch
+      # the state branch.
+      - name: Push state DB
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      # Re-pull rather than trusting the push: the state DB is last-writer-
+      # wins under overlapping runs, so the row must be seen ON the branch.
+      - name: Re-pull and verify the repair survived
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      # Compares against what THIS run said it cleared (sweep_fp_summary.json,
+      # written by the script): zero false positives is a legitimate outcome,
+      # not a lost write — only rows that were written and then vanished on
+      # the re-pull fail the run.
+      - name: Confirm the void rows are on the state branch
+        if: ${{ inputs.commit }}
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, sqlite3, sys
+          expected = json.load(open('sweep_fp_summary.json'))['cleared']
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          cleared = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='reply_false_positive_cleared'\"
+          ).fetchone()[0]
+          print(f'this run cleared {expected}; state branch holds {cleared} '
+                f'reply_false_positive_cleared row(s) in total')
+          if expected > 0 and cleared == 0:
+              print('commit run wrote rows that did not survive the push — investigate')
+              sys.exit(1)
+          "
