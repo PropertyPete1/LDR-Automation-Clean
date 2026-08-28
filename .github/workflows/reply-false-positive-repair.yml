@@ -97,19 +97,25 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
+      # Compares against what THIS run said it cleared (sweep_fp_summary.json,
+      # written by the script): zero false positives is a legitimate outcome,
+      # not a lost write — only rows that were written and then vanished on
+      # the re-pull fail the run.
       - name: Confirm the void rows are on the state branch
         if: ${{ inputs.commit }}
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
           python3 -c "
-          import sqlite3, sys
+          import json, sqlite3, sys
+          expected = json.load(open('sweep_fp_summary.json'))['cleared']
           c = sqlite3.connect('data/fub_automation.sqlite3')
           cleared = c.execute(
               \"SELECT COUNT(*) FROM audit_log WHERE action='reply_false_positive_cleared'\"
           ).fetchone()[0]
-          print(f'state branch now holds {cleared} reply_false_positive_cleared row(s)')
-          if cleared == 0:
-              print('commit run wrote nothing that survived — investigate')
+          print(f'this run cleared {expected}; state branch holds {cleared} '
+                f'reply_false_positive_cleared row(s) in total')
+          if expected > 0 and cleared == 0:
+              print('commit run wrote rows that did not survive the push — investigate')
               sys.exit(1)
           "

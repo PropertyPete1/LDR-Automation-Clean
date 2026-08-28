@@ -5172,12 +5172,15 @@ class RuleEngine:
         # lineage gate refused to treat as a reply (third-party mail, or a
         # genuine reply on a brand-new thread). Listed by name so a human
         # reviews each one; never paged, never tagged, never counted WARM.
+        # Last 24h only: nothing acknowledges these, so a wider window would
+        # re-list the same lender email every day until it aged out — the
+        # FUB note on the record is the durable pointer, this line is news.
         unverified_inbound: List[dict] = []
         try:
             seen_unverified = set()
             for r in self.db.recent_audit_rows(
                     ["unverified_inbound"],
-                    dt.datetime.now(UTC) - dt.timedelta(days=self.NEEDS_REPLY_BACKLOG_DAYS)):
+                    dt.datetime.now(UTC) - dt.timedelta(days=1)):
                 pid = r.get("person_id")
                 if not pid or int(pid) in seen_unverified:
                     continue
@@ -6808,21 +6811,28 @@ class RuleEngine:
         recent_sends = self.db.recent_audit_rows(email_actions, since)
         # Filter to only real sends — exclude dry_run_sent (no email was actually delivered)
         sent_rows = [r for r in recent_sends if r.get("status") in ("sent", "email_sent", "completed")]
-        # Deduplicate by person_id — keep the most recent send per lead, and
-        # every send time besides: the thread-lineage check needs to match
-        # ANY of our sends, not just the newest.
+        # Deduplicate by person_id — keep the most recent send per lead
         latest_send_by_person: Dict[int, str] = {}
-        send_times_by_person: Dict[int, List[dt.datetime]] = {}
         for row in sent_rows:
             pid = row.get("person_id")
-            if not pid:
+            if pid and pid not in latest_send_by_person:
+                latest_send_by_person[int(pid)] = row["created_at"]
+        # Thread-lineage anchors over the wide sweep's 60-day horizon, NOT
+        # the 7-day watch window: a lead answers whichever of our emails
+        # sits in their inbox, and on normal cadence that anchor's audit
+        # row is routinely 8+ days old — bounding it to the watch window
+        # downgraded those genuine replies to review.
+        send_times_by_person: Dict[int, List[dt.datetime]] = {}
+        for row in self.db.recent_audit_rows(
+                email_actions,
+                dt.datetime.now(UTC) - dt.timedelta(
+                    days=self.WIDE_SWEEP_SEND_LOOKBACK_DAYS)):
+            pid = row.get("person_id")
+            if not pid or row.get("status") not in ("sent", "email_sent", "completed"):
                 continue
-            pid = int(pid)
-            if pid not in latest_send_by_person:
-                latest_send_by_person[pid] = row["created_at"]
             sent_ts = parse_fub_datetime(row.get("created_at"))
             if sent_ts:
-                send_times_by_person.setdefault(pid, []).append(sent_ts)
+                send_times_by_person.setdefault(int(pid), []).append(sent_ts)
         if not latest_send_by_person:
             LOGGER.info("Reply detection: no recent bot emails found in last 7 days. Nothing to scan.")
             return
@@ -6890,7 +6900,10 @@ class RuleEngine:
                 # first — not just the first match. One lead can hold an
                 # autoresponder AND a real answer, and acting on whichever came
                 # first would let the machine's reply hide the person's.
-                emails = self.fub.get_emails(person_id, limit=10)
+                # 25 emails, not 10: the lineage anchor (the synced copy of
+                # our send) must be IN the fetch, and busy records — exactly
+                # the ones accumulating third-party mail — push it out.
+                emails = self.fub.get_emails(person_id, limit=25)
                 texts = self.fub.get_text_messages(person_id, limit=10)
                 inbound: List[Tuple[dt.datetime, dict]] = []
                 for msg in [*emails, *texts]:
@@ -6912,24 +6925,34 @@ class RuleEngine:
                 humans = [(w, m) for w, m, kind in classified if kind == "human"]
                 autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
 
-                if opt_outs:
-                    # Compliance path: trash + tag, no hot-lead alert, and no
-                    # reply_detected row — an unsubscribe must never count WARM.
-                    self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
-                    continue
-
                 # Thread lineage: only an inbound on a thread we started may
-                # tag, page, or count WARM. Third-party mail FUB attached to
-                # the record (the 2026-08-28 lender false positive) fails
-                # this and is surfaced for review instead.
+                # tag, page, trash, or count WARM. Third-party mail FUB
+                # attached to the record (the 2026-08-28 lender false
+                # positive) fails this and is surfaced for review instead.
+                # Opt-outs are gated too — FUB's `unsubscribed` flag rides
+                # on synced third-party mail, and trashing the LEAD off a
+                # stranger's unsubscribe click would be strictly worse than
+                # the false page this fix exists to prevent. Texts and
+                # unsubscribes from our own threads still trash.
                 messages = [*emails, *texts]
                 bot_sends = send_times_by_person.get(person_id, [])
+                verified_opt_outs = [
+                    (w, m) for w, m in opt_outs
+                    if reply_thread_verified(m, messages, bot_sends)
+                ]
+                if verified_opt_outs:
+                    # Compliance path: trash + tag, no hot-lead alert, and no
+                    # reply_detected row — an unsubscribe must never count WARM.
+                    self._trash_opt_out_reply(person_id, person, *verified_opt_outs[-1])
+                    continue
                 verified = [
                     (w, m) for w, m in humans
                     if reply_thread_verified(m, messages, bot_sends)
                 ]
-                unverified = [(w, m) for w, m in humans
-                              if not reply_thread_verified(m, messages, bot_sends)]
+                unverified = sorted(
+                    [(w, m) for w, m in [*humans, *opt_outs]
+                     if not reply_thread_verified(m, messages, bot_sends)],
+                    key=lambda item: item[0])
 
                 if not verified and unverified:
                     self._handle_unverified_inbound(
@@ -7117,16 +7140,21 @@ class RuleEngine:
 
     def _unverified_noted_threads(self, person_id: int) -> set:
         """Threads already carrying an 'unverified inbound' note, read from
-        this lead's unverified_inbound rows — cheaper than paging FUB notes."""
+        this lead's unverified_inbound rows — cheaper than paging FUB notes.
+
+        Backfilled rows don't count: the backfill writes rows without notes,
+        and treating them as noted would silently turn 'one note per thread'
+        into zero notes for any thread the backfill saw first."""
         since = dt.datetime.now(UTC) - dt.timedelta(days=60)
         threads = set()
         for r in self.db.recent_audit_rows(["unverified_inbound"], since):
             if r.get("person_id") and int(r["person_id"]) == person_id:
                 try:
-                    thread = json.loads(r.get("details") or "{}").get("thread_id")
+                    details = json.loads(r.get("details") or "{}")
                 except Exception:  # noqa: BLE001
-                    thread = None
-                if thread is not None:
+                    details = {}
+                thread = details.get("thread_id")
+                if thread is not None and not details.get("backfilled"):
                     threads.add(str(thread))
         return threads
 
@@ -7435,7 +7463,7 @@ class RuleEngine:
         unverified instead of alerting.
         """
         messages = [
-            *self.fub.get_emails(person_id, limit=10),
+            *self.fub.get_emails(person_id, limit=25),
             *self.fub.get_text_messages(person_id, limit=10),
         ]
         classified = []
@@ -7461,19 +7489,28 @@ class RuleEngine:
         humans = [(w, m) for w, m, kind in classified if kind == "human"]
         autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
 
-        if opt_outs:
-            self._trash_opt_out_reply(person_id, person, *opt_outs[-1])
+        anchors = bot_sends or []
+        # Opt-outs need lineage too: FUB's `unsubscribed` flag rides on
+        # synced third-party mail, and trashing the LEAD off a stranger's
+        # unsubscribe click is the worst version of the Angie incident.
+        # Texts and genuine unsubscribes from our own threads still trash.
+        verified_opt_outs = [(w, m) for w, m in opt_outs
+                             if reply_thread_verified(m, messages, anchors)]
+        if verified_opt_outs:
+            self._trash_opt_out_reply(person_id, person, *verified_opt_outs[-1])
             return "opt_out"
-        if humans:
-            verified = [
-                (w, m) for w, m in humans
-                if reply_thread_verified(m, messages, bot_sends or [])
-            ]
-            if not verified:
-                self._handle_unverified_inbound(
-                    person_id, person, *humans[-1],
-                    already_logged=unverified_logged)
-                return "unverified"
+        verified = [(w, m) for w, m in humans
+                    if reply_thread_verified(m, messages, anchors)]
+        unverified = sorted(
+            [(w, m) for w, m in [*humans, *opt_outs]
+             if not reply_thread_verified(m, messages, anchors)],
+            key=lambda item: item[0])
+        if not verified and unverified:
+            self._handle_unverified_inbound(
+                person_id, person, *unverified[-1],
+                already_logged=unverified_logged)
+            return "unverified"
+        if verified:
             reply_at, reply_found = verified[-1]
             self._handle_human_reply(person_id, person, reply_at, reply_found)
             return "alerted"

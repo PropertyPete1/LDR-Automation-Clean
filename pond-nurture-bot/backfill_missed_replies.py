@@ -221,15 +221,25 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
     humans = [(w, m) for w, m, kind in classified if kind == "human"]
     autos = [(w, m) for w, m, kind in classified if kind == "auto_reply"]
 
-    if opt_outs:
+    # Opt-outs need lineage too (same gate as the live scanners): FUB's
+    # `unsubscribed` flag rides on synced third-party mail, and trashing the
+    # LEAD off a stranger's unsubscribe click must never happen. Unverified
+    # opt-outs fall through to the unverified-review branch below.
+    verified_opt_outs = [(w, m) for w, m in opt_outs
+                         if reply_thread_verified(m, messages, bot_sends or [])]
+    if verified_opt_outs:
         if already_disqualified(db, person_id, window_start):
             return None
-        when, msg = opt_outs[-1]
+        when, msg = verified_opt_outs[-1]
         if commit:
             engine._trash_opt_out_reply(person_id, person_detail, when, msg)
         return {"kind": "opt_out", "person_id": person_id, "name": name,
                 "reply_at": when.isoformat(),
                 "snippet": reply_display_snippet(msg)[:120]}
+    humans = sorted(
+        [*humans, *[(w, m) for w, m in opt_outs
+                    if not reply_thread_verified(m, messages, bot_sends or [])]],
+        key=lambda item: item[0])
 
     if humans:
         # Thread lineage, same gate as the live scanners: only an inbound on

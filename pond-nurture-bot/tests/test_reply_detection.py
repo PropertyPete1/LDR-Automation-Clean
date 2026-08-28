@@ -1054,3 +1054,81 @@ def test_reply_thread_verified_directly(m):
     assert m.reply_thread_verified({"isIncoming": True}, [], []) is True
     # No bot sends on record: nothing can verify.
     assert m.reply_thread_verified(reply, [our_send, reply], []) is False
+
+
+def test_a_reply_to_last_weeks_thread_still_pages(m, scan, tmp_db, fake_http):
+    """Adversarial-review finding: the lineage anchors must come from the
+    60-day horizon, not the 7-day watch window. Send 9 days ago on thread A,
+    send 2 days ago on thread B (what put them on the watch list), lead
+    replies to thread A — the one in their inbox. Must alert."""
+    now = dt.datetime.now(dt.timezone.utc)
+    old_send = now - dt.timedelta(days=9)
+    _seed_send(tmp_db, 42, now - dt.timedelta(days=2))  # arms the watch list
+    tmp_db.log("instant_welcome_email", "sent", 42, {})
+    with tmp_db.connect() as con:
+        con.execute(
+            "UPDATE audit_log SET created_at=? "
+            "WHERE person_id=42 AND action='instant_welcome_email'",
+            (old_send.isoformat(),))
+    fake_http.responses = _fub_responses(
+        emails=[
+            _real_outbound_email(old_send, email_id=60001, person_id=42,
+                                 thread_id=70000),
+            _real_inbound_email(now - dt.timedelta(hours=3), email_id=60002,
+                                person_id=42, thread_id=70000),
+        ],
+        texts=[])
+
+    scan.scan_reply_detection()
+
+    assert len(_alerts(tmp_db)) == 1, \
+        "a genuine reply to an 8+ day old thread of ours must still page"
+
+
+def test_a_third_party_unsubscribe_flag_must_not_trash_the_lead(
+        m, scan, tmp_db, fake_http, monkeypatch):
+    """Adversarial-review finding: FUB's `unsubscribed` flag rides on synced
+    third-party mail, and classify_reply puts it ahead of everything. A
+    lender's newsletter must not put the LEAD in the trash — review instead."""
+    now = dt.datetime.now(dt.timezone.utc)
+    _seed_send(tmp_db, 6340, now - dt.timedelta(hours=26))
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person",
+                        lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    emails = _angies_record(now)
+    emails[1]["unsubscribed"] = True  # the stranger's unsubscribe click
+    fake_http.responses = _fub_responses(
+        person={"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []},
+        emails=emails,
+        texts=[])
+
+    scan.scan_reply_detection()
+
+    since = now - dt.timedelta(days=1)
+    assert updates == [], "no trash, no tags — the lead did not unsubscribe"
+    assert tmp_db.recent_audit_rows(["reply_intent_disqualification"], since) == []
+    assert len(tmp_db.recent_audit_rows(["unverified_inbound"], since)) == 1
+
+
+def test_a_backfilled_row_does_not_suppress_the_live_note(
+        m, scan, tmp_db, fake_http, monkeypatch):
+    """Adversarial-review finding: the backfill writes unverified_inbound rows
+    without posting notes; the live path's one-note-per-thread dedup must not
+    read those as 'note already exists'."""
+    now = dt.datetime.now(dt.timezone.utc)
+    _seed_send(tmp_db, 6340, now - dt.timedelta(hours=26))
+    tmp_db.log("unverified_inbound", "review", 6340, {
+        "reply_at": (now - dt.timedelta(days=2)).isoformat(),
+        "thread_id": "49329", "backfilled": True})
+    notes = []
+    monkeypatch.setattr(scan.fub, "add_note",
+                        lambda pid, subject, body: notes.append(subject) or {})
+    fake_http.responses = _fub_responses(
+        person={"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []},
+        emails=_angies_record(now),
+        texts=[])
+
+    scan.scan_reply_detection()
+
+    assert notes == ["Automation: unverified inbound email — review"], \
+        "the backfill's note-less row must not eat the live path's one note"

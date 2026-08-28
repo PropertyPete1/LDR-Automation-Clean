@@ -112,6 +112,23 @@ def send_times_by_person(db, since: dt.datetime) -> Dict[int, List[dt.datetime]]
     return times
 
 
+def has_any_bot_send(db, person_id: int) -> bool:
+    """Has the bot EVER emailed this lead? All-time on purpose: 'nothing to
+    reply to' must not be an artifact of the query horizon. With the 60-day
+    anchor window alone, a genuine reply to a 70-day-old nurture thread
+    judged identical to Angie — the absence has to be provable, and the
+    audit log (append-only, person-indexed) can prove it cheaply."""
+    action_ph = ",".join("?" for _ in SEND_ACTIONS)
+    status_ph = ",".join("?" for _ in SEND_STATUSES)
+    with db.connect() as con:
+        row = con.execute(
+            f"SELECT COUNT(*) FROM audit_log WHERE person_id=? "
+            f"AND action IN ({action_ph}) AND status IN ({status_ph})",
+            (person_id, *SEND_ACTIONS, *SEND_STATUSES),
+        ).fetchone()
+    return bool(row and row[0])
+
+
 def already_voided(db, since: dt.datetime) -> set:
     """(person_id, reply_at) pairs a prior run already cleared."""
     voided = set()
@@ -186,7 +203,7 @@ def judge_person(engine, db, person_id: int, reply_at: dt.datetime,
             "note": "alerted message unverified, but another inbound passes the gate",
             "verified_at": other_verified[-1][0].isoformat(),
         }
-    if bot_sends:
+    if bot_sends or has_any_bot_send(db, person_id):
         return "unverified_review", {"thread_id": alerted.get("threadId"),
                                      "bot_sends": len(bot_sends)}
     return "false_positive", {"thread_id": alerted.get("threadId"),
@@ -354,9 +371,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     results = run_sweep(engine, db, days=args.days, commit=args.commit)
     false_positives = [r for r in results if r["verdict"] == "false_positive"]
     reviews = [r for r in results if r["verdict"] == "unverified_review"]
+    cleared = [r for r in results if r.get("cleared")]
     print(f"Done: {len(results)} alert(s) judged, {len(false_positives)} false "
           f"positive(s){' cleared' if args.commit else ' (dry run — nothing written)'}, "
           f"{len(reviews)} left for human review.")
+    # The workflow's post-push verify step reads this to know how many void
+    # rows to EXPECT on the state branch — zero cleared is a legitimate
+    # outcome, not a lost write, and must not fail the run.
+    with open("sweep_fp_summary.json", "w") as fh:
+        json.dump({"cleared": len(cleared), "judged": len(results)}, fh)
     return 0
 
 

@@ -254,3 +254,23 @@ def test_a_lead_we_actually_emailed_is_never_auto_cleared(wired, tmp_db):
     assert wired._calls["add_note"] == []
     assert tmp_db.recent_audit_rows(
         ["reply_false_positive_cleared"], NOW - dt.timedelta(days=1)) == []
+
+
+def test_a_send_older_than_the_anchor_window_still_blocks_clearing(wired, tmp_db):
+    """Adversarial-review finding: 'zero sends in the lookback' is not 'zero
+    sends'. A genuine reply to a 100-day-old nurture thread must not be
+    auto-cleared just because the 60-day anchor window can't see the send —
+    the all-time check (has_any_bot_send) has to catch it."""
+    _seed_send(tmp_db, 5889, NOW - dt.timedelta(days=100))
+    _seed_alert(tmp_db, 5889, FALSE_REPLY_AT, name="Jose Munoz")
+    wired._calls["emails"] = [
+        _thread_email(FALSE_REPLY_AT, email_id=51851, sent_by_person=True,
+                      person_id=5889, thread_id=48582),
+    ]
+
+    results = srfp.run_sweep(wired, tmp_db, days=7, commit=True)
+
+    assert [r["verdict"] for r in results] == ["unverified_review"]
+    assert wired._calls["update_person"] == []
+    assert tmp_db.recent_audit_rows(
+        ["reply_false_positive_cleared"], NOW - dt.timedelta(days=1)) == []
