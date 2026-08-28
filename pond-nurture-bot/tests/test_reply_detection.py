@@ -664,7 +664,7 @@ def test_every_emailed_lead_is_covered_within_one_rotation(m):
 # and Stephen (id 52004) so the predicate can never again pass on a field the
 # account does not send.
 
-def _real_inbound_email(created, *, email_id=51851, person_id=5889):
+def _real_inbound_email(created, *, email_id=51851, person_id=5889, thread_id=48582):
     """Joe's actual reply object, field for field, values redacted."""
     return {
         "id": email_id,
@@ -677,8 +677,8 @@ def _real_inbound_email(created, *, email_id=51851, person_id=5889):
         "bodyHtmlHiddenClean": "[CONTENT HIDDEN]",
         "addresses": {"to": [], "from": [], "cc": [], "bcc": []},
         "relatedPeople": [{"personId": person_id, "sentByPerson": True,
-                           "threadId": 48582}],
-        "threadId": 48582,
+                           "threadId": thread_id}],
+        "threadId": thread_id,
         "emailAccountId": 396015,
         "userId": 2,
         "read": False,
@@ -688,7 +688,7 @@ def _real_inbound_email(created, *, email_id=51851, person_id=5889):
     }
 
 
-def _real_outbound_email(created, *, email_id=51937, person_id=3346):
+def _real_outbound_email(created, *, email_id=51937, person_id=3346, thread_id=48666):
     """A synced copy of the bot's own send, field for field (diagnostic run
     32777950427, Stephen's 13:05 pond email). NOTE status='Received' — FUB
     stamps that on everything the mailbox sync ingests, direction included."""
@@ -701,8 +701,8 @@ def _real_outbound_email(created, *, email_id=51937, person_id=3346):
         "subject": "[CONTENT HIDDEN]",
         "bodyExcerpt": "[CONTENT HIDDEN]",
         "relatedPeople": [{"personId": person_id, "sentByPerson": False,
-                           "threadId": 48666}],
-        "threadId": 48666,
+                           "threadId": thread_id}],
+        "threadId": thread_id,
         "emailAccountId": 396015,
         "userId": 2,
         "bounced": False,
@@ -768,10 +768,15 @@ def test_the_real_payload_alerts_end_to_end(m, scan, tmp_db, fake_http):
     sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
     reply_at = sent_at + dt.timedelta(minutes=49)
     _seed_send(tmp_db, 42, sent_at)
+    # One thread, as measured: Stephen's genuine reply 52004 shared threadId
+    # 48666 with the synced copy of our own send — the lineage the
+    # thread-verification gate now requires.
     fake_http.responses = _fub_responses(
         emails=[
-            _real_outbound_email(sent_at, email_id=52003, person_id=42),
-            _real_inbound_email(reply_at, email_id=52004, person_id=42),
+            _real_outbound_email(sent_at, email_id=52003, person_id=42,
+                                 thread_id=48666),
+            _real_inbound_email(reply_at, email_id=52004, person_id=42,
+                                thread_id=48666),
         ],
         texts=[],
     )
@@ -803,3 +808,249 @@ def test_the_synced_copy_of_our_own_send_is_not_a_reply(m, scan, tmp_db, fake_ht
     since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
     assert tmp_db.recent_audit_rows(["auto_reply_detected"], since) == [], \
         "the bot's own send echoing back must not even count as an auto-reply"
+
+
+# ── thread lineage: the 2026-08-28 third-party false positive ────────────────
+#
+# "HOT LEAD REPLY: Angie Gonzalez" fired 2026-08-28 22:37 UTC, but Angie
+# (FUB 6340) never replied. Run 33218198212 dumped her record: FOUR emails,
+# all on one thread (49329, "Lender Intro Irene and Angie" — correspondence
+# between third parties that FUB attached to her record), and the one that
+# fired carried relatedPeople=[{personId: 6340, sentByPerson: True}] —
+# field-for-field a genuine reply. sentByPerson is FUB's attribution, not
+# proof the lead wrote anything, so an inbound email may only alert when its
+# thread also holds one of OUR audit-logged sends (reply_thread_verified).
+
+def _lender_thread_email(created, *, email_id, sent_by_person,
+                         person_id=6340, thread_id=49329):
+    """One email of Angie's lender thread, field for field as measured."""
+    return {
+        "id": email_id,
+        "created": created.isoformat(),
+        "date": (created + dt.timedelta(seconds=40)).isoformat(),
+        "status": "Received",
+        "subject": "[CONTENT HIDDEN]",
+        "bodyExcerpt": "[CONTENT HIDDEN]",
+        "bodyHtmlVisibleClean": "[CONTENT HIDDEN]",
+        "bodyHtmlHiddenClean": "[CONTENT HIDDEN]",
+        "addresses": {"to": [], "from": [], "cc": [], "bcc": []},
+        "relatedPeople": [{"personId": person_id, "sentByPerson": sent_by_person,
+                           "threadId": thread_id, "threadTotal": 4}],
+        "threadId": str(thread_id),
+        "emailAccountId": 395995,
+        "userId": 1,
+        "unsubscribed": False,
+    }
+
+
+def _angies_record(now):
+    """Her four emails: the intro our agent sent by hand (never audit-logged),
+    a follow-up, and the two lender emails of Aug 28 — 52889 being the one
+    FUB stamped sentByPerson=True and the scan alerted on."""
+    return [
+        _lender_thread_email(now - dt.timedelta(hours=7),
+                             email_id=52890, sent_by_person=False),
+        _lender_thread_email(now - dt.timedelta(hours=8),
+                             email_id=52889, sent_by_person=True),
+        _lender_thread_email(now - dt.timedelta(hours=25),
+                             email_id=52644, sent_by_person=False),
+        _lender_thread_email(now - dt.timedelta(hours=25, minutes=30),
+                             email_id=52642, sent_by_person=False),
+    ]
+
+
+def test_third_party_email_on_a_leads_record_must_not_alert(
+        m, scan, tmp_db, fake_http, monkeypatch):
+    """THE regression pin. The lender thread through the whole 10-minute scan:
+    no alert, no tag, no reply_detected row (so it can never count WARM) —
+    one unverified_inbound/review row and one note instead."""
+    now = dt.datetime.now(dt.timezone.utc)
+    _seed_send(tmp_db, 6340, now - dt.timedelta(hours=26))  # the welcome email
+    updates, notes = [], []
+    monkeypatch.setattr(scan.fub, "update_person",
+                        lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    monkeypatch.setattr(scan.fub, "add_note",
+                        lambda pid, subject, body: notes.append((pid, subject)) or {})
+    fake_http.responses = _fub_responses(
+        person={"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []},
+        emails=_angies_record(now),
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == [], "a lender's email must never page anyone"
+    assert updates == [], "a lender's email must never tag the lead Replied - Paused"
+    since = now - dt.timedelta(days=1)
+    assert tmp_db.recent_audit_rows(["reply_detected"], since) == [], \
+        "no reply_detected row of any status — nothing here may count WARM"
+    review = tmp_db.recent_audit_rows(["unverified_inbound"], since)
+    assert len(review) == 1 and review[0]["status"] == "review"
+    details = json.loads(review[0]["details"])
+    assert details["thread_id"] == "49329"
+    assert [s for _, s in notes] == ["Automation: unverified inbound email — review"]
+
+
+def test_the_same_lender_email_is_not_relogged_every_ten_minutes(
+        m, scan, tmp_db, fake_http, monkeypatch):
+    now = dt.datetime.now(dt.timezone.utc)
+    _seed_send(tmp_db, 6340, now - dt.timedelta(hours=26))
+    notes = []
+    monkeypatch.setattr(scan.fub, "add_note",
+                        lambda pid, subject, body: notes.append(subject) or {})
+    responses = _fub_responses(
+        person={"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []},
+        emails=_angies_record(now),
+        texts=[],
+    )
+    fake_http.responses = list(responses)
+    scan.scan_reply_detection()
+    fake_http.responses = list(responses)
+    scan.scan_reply_detection()
+
+    since = now - dt.timedelta(days=1)
+    assert len(tmp_db.recent_audit_rows(["unverified_inbound"], since)) == 1
+    assert len(notes) == 1, "one thread, one note — however many scans run over it"
+
+
+def test_a_genuine_reply_on_a_brand_new_thread_is_review_not_hot(
+        m, scan, tmp_db, fake_http):
+    """The gate's documented cost, pinned as a decision: a real reply whose
+    thread holds no synced copy of our send (brand-new thread, or the sync
+    never landed) is surfaced for review — visible, but it cannot page."""
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[_real_inbound_email(sent_at + dt.timedelta(minutes=49),
+                                    person_id=42, thread_id=99999)],
+        texts=[],
+    )
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == []
+    since = now - dt.timedelta(days=1)
+    review = tmp_db.recent_audit_rows(["unverified_inbound"], since)
+    assert len(review) == 1, "an unverifiable reply must still surface for review"
+
+
+def test_a_text_reply_still_alerts_without_thread_lineage(m, scan, tmp_db, fake_http):
+    """Texts have no threads — the gate does not apply to them, and the
+    2026-08-28 incident was email-only. A genuine SMS reply keeps paging."""
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=2)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(
+        emails=[],
+        texts=[{"id": 7, "personId": 42, "isIncoming": True,
+                "message": "Yes! Call me tomorrow?",
+                "created": (sent_at + dt.timedelta(hours=1)).isoformat()}],
+    )
+
+    scan.scan_reply_detection()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1
+    assert json.loads(alerts[0]["details"])["reply_channel"] == "text"
+
+
+def test_unverified_does_not_suppress_a_later_verified_reply(
+        m, scan, tmp_db, fake_http):
+    """The lender writes on Monday, Angie genuinely replies on Tuesday: the
+    unverified row must not blind the scan to the real reply."""
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=26)
+    _seed_send(tmp_db, 6340, sent_at)
+    person = {"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []}
+    fake_http.responses = _fub_responses(
+        person=person, emails=_angies_record(now), texts=[])
+    scan.scan_reply_detection()
+    assert _alerts(tmp_db) == []
+
+    # Tuesday: her genuine reply, on the thread of our synced send.
+    fake_http.responses = _fub_responses(
+        person=person,
+        emails=[
+            *_angies_record(now),
+            _real_outbound_email(sent_at, email_id=60001, person_id=6340,
+                                 thread_id=50000),
+            _real_inbound_email(now - dt.timedelta(minutes=30), email_id=60002,
+                                person_id=6340, thread_id=50000),
+        ],
+        texts=[])
+    scan.scan_reply_detection()
+
+    assert len(_alerts(tmp_db)) == 1, \
+        "a verified reply after third-party mail must still alert"
+
+
+def test_a_voided_alert_rearms_the_scan(m, scan, tmp_db, fake_http):
+    """After the repair sweep voids a false positive
+    (reply_false_positive_cleared), the lead must leave already_alerted —
+    otherwise they are blind for the whole dedup window right after cleanup."""
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=26)
+    _seed_send(tmp_db, 6340, sent_at)
+    false_reply_at = (now - dt.timedelta(hours=8)).isoformat()
+    tmp_db.log("reply_detected", "alert_sent", 6340,
+               {"reply_at": false_reply_at, "contact_name": "Angie Gonzalez"})
+    tmp_db.log("reply_false_positive_cleared", "completed", 6340,
+               {"reply_at": false_reply_at, "removed_tag": "Replied - Paused"})
+    fake_http.responses = _fub_responses(
+        person={"id": 6340, "firstName": "Angie", "lastName": "Gonzalez", "tags": []},
+        emails=[
+            _real_outbound_email(sent_at, email_id=60001, person_id=6340,
+                                 thread_id=50000),
+            _real_inbound_email(now - dt.timedelta(minutes=30), email_id=60002,
+                                person_id=6340, thread_id=50000),
+        ],
+        texts=[])
+
+    scan.scan_reply_detection()
+
+    assert len(_alerts(tmp_db)) == 2, \
+        "the voided alert must not suppress a later genuine reply"
+
+
+def test_a_voided_alert_leaves_the_needs_reply_list(m, scan, tmp_db):
+    """NEEDS A REPLY and THE FLOOR read reply_detected rows; a voided false
+    positive must stop showing a lead 'awaiting a human' who never wrote."""
+    reply_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=8)).isoformat()
+    tmp_db.log("reply_detected", "alert_sent", 6340,
+               {"reply_at": reply_at, "contact_name": "Angie Gonzalez",
+                "reply_channel": "email"})
+    assert [e["person_id"] for e in scan._collect_needs_reply()] == [6340]
+
+    tmp_db.log("reply_false_positive_cleared", "completed", 6340,
+               {"reply_at": reply_at, "removed_tag": "Replied - Paused"})
+    assert scan._collect_needs_reply() == []
+
+
+def test_reply_thread_verified_directly(m):
+    """The verifier's contract, case by case."""
+    now = dt.datetime.now(dt.timezone.utc)
+    reply = _real_inbound_email(now, person_id=42, thread_id=48666)
+    our_send = _real_outbound_email(now - dt.timedelta(minutes=49),
+                                    person_id=42, thread_id=48666)
+    anchor_ts = now - dt.timedelta(minutes=49)
+
+    # The measured genuine shape: shared thread + audit row within tolerance.
+    assert m.reply_thread_verified(reply, [our_send, reply], [anchor_ts]) is True
+    # Audit row outside the sync-latency tolerance: not our send.
+    assert m.reply_thread_verified(
+        reply, [our_send, reply],
+        [anchor_ts - dt.timedelta(seconds=m.BOT_SEND_MATCH_SECONDS + 1)]) is False
+    # int vs str threadId must still match — FUB mixes them across surfaces.
+    int_thread = dict(our_send, threadId=48666)
+    str_thread = dict(reply, threadId="48666")
+    assert m.reply_thread_verified(str_thread, [int_thread, str_thread],
+                                   [anchor_ts]) is True
+    # A thread whose only other member is ALSO inbound proves nothing.
+    other_inbound = _real_inbound_email(now - dt.timedelta(hours=1),
+                                        email_id=2, person_id=42, thread_id=48666)
+    assert m.reply_thread_verified(reply, [other_inbound, reply], [anchor_ts]) is False
+    # No thread at all (texts; other account shapes): the gate does not apply.
+    assert m.reply_thread_verified({"isIncoming": True}, [], []) is True
+    # No bot sends on record: nothing can verify.
+    assert m.reply_thread_verified(reply, [our_send, reply], []) is False

@@ -268,15 +268,18 @@ def count_replies_needed(
     if not latest_reply:
         return 0
 
-    # Anything that closes the loop: they left, or the bot could reach them
-    # again (only possible once a human cleared "Replied - Paused").
+    # Anything that closes the loop: they left, the alert was voided as a
+    # false positive (the repair sweep's reply_false_positive_cleared rows —
+    # nobody was ever waiting), or the bot could reach them again (only
+    # possible once a human cleared "Replied - Paused").
     send_placeholders = ",".join("?" for _ in EMAIL_SEND_ACTIONS)
     closing: Dict[int, str] = {}
     for person_id, created_at in conn.execute(
         f"""SELECT person_id, MAX(created_at) FROM audit_log
             WHERE created_at >= ?
               AND person_id IS NOT NULL
-              AND ( action IN ('reply_intent_disqualification', 'pond_opt_out_trash')
+              AND ( action IN ('reply_intent_disqualification', 'pond_opt_out_trash',
+                               'reply_false_positive_cleared')
                  OR (action IN ({send_placeholders}) AND status = ?) )
             GROUP BY person_id""",
         (since, *EMAIL_SEND_ACTIONS, SENT_STATUS),

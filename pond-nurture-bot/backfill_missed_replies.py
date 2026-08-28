@@ -99,12 +99,13 @@ def classify_window(
     return classified
 
 
-def already_recorded(db, person_id: int, reply_at: dt.datetime, window_start: dt.datetime) -> bool:
+def already_recorded(db, person_id: int, reply_at: dt.datetime, window_start: dt.datetime,
+                     actions: Tuple[str, ...] = ("reply_detected", "auto_reply_detected"),
+                     ) -> bool:
     """Does any reply/auto row already cover this exact inbound message?"""
     from fub_automation.main import parse_fub_datetime
 
-    for row in db.recent_audit_rows(
-            ["reply_detected", "auto_reply_detected"], window_start - dt.timedelta(days=1)):
+    for row in db.recent_audit_rows(list(actions), window_start - dt.timedelta(days=1)):
         if int(row.get("person_id") or 0) != person_id:
             continue
         try:
@@ -174,14 +175,33 @@ def candidates_from_audit(db, send_lookback_days: int) -> List[int]:
     return ordered
 
 
+def send_times_from_audit(db, send_lookback_days: int) -> Dict[int, List[dt.datetime]]:
+    """Every bot send time per lead — the thread-lineage anchors
+    (reply_thread_verified in main.py)."""
+    from fub_automation.main import parse_fub_datetime
+
+    since = dt.datetime.now(UTC) - dt.timedelta(days=send_lookback_days)
+    times: Dict[int, List[dt.datetime]] = {}
+    for row in db.recent_audit_rows(list(SEND_ACTIONS), since):
+        pid = row.get("person_id")
+        if not pid or row.get("status") not in SEND_STATUSES:
+            continue
+        sent_ts = parse_fub_datetime(row.get("created_at"))
+        if sent_ts:
+            times.setdefault(int(pid), []).append(sent_ts)
+    return times
+
+
 def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
-                   commit: bool, messages: Optional[List[dict]] = None) -> Optional[dict]:
+                   commit: bool, messages: Optional[List[dict]] = None,
+                   bot_sends: Optional[List[dt.datetime]] = None) -> Optional[dict]:
     """Classify one lead's window and (on commit) act. Returns a summary line
     dict, or None when there was nothing to do."""
     from fub_automation.main import (
         SELLER_LEAD_TAG,
         SELLER_REPLIED_TAG,
         reply_display_snippet,
+        reply_thread_verified,
     )
 
     person_id = int(person_detail["id"])
@@ -212,6 +232,30 @@ def process_person(engine, db, person_detail: dict, window_start: dt.datetime,
                 "snippet": reply_display_snippet(msg)[:120]}
 
     if humans:
+        # Thread lineage, same gate as the live scanners: only an inbound on
+        # a thread we started may tag or count. Third-party mail FUB attached
+        # to the record is recorded for review instead.
+        verified = [(w, m) for w, m in humans
+                    if reply_thread_verified(m, messages, bot_sends or [])]
+        if not verified:
+            when, msg = humans[-1]
+            if already_recorded(db, person_id, when, window_start,
+                                actions=("reply_detected", "auto_reply_detected",
+                                         "unverified_inbound")):
+                return None
+            if commit:
+                log_backdated(db, "unverified_inbound", "review", person_id, {
+                    "reply_at": when.isoformat(),
+                    "thread_id": (str(msg.get("threadId"))
+                                  if msg.get("threadId") is not None else None),
+                    "reply_snippet": reply_display_snippet(msg)[:200],
+                    "contact_name": name,
+                    "backfilled": True,
+                }, when)
+            return {"kind": "unverified", "person_id": person_id, "name": name,
+                    "reply_at": when.isoformat(),
+                    "snippet": reply_display_snippet(msg)[:120]}
+        humans = verified
         when, msg = humans[-1]
         if already_recorded(db, person_id, when, window_start):
             return None
@@ -266,6 +310,7 @@ def run_backfill(engine, db, *, days: int, commit: bool,
                  send_lookback_days: int = 60) -> List[dict]:
     window_start = dt.datetime.now(UTC) - dt.timedelta(days=days)
     candidates = candidates_from_audit(db, send_lookback_days)
+    send_times = send_times_from_audit(db, send_lookback_days)
     print(f"Candidates: {len(candidates)} leads the bot emailed in the last "
           f"{send_lookback_days} days; looking for inbound in the last {days}.",
           flush=True)
@@ -291,7 +336,8 @@ def run_backfill(engine, db, *, days: int, commit: bool,
             if not person_detail or engine.is_excluded(person_detail):
                 continue
             outcome = process_person(
-                engine, db, person_detail, window_start, commit, messages=messages)
+                engine, db, person_detail, window_start, commit, messages=messages,
+                bot_sends=send_times.get(person_id, []))
         except Exception as exc:  # noqa: BLE001
             print(f"  ERROR processing lead {person_id}: {exc}", flush=True)
             continue
@@ -313,11 +359,12 @@ def send_summary(engine, results: List[dict], *, days: int, commit: bool) -> Non
         by_kind.setdefault(r["kind"], []).append(r)
     labels = {"human": "Real replies (now tagged Replied - Paused)",
               "opt_out": "Opt-outs (now trashed + tagged)",
-              "auto_reply": "Auto-replies (classified, no action needed)"}
+              "auto_reply": "Auto-replies (classified, no action needed)",
+              "unverified": "Unverified inbound (no thread we started — review)"}
     mode = "" if commit else " — DRY RUN, nothing was written"
     lines = [f"Reply backfill over the last {days} days{mode}.", ""]
     html = [f"<p>Reply backfill over the last {days} days{mode}.</p>"]
-    for kind in ("human", "opt_out", "auto_reply"):
+    for kind in ("human", "opt_out", "auto_reply", "unverified"):
         if kind not in by_kind:
             continue
         lines.append(f"{labels[kind]} — {len(by_kind[kind])}:")
