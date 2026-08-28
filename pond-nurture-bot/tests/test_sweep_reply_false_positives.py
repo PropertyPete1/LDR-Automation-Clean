@@ -97,7 +97,6 @@ def wired(engine, tmp_db, monkeypatch):
 def test_the_angie_shape_is_judged_false_positive_and_cleared(wired, tmp_db):
     """THE repair pin: her alert fails the lineage gate, the pause tag (and
     only the pause tag) is removed, and the void row names the reply_at."""
-    _seed_send(tmp_db, 6340, NOW - dt.timedelta(hours=26))  # never synced back
     _seed_alert(tmp_db, 6340, FALSE_REPLY_AT)
     wired._calls["emails"] = list(LENDER_THREAD)
 
@@ -119,7 +118,6 @@ def test_the_angie_shape_is_judged_false_positive_and_cleared(wired, tmp_db):
 
 
 def test_dry_run_judges_but_writes_nothing(wired, tmp_db):
-    _seed_send(tmp_db, 6340, NOW - dt.timedelta(hours=26))
     _seed_alert(tmp_db, 6340, FALSE_REPLY_AT)
     wired._calls["emails"] = list(LENDER_THREAD)
 
@@ -192,7 +190,6 @@ def test_a_false_positive_without_the_tag_still_gets_the_void_row(wired, tmp_db)
     """Peter already pulled the tag by hand: nothing to remove, but the void
     row must still land so NEEDS A REPLY and the scans stop trusting the
     phantom alert."""
-    _seed_send(tmp_db, 6340, NOW - dt.timedelta(hours=26))
     _seed_alert(tmp_db, 6340, FALSE_REPLY_AT)
     wired._calls["emails"] = list(LENDER_THREAD)
     wired._calls["person"] = {"id": 6340, "firstName": "Angie",
@@ -209,7 +206,6 @@ def test_a_false_positive_without_the_tag_still_gets_the_void_row(wired, tmp_db)
 
 def test_an_already_voided_alert_is_skipped(wired, tmp_db):
     """Idempotent: re-running the sweep must not clear (or note) twice."""
-    _seed_send(tmp_db, 6340, NOW - dt.timedelta(hours=26))
     _seed_alert(tmp_db, 6340, FALSE_REPLY_AT)
     tmp_db.log("reply_false_positive_cleared", "completed", 6340,
                {"reply_at": FALSE_REPLY_AT.isoformat()})
@@ -236,3 +232,25 @@ def test_opt_out_trashings_are_never_auto_reversed(wired, tmp_db):
     assert results == []
     assert wired._calls["update_person"] == []
     assert wired._calls["add_note"] == []
+
+
+def test_a_lead_we_actually_emailed_is_never_auto_cleared(wired, tmp_db):
+    """The Jose Muñoz lesson from the first live dry run: a documented
+    GENUINE replier judged exactly like Angie because his anchor evidence had
+    aged out of the fetched history. A lead with ANY bot send in the lookback
+    gets 'unverified_review' — listed for a human, tag untouched. Absence of
+    proof only clears a tag when the absence is provable (zero sends)."""
+    _seed_send(tmp_db, 5889, NOW - dt.timedelta(days=40))
+    _seed_alert(tmp_db, 5889, FALSE_REPLY_AT, name="Jose Munoz")
+    wired._calls["emails"] = [
+        _thread_email(FALSE_REPLY_AT, email_id=51851, sent_by_person=True,
+                      person_id=5889, thread_id=48582),
+    ]
+
+    results = srfp.run_sweep(wired, tmp_db, days=7, commit=True)
+
+    assert [r["verdict"] for r in results] == ["unverified_review"]
+    assert wired._calls["update_person"] == []
+    assert wired._calls["add_note"] == []
+    assert tmp_db.recent_audit_rows(
+        ["reply_false_positive_cleared"], NOW - dt.timedelta(days=1)) == []

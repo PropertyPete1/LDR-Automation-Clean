@@ -21,11 +21,17 @@ For every reply_detected alert row (alert_sent / backfilled) in the last
 fired on (matched on the reply's own timestamp), and re-run the new gate.
 
   stands  — the alerted message sits on a thread with one of our sends (or is
-            a text / has no threadId, where the gate does not apply). Nothing
-            changes.
-  FALSE POSITIVE — the alerted message is on a thread none of our sends
-            belongs to. Listed. On --commit, IF no other inbound message of
-            theirs passes the gate either:
+            a text / has no threadId, where the gate does not apply), or some
+            other inbound of theirs passes the gate. Nothing changes.
+  unverified_review — the alerted message fails the gate but we DID email
+            this lead: the anchor evidence may simply have aged out of the
+            fetched history (Jose Muñoz, a documented genuine replier, judged
+            exactly like Angie in the first dry run). Listed for a human.
+            NEVER auto-cleared — absence of proof only clears a tag when the
+            absence is provable.
+  FALSE POSITIVE — structurally impossible: the lead has NO audit-logged bot
+            email send in the whole lookback, so there was nothing of ours
+            to reply to. Listed. On --commit:
               1. "Replied - Paused" (and nothing else) is removed from their
                  tags — the first automated tag removal in this repo, done as
                  read-filter-replace because FUB has no removal API.
@@ -135,11 +141,23 @@ def find_alerted_message(messages: List[dict], reply_at: dt.datetime) -> Optiona
 
 def judge_person(engine, db, person_id: int, reply_at: dt.datetime,
                  bot_sends: List[dt.datetime]) -> Tuple[str, dict]:
-    """('stands'|'false_positive'|'unmatched', evidence) for one alert row.
+    """('stands'|'false_positive'|'unverified_review'|'unmatched', evidence).
 
     'stands' also covers the case where the ALERTED message fails the gate
     but some other inbound of theirs passes it — the pause is then justified
     by that other message, and clearing the tag would lose a real reply.
+
+    'false_positive' — the auto-clearable verdict — requires structural
+    impossibility: the lead has NO audit-logged bot email send in the whole
+    lookback, so there was nothing of ours to reply to (Angie Gonzalez: zero
+    send rows, alerted off a lender's thread by the wide sweep's -updated
+    walk, which has no send precondition). A lead we DID email whose alerted
+    message merely fails the lineage check is 'unverified_review' instead:
+    the first dry run judged Jose Muñoz — a documented GENUINE replier whose
+    anchor evidence had simply aged out of the fetched history — exactly the
+    same as Angie, and clearing him would have un-paused a lead who really
+    is waiting on a human. Absence of proof only clears a tag when the
+    absence is provable.
     """
     from fub_automation.main import (
         inbound_messages_since,
@@ -154,7 +172,8 @@ def judge_person(engine, db, person_id: int, reply_at: dt.datetime,
     if alerted is None:
         return "unmatched", {"reason": "no message matches the logged reply_at"}
     if reply_thread_verified(alerted, messages, bot_sends):
-        return "stands", {"thread_id": alerted.get("threadId")}
+        return "stands", {"thread_id": alerted.get("threadId"),
+                          "bot_sends": len(bot_sends)}
     window_floor = reply_at - dt.timedelta(days=SEND_LOOKBACK_DAYS)
     other_verified = [
         (when, msg) for when, msg in inbound_messages_since(messages, window_floor)
@@ -163,10 +182,15 @@ def judge_person(engine, db, person_id: int, reply_at: dt.datetime,
     if other_verified:
         return "stands", {
             "thread_id": alerted.get("threadId"),
+            "bot_sends": len(bot_sends),
             "note": "alerted message unverified, but another inbound passes the gate",
             "verified_at": other_verified[-1][0].isoformat(),
         }
-    return "false_positive", {"thread_id": alerted.get("threadId")}
+    if bot_sends:
+        return "unverified_review", {"thread_id": alerted.get("threadId"),
+                                     "bot_sends": len(bot_sends)}
+    return "false_positive", {"thread_id": alerted.get("threadId"),
+                              "bot_sends": 0}
 
 
 def clear_pause_tag(engine, person: dict) -> Tuple[bool, List[str]]:
@@ -234,8 +258,9 @@ def run_sweep(engine, db, *, days: int, commit: bool) -> List[dict]:
         line = {**alert, "reply_at": alert["reply_at"].isoformat(),
                 "verdict": verdict, **evidence, "name": name}
         results.append(line)
-        print(f"  {verdict:<15} {name} (FUB {pid}) reply_at={line['reply_at']} "
-              f"thread={evidence.get('thread_id')}", flush=True)
+        print(f"  {verdict:<17} {name} (FUB {pid}) reply_at={line['reply_at']} "
+              f"thread={evidence.get('thread_id')} "
+              f"bot_sends={evidence.get('bot_sends', '?')}", flush=True)
 
         if verdict != "false_positive" or pid in judged_persons:
             continue
@@ -328,8 +353,10 @@ def main(argv: Optional[List[str]] = None) -> int:
           flush=True)
     results = run_sweep(engine, db, days=args.days, commit=args.commit)
     false_positives = [r for r in results if r["verdict"] == "false_positive"]
+    reviews = [r for r in results if r["verdict"] == "unverified_review"]
     print(f"Done: {len(results)} alert(s) judged, {len(false_positives)} false "
-          f"positive(s){' cleared' if args.commit else ' (dry run — nothing written)'}.")
+          f"positive(s){' cleared' if args.commit else ' (dry run — nothing written)'}, "
+          f"{len(reviews)} left for human review.")
     return 0
 
 
