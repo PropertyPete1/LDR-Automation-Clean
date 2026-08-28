@@ -213,6 +213,15 @@ def test_opting_out_closes_the_thread(db):
     assert tel.count_replies_needed(read(db), NOW) == 0
 
 
+def test_a_voided_false_positive_closes_the_thread(db):
+    """The repair sweep's undo (2026-08-28 Angie Gonzalez: a lender's email,
+    not a reply) — nobody is waiting, so THE FLOOR must stop counting them."""
+    at(db, NOW - dt.timedelta(days=2), "reply_detected", "alert_sent", 6340)
+    at(db, NOW - dt.timedelta(days=1), "reply_false_positive_cleared", "completed", 6340)
+
+    assert tel.count_replies_needed(read(db), NOW) == 0
+
+
 def test_replies_older_than_the_backlog_window_age_out(db):
     at(db, NOW - dt.timedelta(days=tel.REPLY_BACKLOG_DAYS + 1), "reply_detected", "alert_sent", 11)
     at(db, NOW - dt.timedelta(days=1), "reply_detected", "alert_sent", 12)
