@@ -1,0 +1,114 @@
+# One-shot repair, run by hand. Not scheduled, and it should stay that way.
+#
+# Re-judges every speed-to-lead warning and auto-reassignment since `since`
+# under the corrected touch rule (the 2026-08-29 Sunny Chamadia incident:
+# timers anchored the TOUCH check at detection time, which lags the real
+# assignment by up to hours, so an agent's legitimate first touch inside the
+# detection gap was ignored and the lead bounced back to Peter). False
+# positives are listed; on commit the original agent is restored (unless the
+# lead was manually re-routed since), the auto-reassigned tag is stripped, an
+# explaining note is left, and a speed_to_lead_repair row suppresses
+# re-arming for 24h.
+# See pond-nurture-bot/repair_speed_to_lead_false_positives.py.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+name: Repair speed-to-lead false positives
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Re-judge warnings/reassignments at/after this ISO instant"
+        required: true
+        default: "2026-08-28T00:00:00+00:00"
+      commit:
+        description: "Actually write (FUB assignment/tags/notes + state DB). Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  # Unbuffered so the per-lead verdicts stream into the live log instead of
+  # arriving in one block at exit.
+  PYTHONUNBUFFERED: "1"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+  # The script refuses --commit under DRY_RUN=true and pins DRY_RUN=true
+  # itself when --commit is absent; this env only unlocks a commit run.
+  DRY_RUN: ${{ inputs.commit && 'false' || 'true' }}
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Re-judge speed-to-lead punishments
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 repair_speed_to_lead_false_positives.py \
+            --since "${{ inputs.since }}" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something was actually written. A dry run must never touch
+      # the state branch.
+      - name: Push state DB
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      # Re-pull rather than trusting the push: the state DB is last-writer-
+      # wins under overlapping runs, so the rows must be seen ON the branch.
+      - name: Re-pull and verify the repair survived
+        if: ${{ inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Confirm the repair rows are on the state branch
+        if: ${{ inputs.commit }}
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import sqlite3, sys
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          n = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='speed_to_lead_repair'\"
+          ).fetchone()[0]
+          print(f'state branch holds {n} speed_to_lead_repair row(s) in total')
+          "

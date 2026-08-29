@@ -470,3 +470,251 @@ def test_the_sixty_minute_reassignment_actually_fires(watch_engine, tmp_db, fake
     assert _active_timers(tmp_db) == [], "a reassigned timer leaves the active set"
     args, _ = watch_engine._sent_emails[-1]
     assert args[0] == watch_engine.rules.owner_email, "Peter gets the reassignment email"
+
+
+# ── the detection gap: touch anchor vs budget anchor (2026-08-29) ────────────
+# Sunny Chamadia (6343): created 20:22Z, CALLED by her assigned agent at
+# 20:46Z, discovered by polling at 22:13Z. The 2026-08-26 rule anchored the
+# TOUCH check at detection, so the 20:46 call was refused, the lead warned at
+# 10:09 CT and bounced back to Peter — as did four siblings. The corrected
+# policy separates the anchors: created_at still runs the 30/60 budget from
+# detection (a stale lead must not be insta-reassigned), while the touch check
+# runs from when the assignment became the agent's — the lead's CREATION for
+# polling timers, the PREVIOUS completed scan for assignment-change timers.
+# Assigned-agent-only, bot-send exclusion and fail-closed are all unchanged.
+
+def test_the_sunny_shape_a_call_before_discovery_never_arms(watch_engine, tmp_db, fake_http):
+    """The incident itself: agent calls 24 minutes after creation, polling
+    discovers the lead two hours later — no timer, no page, an audit row."""
+    created = NOW - dt.timedelta(hours=2)
+    person = _stub(42, 9)
+    person["created"] = created.isoformat()
+    full = dict(person)
+    full["lastCall"] = (created + dt.timedelta(minutes=24)).isoformat()
+    agent_call = {"id": 71, "created": (created + dt.timedelta(minutes=24)).isoformat(),
+                  "userId": 9, "isIncoming": False}
+    fake_http.responses = [
+        (200, {"people": [person]}),  # the createdAfter poll page
+        (200, {"people": [full]}),    # the at-arm full record
+        (200, {"calls": [agent_call]}),
+    ]
+
+    watch_engine.poll_new_leads()
+
+    with tmp_db.connect() as con:
+        assert con.execute("SELECT COUNT(*) FROM new_lead_timers").fetchone()[0] == 0
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["skipped_already_touched"]
+    assert watch_engine._sent_emails == [], \
+        "no 'contact within 30 min' page for a lead the agent already contacted"
+
+
+def test_an_already_touched_skip_is_remembered_across_polls(watch_engine, tmp_db, fake_http):
+    """The skip leaves no timer row, so without the audit-row dedup every
+    later tick would re-spend the API calls re-proving the same touch."""
+    created = NOW - dt.timedelta(hours=2)
+    person = _stub(42, 9)
+    person["created"] = created.isoformat()
+    full = dict(person)
+    full["lastCall"] = (created + dt.timedelta(minutes=24)).isoformat()
+    agent_call = {"id": 71, "created": (created + dt.timedelta(minutes=24)).isoformat(),
+                  "userId": 9, "isIncoming": False}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"people": [full]}),
+        (200, {"calls": [agent_call]}),
+        (200, {"people": [person]}),  # the next poll's page
+    ]
+
+    watch_engine.poll_new_leads()
+    calls_after_first = len(fake_http.calls)
+    watch_engine.poll_new_leads()
+
+    assert len(fake_http.calls) == calls_after_first + 1, \
+        "the second poll should cost one page fetch, not a fresh touch check"
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["skipped_already_touched"]
+
+
+def test_a_polling_timer_records_creation_as_the_touch_anchor(watch_engine, tmp_db, fake_http):
+    created = NOW - dt.timedelta(hours=20)
+    person = _stub(42, 9)
+    person["created"] = created.isoformat()
+    fake_http.responses = [
+        (200, {"people": [person]}),  # the createdAfter poll page
+        (200, {"people": [person]}),  # the at-arm full record
+        (200, {"notes": []}),         # untouched
+    ]
+
+    watch_engine.poll_new_leads()
+
+    timers = _active_timers(tmp_db)
+    assert len(timers) == 1
+    budget = dt.datetime.fromisoformat(timers[0]["created_at"])
+    assert abs((budget - NOW).total_seconds()) < 120, \
+        "the 30/60 budget must still anchor at detection"
+    touch = dt.datetime.fromisoformat(timers[0]["touch_anchor_at"])
+    assert abs((touch - created).total_seconds()) < 1, \
+        "the touch clock starts at the lead's creation, not our discovery"
+    assert len(watch_engine._sent_emails) == 1, "an untouched lead still pages the agent"
+
+
+def test_an_assignment_change_timer_anchors_touch_at_the_previous_scan(watch_engine, tmp_db, fake_http):
+    prev = NOW - dt.timedelta(minutes=45)
+    tmp_db.log("assignment_scan", "completed", None, {})
+    with tmp_db.connect() as con:
+        con.execute("UPDATE audit_log SET created_at=? WHERE action='assignment_scan'",
+                    (prev.isoformat(),))
+    tmp_db.upsert_assignment_watch(42, 7)
+    fake_http.responses = _people_page(_stub(42, 9))
+
+    watch_engine.scan_assignment_changes()
+
+    timers = _active_timers(tmp_db)
+    assert len(timers) == 1
+    touch = dt.datetime.fromisoformat(timers[0]["touch_anchor_at"])
+    assert abs((touch - prev).total_seconds()) < 1, \
+        "the touch anchor is the previous completed observation"
+    budget = dt.datetime.fromisoformat(timers[0]["created_at"])
+    assert abs((budget - NOW).total_seconds()) < 120
+
+
+def test_the_first_scan_ever_falls_back_to_the_walk_window_anchor(watch_engine, tmp_db, fake_http):
+    """No completed row yet: the walk cannot detect a change older than its
+    24h window, so that window is the defensible lower bound."""
+    tmp_db.upsert_assignment_watch(42, 7)
+    fake_http.responses = _people_page(_stub(42, 9))
+
+    watch_engine.scan_assignment_changes()
+
+    timers = _active_timers(tmp_db)
+    touch = dt.datetime.fromisoformat(timers[0]["touch_anchor_at"])
+    expected = NOW - dt.timedelta(hours=24)
+    assert abs((touch - expected).total_seconds()) < 120
+
+
+def test_a_touch_inside_the_detection_gap_never_arms(watch_engine, tmp_db, fake_http):
+    """The assignment-change flavour of the Sunny shape: the agent noted the
+    lead between the previous observation and this detection."""
+    prev = NOW - dt.timedelta(minutes=45)
+    tmp_db.log("assignment_scan", "completed", None, {})
+    with tmp_db.connect() as con:
+        con.execute("UPDATE audit_log SET created_at=? WHERE action='assignment_scan'",
+                    (prev.isoformat(),))
+    tmp_db.upsert_assignment_watch(42, 7)
+    stub = _stub(42, 9)
+    note = {"id": 9, "created": (NOW - dt.timedelta(minutes=10)).isoformat(),
+            "createdById": 9, "subject": "Called — left VM and texted"}
+    fake_http.responses = [
+        (200, {"people": [stub]}),  # the -updated walk page
+        (200, {"people": [stub]}),  # the at-arm full record
+        (200, {"notes": [note]}),
+    ]
+
+    watch_engine.scan_assignment_changes()
+
+    assert _active_timers(tmp_db) == []
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["skipped_already_touched"]
+    assert watch_engine._sent_emails == []
+    assert tmp_db.get_assignment_watch(42)["assigned_user_id"] == 9, \
+        "the watch still learns the new pair"
+
+
+def test_a_note_before_the_touch_anchor_still_never_cancels(watch_engine, tmp_db, fake_http):
+    """The Brito protection, restated for the new anchor: activity from before
+    the touch anchor — even the assigned agent's own — contributes nothing."""
+    anchor = NOW - dt.timedelta(minutes=40)
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=10)).isoformat(),
+                              touch_anchor_at=anchor.isoformat())
+    person = _stub(42, 9)
+    old_note = {"id": 7, "created": (anchor - dt.timedelta(minutes=5)).isoformat(),
+                "createdById": 9, "subject": "Left a voicemail"}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"notes": [old_note]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert [t["person_id"] for t in _active_timers(tmp_db)] == [42]
+    assert _audit(tmp_db, "new_lead_timer") == []
+
+
+def test_a_stored_touch_anchor_lets_a_later_tick_see_the_gap_touch(watch_engine, tmp_db, fake_http):
+    """Fail-closed at arm time means an API outage still arms the timer — but
+    the stored anchor lets the NEXT tick recognise the same gap touch and
+    cancel instead of warning."""
+    touch_anchor = NOW - dt.timedelta(hours=2)
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=20)).isoformat(),
+                              touch_anchor_at=touch_anchor.isoformat())
+    person = _stub(42, 9)
+    person["lastCall"] = (NOW - dt.timedelta(minutes=96)).isoformat()
+    agent_call = {"id": 71, "created": (NOW - dt.timedelta(minutes=96)).isoformat(),
+                  "userId": 9, "isIncoming": False}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"calls": [agent_call]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert _active_timers(tmp_db) == []
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["canceled_touched"]
+
+
+def test_duplicate_active_generations_fire_once(watch_engine, tmp_db, fake_http):
+    """The 2026-08-28 state-pull race gave Sunny TWO started_polling rows and
+    the loop reassigned her twice, five seconds apart. One person, one action
+    per run — whatever fires stamps every active generation."""
+    watch_engine.rules.new_lead_timer_mode = "24_7"
+    watch_engine.settings.dry_run = False
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=70)).isoformat())
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=65)).isoformat())
+    fake_http.responses = [
+        (200, {"people": [_stub(42, 9)]}),  # get_person
+        (200, {}),                          # touch check: no notes
+        (200, {"id": 901}),                 # POST /notes — late warning
+        (200, {}),                          # PUT — assignedUserId
+        (200, {}),                          # PUT — merge tag
+        (200, {"id": 902}),                 # POST /notes — reassignment note
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_reassigned")] == ["completed"]
+    note_posts = [c for c in fake_http.calls
+                  if c.method == "POST" and c.url.endswith("/notes")]
+    assert len(note_posts) == 2, "the second generation re-warned or re-reassigned"
+    with tmp_db.connect() as con:
+        stamps = con.execute(
+            "SELECT reassigned_at FROM new_lead_timers WHERE person_id=42").fetchall()
+    assert all(s[0] is not None for s in stamps), \
+        "both generations must leave the active set"
+
+
+def test_a_repaired_lead_is_not_rearmed_for_a_day(watch_engine, tmp_db, fake_http):
+    """The false-positive repair restores the original agent — an assignment
+    change. A racing run holding pre-repair watch state must not re-arm and
+    re-page; the repair row suppresses for 24h, well past the 30-minute
+    automation window."""
+    tmp_db.log("speed_to_lead_repair", "reassignment_reverted", 42, {})
+    with tmp_db.connect() as con:
+        con.execute("UPDATE audit_log SET created_at=? WHERE action='speed_to_lead_repair'",
+                    ((NOW - dt.timedelta(hours=2)).isoformat(),))
+    tmp_db.upsert_assignment_watch(42, 2)
+    fake_http.responses = _people_page(_stub(42, 9))
+
+    watch_engine.scan_assignment_changes()
+
+    assert _active_timers(tmp_db) == []
+    assert watch_engine._sent_emails == []
+    skips = _audit(tmp_db, "assignment_change")
+    assert json.loads(skips[0]["details"])["reason"] == "repair_suppressed"
+
+
+def test_every_completed_walk_logs_its_observation(watch_engine, tmp_db, fake_http):
+    """The completion row IS the next run's touch anchor — an uneventful walk
+    must log it too, or the anchor drifts back and over-forgives."""
+    fake_http.responses = _people_page(_stub(42, 9))  # first sight → baseline only
+
+    watch_engine.scan_assignment_changes()
+
+    assert [r["status"] for r in _audit(tmp_db, "assignment_scan")] == ["completed"]
