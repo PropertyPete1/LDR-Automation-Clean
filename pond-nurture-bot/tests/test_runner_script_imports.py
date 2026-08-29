@@ -41,6 +41,7 @@ RUNNER_SCRIPTS = [
     "backfill_ramp_state.py",
     "diagnose_reply_surfaces.py",
     "investigate_assignments.py",
+    "repair_speed_to_lead_false_positives.py",
     "weekly_digest.py",
     "nightly_health.py",
     "export_dashboard_data.py",

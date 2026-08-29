@@ -448,6 +448,17 @@ class AuditDB:
                 "CREATE INDEX IF NOT EXISTS idx_audit_log_person "
                 "ON audit_log(person_id)")
             self._migrate_new_lead_timers(con)
+            # 2026-08-29: the touch anchor is separate from the budget anchor.
+            # created_at keeps the 30/60-minute clock at DETECTION time; the
+            # touch check honours the assigned agent's work from when the
+            # assignment actually became theirs — Sunny Chamadia (6343) was
+            # called 24 minutes after creation and still bounced because
+            # detection lagged by ~2h and the anchor was detection.
+            timer_cols = [r[1] for r in con.execute(
+                "PRAGMA table_info(new_lead_timers)").fetchall()]
+            if "touch_anchor_at" not in timer_cols:
+                con.execute(
+                    "ALTER TABLE new_lead_timers ADD COLUMN touch_anchor_at TEXT")
 
     @staticmethod
     def _migrate_new_lead_timers(con: sqlite3.Connection) -> None:
@@ -779,16 +790,37 @@ class AuditDB:
             "leads_exhausted": exhausted_count,
         }
 
-    def add_new_lead_timer(self, person_id: int, assigned_user_id: Optional[int], created_at: Optional[str] = None) -> None:
+    def add_new_lead_timer(self, person_id: int, assigned_user_id: Optional[int], created_at: Optional[str] = None,
+                           touch_anchor_at: Optional[str] = None) -> None:
         created_time = created_at if created_at else now_iso()
         with self.connect() as con:
             con.execute(
                 """
-                INSERT OR IGNORE INTO new_lead_timers(person_id, created_at, assigned_user_id)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO new_lead_timers(person_id, created_at, assigned_user_id, touch_anchor_at)
+                VALUES (?, ?, ?, ?)
                 """,
-                (person_id, created_time, assigned_user_id),
+                (person_id, created_time, assigned_user_id, touch_anchor_at),
             )
+
+    def last_assignment_observation(self) -> Optional[str]:
+        """observed_at of the most recent assignment-change walk that covered
+        its WHOLE window. A truncated walk (page cap hit with changed records
+        left unread) proves only a slice was observed, so it is logged with
+        status 'truncated' and never advances the touch anchor — otherwise a
+        bulk sweep that keeps 500+ records above a lead in the -updated sort
+        would let the anchor postdate the agent's real first touch, the exact
+        Sunny Chamadia class again. The stamp is the walk's START, not the
+        log time, so the anchor can never postdate an observation."""
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT details FROM audit_log WHERE action='assignment_scan' "
+                "AND status='completed' ORDER BY created_at DESC LIMIT 1").fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return json.loads(row[0]).get("observed_at")
+        except ValueError:
+            return None
 
     def active_new_lead_timers(self) -> List[dict]:
         with self.connect() as con:
@@ -815,12 +847,18 @@ class AuditDB:
                 "AND canceled_at IS NULL AND reassigned_at IS NULL",
                 (now_iso(), person_id))
 
-    def cancel_timer(self, person_id: int) -> None:
+    def cancel_timer(self, person_id: int, assigned_user_id: Optional[int] = None) -> None:
+        """Cancel the person's active generation(s) — optionally only those
+        armed for one agent, so a repair for agent A cannot silence a
+        legitimate timer running for agent B."""
+        query = ("UPDATE new_lead_timers SET canceled_at=? WHERE person_id=? "
+                 "AND canceled_at IS NULL AND reassigned_at IS NULL")
+        args: list = [now_iso(), person_id]
+        if assigned_user_id is not None:
+            query += " AND assigned_user_id=?"
+            args.append(int(assigned_user_id))
         with self.connect() as con:
-            con.execute(
-                "UPDATE new_lead_timers SET canceled_at=? WHERE person_id=? "
-                "AND canceled_at IS NULL AND reassigned_at IS NULL",
-                (now_iso(), person_id))
+            con.execute(query, args)
 
     # ── Assignment safety net (untouched-assignment watch) ──
     def get_assignment_watch(self, person_id: int) -> Optional[dict]:
@@ -5669,22 +5707,68 @@ class RuleEngine:
 
     def process_new_lead_timers(self) -> None:
         now = dt.datetime.now(UTC)
-        for timer in self.db.active_new_lead_timers():
+        # A lead the false-positive repair just touched must hold NO timer for
+        # a day: the scan's repair_suppressed guard stops re-ARMING, but a
+        # racing tick that pulled state before the repair pushed can already
+        # have armed one — this cancels it before any warning can fire.
+        recently_repaired: set = set()
+        for row in self.db.recent_audit_rows(
+                ["speed_to_lead_repair"], now - dt.timedelta(hours=24)):
+            if row.get("person_id"):
+                recently_repaired.add(int(row["person_id"]))
+        # A person can hold duplicate ACTIVE generations when two overlapping
+        # runs both armed (the 2026-08-28 state-pull race gave Sunny Chamadia
+        # two started_polling rows) — mark_warned/mark_reassigned stamp every
+        # active row, but this loop iterates a snapshot, so without collapsing
+        # them the second generation warned and reassigned the same lead
+        # again. Duplicates merge to ONE judgement per person: the OLDEST
+        # budget clock (the first detection is the promise made to the lead)
+        # and the EARLIEST touch clock (a legacy NULL-anchor duplicate must
+        # not mask a sibling row that knows the real assignment moment).
+        merged: Dict[int, dict] = {}
+        for row in self.db.active_new_lead_timers():
+            pid = int(row["person_id"])
+            cur = merged.get(pid)
+            if cur is None:
+                merged[pid] = dict(row)
+                continue
+            row_touch = parse_dt(row.get("touch_anchor_at") or "") or parse_dt(row["created_at"])
+            cur_touch = parse_dt(cur.get("touch_anchor_at") or "") or parse_dt(cur["created_at"])
+            row_created = parse_dt(row["created_at"])
+            cur_created = parse_dt(cur["created_at"])
+            if row_created and cur_created and row_created < cur_created:
+                cur["created_at"] = row["created_at"]
+            if row_touch and cur_touch and row_touch < cur_touch:
+                cur["touch_anchor_at"] = row.get("touch_anchor_at") or row["created_at"]
+            if row.get("warned_at") and not cur.get("warned_at"):
+                cur["warned_at"] = row["warned_at"]
+            if row.get("assigned_user_id") and not cur.get("assigned_user_id"):
+                cur["assigned_user_id"] = row["assigned_user_id"]
+        for timer in merged.values():
             person_id = int(timer["person_id"])
+            if person_id in recently_repaired:
+                self.db.cancel_timer(person_id)
+                self.db.log("new_lead_timer", "canceled_repair_suppressed", person_id)
+                continue
             created = parse_dt(timer["created_at"])
             age_min = self.business_minutes_elapsed(created, now)
             person = self.fub.get_person(person_id)
             if not person:
                 self.db.cancel_timer(person_id)
                 continue
-            # Timer created_at is the anchor for BOTH the 30/60-min budget and
-            # the touch check. Policy (2026-08-26): only the ASSIGNED AGENT's
-            # own activity, at or after this anchor, cancels — the Jose Brito
-            # timer (armed 13:57) was killed by a note from 13:23 when the
-            # anchor was back-dated to the lead's FUB creation.
+            # created_at anchors the 30/60-minute BUDGET at detection time.
+            # The TOUCH check anchors at touch_anchor_at — when the assignment
+            # actually became the agent's (lead creation for polling timers,
+            # the previous scan observation for assignment-change timers) —
+            # because detection can lag the real assignment by hours and work
+            # done in that gap is legitimate first touch (Sunny Chamadia,
+            # 2026-08-29). Rows armed before the column existed fall back to
+            # created_at, the 2026-08-26 policy anchor. Only the ASSIGNED
+            # AGENT's own activity ever cancels, exactly as before.
+            touch_anchor = parse_dt(timer.get("touch_anchor_at") or "") or created
             assigned_for_touch = person.get("assignedUserId") or timer.get("assigned_user_id")
             if assigned_for_touch and self.lead_touched_after_creation(
-                    person, created, assigned_user_id=int(assigned_for_touch)):
+                    person, touch_anchor, assigned_user_id=int(assigned_for_touch)):
                 self.db.cancel_timer(person_id)
                 self.db.log("new_lead_timer", "canceled_touched", person_id)
                 continue
@@ -5918,6 +6002,7 @@ class RuleEngine:
         "stale_agent_pond_reassignment",
         "pond_keyword_reassignment",
         "new_lead_reassigned",
+        "speed_to_lead_repair",
     )
     ASSIGNMENT_AUTOMATION_WINDOW_MIN = 30
     #: More than this many detected moves in one run reads as a manual bulk
@@ -6020,12 +6105,35 @@ class RuleEngine:
         window_start = now - dt.timedelta(hours=self.ASSIGNMENT_SCAN_WINDOW_HOURS)
         automation_window = now - dt.timedelta(minutes=self.ASSIGNMENT_AUTOMATION_WINDOW_MIN)
 
+        # FUB keeps no "assigned at" timestamp, so the assignment became
+        # current somewhere between the PREVIOUS whole-window walk (when the
+        # old pair was last provably still stored) and this detection. That is
+        # the touch anchor: the agent's own work inside the detection gap —
+        # ticks arrive 30–50 minutes apart under GitHub's cron delays, or
+        # overnight when a change lands after business hours — is legitimate
+        # first touch, not something to warn about. Truncated walks never
+        # advance the anchor (see last_assignment_observation). Before the
+        # first completed row exists, fall back to the scan window itself: a
+        # change detected by a covering walk is at most that old.
+        prev_observation = parse_dt(self.db.last_assignment_observation() or "") \
+            or (now - dt.timedelta(hours=self.ASSIGNMENT_SCAN_WINDOW_HOURS))
+
         recently_moved_by_us = set()
         for row in self.db.recent_audit_rows(
                 list(self.ASSIGNMENT_AUTOMATION_ACTIONS), automation_window):
             pid = row.get("person_id")
             if pid:
                 recently_moved_by_us.add(int(pid))
+
+        # A lead the false-positive repair just restored must not be re-armed
+        # for a day: the repair window is wider than the 30-minute automation
+        # window because the restore itself is an assignment change.
+        recently_repaired = set()
+        for row in self.db.recent_audit_rows(
+                ["speed_to_lead_repair"], now - dt.timedelta(hours=24)):
+            pid = row.get("person_id")
+            if pid:
+                recently_repaired.add(int(pid))
 
         active_timer_people = {int(t["person_id"]) for t in self.db.active_new_lead_timers()}
         excluded_agent_ids = set(getattr(self.rules, "excluded_user_ids", []))
@@ -6035,6 +6143,7 @@ class RuleEngine:
         params: Dict[str, Any] = {"sort": "-updated", "limit": 100}
         pages = 0
         stop = False
+        truncated = False
         while pages < self.ASSIGNMENT_SCAN_MAX_PAGES and not stop:
             data = self.fub._request("GET", "/people", params=dict(params))
             people = data.get("people", data.get("data", []))
@@ -6067,6 +6176,8 @@ class RuleEngine:
                 reason = None
                 if person_id in recently_moved_by_us:
                     reason = "automation_move"
+                elif person_id in recently_repaired:
+                    reason = "repair_suppressed"
                 elif stub.get("assignedPondId"):
                     reason = "moved_into_pond"
                 elif self.rules.peter_user_id is not None and assigned == int(self.rules.peter_user_id):
@@ -6086,22 +6197,61 @@ class RuleEngine:
             cursor = data.get("_metadata", {}).get("next")
             if not cursor or stop:
                 break
+            if pages >= self.ASSIGNMENT_SCAN_MAX_PAGES:
+                # More changed records exist beyond the page cap: this walk
+                # observed only a slice of the window, and its stamp must not
+                # become anyone's touch anchor.
+                truncated = True
+                break
             params["next"] = cursor
 
         if not changes:
             LOGGER.info("Assignment-change scan: walked %s changed records, no new "
                         "agent assignments to arm.", walked)
+            # The completion row IS the next run's touch anchor — it must land
+            # on every covering walk, changes or none, or the anchor drifts
+            # back to the last eventful run and over-forgives. observed_at is
+            # the walk's START; a page-capped walk logs 'truncated' instead
+            # and advances nothing.
+            self.db.log("assignment_scan", "truncated" if truncated else "completed",
+                        None, {"walked": walked, "armed": 0,
+                               "observed_at": now.isoformat()})
             return
 
         bulk = len(changes) > self.ASSIGNMENT_BULK_THRESHOLD
         users = self.user_cache_by_id()
+        armed = 0
         for stub, assigned in changes:
             person_id = int(stub["id"])
-            self.db.add_new_lead_timer(person_id, assigned)
+            # If the agent already touched the lead inside the detection gap,
+            # there is nothing to warn about — don't arm, don't page. The list
+            # stub lacks the lastX stamps the touch check gates on, so check
+            # the full record; a fetch failure falls back to the stub, which
+            # can only miss touches (fail closed: the timer still arms and the
+            # stored anchor lets a later tick see the same touch).
+            try:
+                full = self.fub.get_person(person_id) or stub
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Assignment change: could not fetch person %s for the "
+                               "at-arm touch check: %s", person_id, exc)
+                full = stub
+            if self.lead_touched_after_creation(
+                    full, prev_observation, assigned_user_id=int(assigned)):
+                self.db.log("new_lead_timer", "skipped_already_touched", person_id, {
+                    "assignedUserId": assigned,
+                    "touch_anchor": prev_observation.isoformat(),
+                })
+                LOGGER.info("Assignment change: lead %s already touched by agent %s "
+                            "since the previous observation — no timer.",
+                            person_id, assigned)
+                continue
+            self.db.add_new_lead_timer(person_id, assigned,
+                                       touch_anchor_at=prev_observation.isoformat())
             self.db.log("new_lead_timer", "started_assignment_change", person_id, {
                 "assignedUserId": assigned,
                 "bulk": bulk,
             })
+            armed += 1
             LOGGER.info("Assignment change: timer armed for lead %s (agent %s)%s",
                         person_id, assigned, " [bulk]" if bulk else "")
             if not bulk:
@@ -6109,8 +6259,12 @@ class RuleEngine:
 
         if bulk:
             self._send_bulk_assignment_digest(changes, users)
-        LOGGER.info("Assignment-change scan complete: walked %s, armed %s%s.",
-                    walked, len(changes), " (bulk digest)" if bulk else "")
+        self.db.log("assignment_scan", "truncated" if truncated else "completed",
+                    None, {"walked": walked, "armed": armed,
+                           "changes": len(changes), "observed_at": now.isoformat()})
+        LOGGER.info("Assignment-change scan complete: walked %s, armed %s of %s%s%s.",
+                    walked, armed, len(changes), " (bulk digest)" if bulk else "",
+                    " [TRUNCATED at page cap]" if truncated else "")
 
     def _send_bulk_assignment_digest(self, changes: List[Tuple[dict, int]],
                                      users: Dict[int, dict]) -> None:
@@ -6157,12 +6311,19 @@ class RuleEngine:
             return
 
         active_timers = {int(t["person_id"]) for t in self.db.active_new_lead_timers()}
-        
+
         # Also load canceled or completed timers from the last 24 hours to avoid double-processing
         with self.db.connect() as con:
             con.row_factory = sqlite3.Row
             past_rows = con.execute("SELECT person_id FROM new_lead_timers WHERE canceled_at IS NOT NULL OR reassigned_at IS NOT NULL").fetchall()
             processed_timers = {int(r["person_id"]) for r in past_rows}
+        # A lead skipped because the agent had already touched it leaves no
+        # timer row — remember the skip so every later tick doesn't re-spend
+        # the API calls re-proving the same touch.
+        for row in self.db.recent_audit_rows(
+                ["new_lead_timer"], dt.datetime.now(UTC) - dt.timedelta(hours=24)):
+            if row.get("status") == "skipped_already_touched" and row.get("person_id"):
+                processed_timers.add(int(row["person_id"]))
 
         for person in recent_leads:
             person_id = int(person["id"])
@@ -6184,15 +6345,40 @@ class RuleEngine:
             assigned_user_id = person.get("assignedUserId")
             # If the lead is assigned to an agent (and NOT Peter Allen himself), start the speed-to-lead timer!
             if assigned_user_id and int(assigned_user_id) != self.rules.peter_user_id:
-                # Anchor the timer at DETECTION time (now), never the lead's FUB
-                # created timestamp — polling runs once daily, so a lead created
-                # yesterday afternoon would otherwise start its timer already
-                # past the 60-minute budget and be insta-reassigned.
-                self.db.add_new_lead_timer(person_id, int(assigned_user_id))
+                assigned_int = int(assigned_user_id)
+                # The 30/60-minute BUDGET anchors at DETECTION time (now) —
+                # polling can lag, and a lead created yesterday afternoon must
+                # not start its timer already past the 60-minute line. The
+                # TOUCH clock is different: the agent has the lead from its
+                # creation/assignment, so their work between creation and our
+                # discovery is legitimate first touch. Sunny Chamadia (6343)
+                # was called 24 minutes after creation, discovered ~2h later,
+                # and bounced because the touch anchor was detection.
+                fub_created = parse_fub_datetime(person.get("created")) or dt.datetime.now(UTC)
+                full = None
+                try:
+                    # The list stub lacks the lastX stamps the touch check
+                    # gates its channel queries on — check the full record.
+                    full = self.fub.get_person(person_id)
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.warning("API Polling: could not fetch person %s for the "
+                                   "at-arm touch check: %s", person_id, exc)
+                if self.lead_touched_after_creation(
+                        full or person, fub_created, assigned_user_id=assigned_int):
+                    self.db.log("new_lead_timer", "skipped_already_touched", person_id, {
+                        "assignedUserId": assigned_int,
+                        "touch_anchor": fub_created.isoformat(),
+                        "fub_created_at": person.get("created"),
+                    })
+                    LOGGER.info("API Polling: Lead %s already touched by agent %s since "
+                                "creation — no timer.", person_id, assigned_int)
+                    continue
+                self.db.add_new_lead_timer(person_id, assigned_int,
+                                           touch_anchor_at=fub_created.isoformat())
                 self.db.log("new_lead_timer", "started_polling", person_id, {"assignedUserId": assigned_user_id, "fub_created_at": person.get("created")})
                 LOGGER.info("API Polling: Started speed-to-lead timer for Lead %s (Assigned to Agent %s)", person_id, assigned_user_id)
                 # Send immediate email notification to the agent with click-to-text link
-                self._send_speed_to_lead_agent_alert(person, int(assigned_user_id))
+                self._send_speed_to_lead_agent_alert(person, assigned_int)
 
     def _send_speed_to_lead_agent_alert(self, person: dict, assigned_user_id: int) -> None:
         """Send an immediate email to the assigned agent when a new lead is assigned.

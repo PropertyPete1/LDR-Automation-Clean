@@ -193,7 +193,31 @@ def main(argv: Optional[List[str]] = None) -> int:
             _p(f"    notes: {len(notes)}")
             for note in notes[:10]:
                 _p(f"      {note.get('created') or note.get('createdAt')} "
+                   f"createdById={note.get('createdById')} "
                    f"subj={str(note.get('subject'))[:60]!r}")
+            # Channel rows WITH their author ids — the touch check attributes
+            # every channel this way, so a diagnosis has to see the same fields.
+            for label, rows_ in (("calls", fub.get_calls(args.focus, limit=20)),
+                                 ("texts", fub.get_text_messages(args.focus, limit=20)),
+                                 ("emails", fub.get_emails(args.focus, limit=20))):
+                _p(f"    {label}: {len(rows_)}")
+                for row in rows_[:20]:
+                    _p(f"      {row.get('created') or row.get('createdAt')} "
+                       f"userId={row.get('userId')} "
+                       f"isIncoming={row.get('isIncoming')!r} "
+                       f"outcome/subj={str(row.get('outcome') or row.get('subject') or '')[:40]!r}")
+            # The full timer + assignment audit trail for this person, however
+            # old — section C is window-capped, and a bounced lead's history is
+            # exactly what an incident review needs.
+            import sqlite3 as _sq2
+            con2 = _sq2.connect(db.path)
+            con2.row_factory = _sq2.Row
+            for row in con2.execute(
+                    "SELECT created_at, action, status, details FROM audit_log "
+                    "WHERE person_id=? ORDER BY created_at", (args.focus,)):
+                _p(f"    audit(all): {row['created_at']} {row['action']}/{row['status']} "
+                   f"{str(row['details'])[:120]}")
+            con2.close()
     _p("\nDone. Every FUB call above was a GET; the state DB was never pushed.")
     return 0
 

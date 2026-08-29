@@ -273,7 +273,14 @@ class TestNewLeadTimerAnchor:
     def test_touch_before_detection_no_longer_cancels_timer(self, engine, fake_http):
         """REVERSED 2026-08-26 (the Brito case): activity from before the timer
         existed does not count. The agent must respond to THIS alert — their
-        10h-old text predates the anchor and leaves the timer running."""
+        10h-old text predates the anchor and leaves the timer running.
+
+        SCOPE NARROWED 2026-08-29 (the Sunny Chamadia case): this pin now
+        covers only legacy rows with no touch_anchor_at. Timers armed by the
+        fixed code carry an explicit touch anchor at the lead's creation /
+        the previous scan observation, and the assigned agent's own touch
+        inside the detection gap rightly counts — see
+        test_assignment_changes.py's detection-gap section."""
         engine.db.add_new_lead_timer(6270, 35)  # detected just now
         person = _person(6270, agent_id=35, created=_iso(20), lastSentText=_iso(10))
         fake_http.responses = [
