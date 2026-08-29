@@ -62,13 +62,3 @@ jobs:
           python3 investigate_assignments.py \
             --hours "${{ inputs.hours }}" \
             ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
-
-      # TEMP (branch only): the speed-to-lead repair DRY-RUN, read-only like
-      # everything else here — the dedicated workflow cannot be dispatched
-      # until it lands on main.
-      - name: Re-judge speed-to-lead punishments (dry run)
-        working-directory: pond-nurture-bot
-        run: |
-          set -euo pipefail
-          python3 repair_speed_to_lead_false_positives.py \
-            --since "2026-08-28T00:00:00+00:00"
