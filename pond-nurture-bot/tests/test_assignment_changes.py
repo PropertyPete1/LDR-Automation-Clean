@@ -559,10 +559,7 @@ def test_a_polling_timer_records_creation_as_the_touch_anchor(watch_engine, tmp_
 
 def test_an_assignment_change_timer_anchors_touch_at_the_previous_scan(watch_engine, tmp_db, fake_http):
     prev = NOW - dt.timedelta(minutes=45)
-    tmp_db.log("assignment_scan", "completed", None, {})
-    with tmp_db.connect() as con:
-        con.execute("UPDATE audit_log SET created_at=? WHERE action='assignment_scan'",
-                    (prev.isoformat(),))
+    tmp_db.log("assignment_scan", "completed", None, {"observed_at": prev.isoformat()})
     tmp_db.upsert_assignment_watch(42, 7)
     fake_http.responses = _people_page(_stub(42, 9))
 
@@ -595,10 +592,7 @@ def test_a_touch_inside_the_detection_gap_never_arms(watch_engine, tmp_db, fake_
     """The assignment-change flavour of the Sunny shape: the agent noted the
     lead between the previous observation and this detection."""
     prev = NOW - dt.timedelta(minutes=45)
-    tmp_db.log("assignment_scan", "completed", None, {})
-    with tmp_db.connect() as con:
-        con.execute("UPDATE audit_log SET created_at=? WHERE action='assignment_scan'",
-                    (prev.isoformat(),))
+    tmp_db.log("assignment_scan", "completed", None, {"observed_at": prev.isoformat()})
     tmp_db.upsert_assignment_watch(42, 7)
     stub = _stub(42, 9)
     note = {"id": 9, "created": (NOW - dt.timedelta(minutes=10)).isoformat(),
@@ -717,4 +711,73 @@ def test_every_completed_walk_logs_its_observation(watch_engine, tmp_db, fake_ht
 
     watch_engine.scan_assignment_changes()
 
-    assert [r["status"] for r in _audit(tmp_db, "assignment_scan")] == ["completed"]
+    rows = _audit(tmp_db, "assignment_scan")
+    assert [r["status"] for r in rows] == ["completed"]
+    observed = json.loads(rows[0]["details"])["observed_at"]
+    assert abs((dt.datetime.fromisoformat(observed) - NOW).total_seconds()) < 120, \
+        "the stamp is the walk's start, so an anchor can never postdate an observation"
+
+
+def test_a_page_capped_walk_never_advances_the_touch_anchor(watch_engine, tmp_db, fake_http):
+    """A bulk sweep can keep 500+ records above a lead in the -updated sort;
+    such a walk observed only a slice, so trusting its stamp would let the
+    anchor postdate an agent's real first touch — the Sunny class again, via
+    scan-cap blindness. The walk logs 'truncated' and advances nothing."""
+    watch_engine.ASSIGNMENT_SCAN_MAX_PAGES = 1
+    prev = NOW - dt.timedelta(hours=3)
+    tmp_db.log("assignment_scan", "completed", None, {"observed_at": prev.isoformat()})
+    tmp_db.upsert_assignment_watch(42, 7)
+    page = {"people": [_stub(42, 9)], "_metadata": {"next": "cursor-2"}}
+    fake_http.responses = [
+        (200, page),                  # page 1 of a walk with more left
+        (200, {"people": [_stub(42, 9)]}),  # at-arm full record
+        (200, {"notes": []}),
+    ]
+
+    watch_engine.scan_assignment_changes()
+
+    rows = _audit(tmp_db, "assignment_scan")
+    assert [r["status"] for r in rows] == ["truncated", "completed"], \
+        "a page-capped walk must not claim it observed the whole window"
+    timers = _active_timers(tmp_db)
+    touch = dt.datetime.fromisoformat(timers[0]["touch_anchor_at"])
+    assert abs((touch - prev).total_seconds()) < 1, \
+        "the anchor must stay at the last WHOLE-window observation"
+
+
+def test_a_repaired_leads_racing_timer_is_canceled_not_fired(watch_engine, tmp_db, fake_http):
+    """The repair's restore is an assignment change; a tick that pulled state
+    before the repair pushed can have armed a timer for it. Once the rows
+    merge, the next tick must cancel that timer — never warn on it."""
+    tmp_db.log("speed_to_lead_repair", "reassignment_reverted", 42, {})
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=35)).isoformat())
+
+    watch_engine.process_new_lead_timers()
+
+    assert _active_timers(tmp_db) == []
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == \
+        ["canceled_repair_suppressed"]
+    assert _audit(tmp_db, "new_lead_warning") == [], "no warning may fire on a repaired lead"
+
+
+def test_duplicate_generations_use_the_earliest_touch_anchor(watch_engine, tmp_db, fake_http):
+    """A legacy NULL-anchor duplicate must not mask its sibling's knowledge of
+    the real assignment moment: the merged judgement takes the earliest touch
+    clock, so the gap touch still cancels."""
+    touch_anchor = NOW - dt.timedelta(hours=2)
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=20)).isoformat())
+    tmp_db.add_new_lead_timer(42, 9, created_at=(NOW - dt.timedelta(minutes=15)).isoformat(),
+                              touch_anchor_at=touch_anchor.isoformat())
+    person = _stub(42, 9)
+    person["lastCall"] = (NOW - dt.timedelta(minutes=96)).isoformat()
+    agent_call = {"id": 71, "created": (NOW - dt.timedelta(minutes=96)).isoformat(),
+                  "userId": 9, "isIncoming": False}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"calls": [agent_call]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert _active_timers(tmp_db) == []
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["canceled_touched"]

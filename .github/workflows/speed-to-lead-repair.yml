@@ -12,6 +12,14 @@
 # See pond-nurture-bot/repair_speed_to_lead_false_positives.py.
 #
 # Dry run by default. `commit: true` is the only thing that writes.
+#
+# Run the COMMIT outside business hours (before 10am / after 6pm CT) when
+# possible: the 5-minute speed-to-lead tick doesn't share a concurrency group
+# with this job, and a tick that pulled state before this run pushes could
+# see the restore as a fresh assignment change. Two guards bound the damage —
+# the scan skips repair_suppressed once the rows merge, and
+# process_new_lead_timers cancels any timer a racing tick managed to arm on a
+# repaired lead — but off-hours there is no race at all.
 name: Repair speed-to-lead false positives
 
 on:
@@ -73,42 +81,58 @@ jobs:
 
       - name: Re-judge speed-to-lead punishments
         working-directory: pond-nurture-bot
+        env:
+          # Through env, not ${{ }} interpolation into the script — a
+          # workflow_dispatch string must never be substituted into sh text.
+          SINCE: ${{ inputs.since }}
         run: |
           set -euo pipefail
           python3 repair_speed_to_lead_false_positives.py \
-            --since "${{ inputs.since }}" \
+            --since "$SINCE" \
             ${{ inputs.commit && '--commit' || '' }}
 
-      # Only when something was actually written. A dry run must never touch
-      # the state branch.
+      # Only when something may have been written — INCLUDING a partially
+      # failed commit run: the suppression rows for the leads that WERE
+      # repaired must reach the state branch or the 5-minute tick re-punishes
+      # them. A dry run must never touch the state branch.
       - name: Push state DB
-        if: ${{ inputs.commit }}
+        if: ${{ always() && inputs.commit }}
         uses: ./.github/actions/state-sync
         with:
           mode: push
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      # Re-pull rather than trusting the push: the state DB is last-writer-
-      # wins under overlapping runs, so the rows must be seen ON the branch.
+      # Re-pull rather than trusting the push: overlapping runs merge row-
+      # level, so the rows must be seen ON the branch.
       - name: Re-pull and verify the repair survived
-        if: ${{ inputs.commit }}
+        if: ${{ always() && inputs.commit }}
         uses: ./.github/actions/state-sync
         with:
           mode: pull
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
+      # Compares against what THIS run said it repaired
+      # (speed_to_lead_repair_summary.json, written by the script): zero
+      # false positives is a legitimate outcome, not a lost write — only rows
+      # that were written and then vanished on the re-pull fail the run.
       - name: Confirm the repair rows are on the state branch
-        if: ${{ inputs.commit }}
+        if: ${{ always() && inputs.commit }}
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
           python3 -c "
-          import sqlite3, sys
+          import json, sqlite3, sys
+          summary = json.load(open('speed_to_lead_repair_summary.json'))
+          expected, since = summary['repaired'], summary['since']
           c = sqlite3.connect('data/fub_automation.sqlite3')
-          n = c.execute(
+          on_branch = c.execute(
               \"SELECT COUNT(*) FROM audit_log WHERE action='speed_to_lead_repair'\"
-          ).fetchone()[0]
-          print(f'state branch holds {n} speed_to_lead_repair row(s) in total')
+              \" AND created_at >= ?\", (since,)).fetchone()[0]
+          print(f'this run repaired {expected}; state branch holds {on_branch} '
+                f'speed_to_lead_repair row(s) since {since}')
+          if expected > 0 and on_branch == 0:
+              print('commit run wrote rows that did not survive the push — investigate')
+              sys.exit(1)
           "

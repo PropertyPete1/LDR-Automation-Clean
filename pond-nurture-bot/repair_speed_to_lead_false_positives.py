@@ -94,6 +94,12 @@ def corrected_touch_anchor(db, person_id: int,
     anchors: List[Tuple[dt.datetime, str]] = []
     for gen in generations:
         created = parse_dt(gen["created_at"])
+        # A generation armed by the FIXED code already carries the corrected
+        # anchor — trust it over the wider historical approximations.
+        stored = parse_dt(gen.get("touch_anchor_at") or "")
+        if stored is not None:
+            anchors.append((stored, "stored_touch_anchor"))
+            continue
         arm = find_arm_row(db, person_id, gen["created_at"])
         if arm is not None and arm.get("status") == "started_polling":
             try:
@@ -194,9 +200,11 @@ def find_agent_touch(fub, db, person_id: int, agent_id: int,
 
 
 def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
-    """One verdict per punished person: every timer generation whose warning
-    or reassignment landed at/after `since`, re-judged under the corrected
-    anchor."""
+    """One verdict per punished (person, agent): every timer generation whose
+    warning or reassignment landed at/after `since`, re-judged under the
+    corrected anchor. Grouping by agent matters — a lead bounced from agent A,
+    redistributed to B and bounced again holds generations for both, each
+    judged against its OWN agent's activity."""
     import sqlite3
 
     from fub_automation.main import parse_dt
@@ -208,19 +216,27 @@ def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
         "OR reassigned_at IS NOT NULL")]
     con.close()
 
-    by_person: Dict[int, List[dict]] = {}
+    # A person already repaired once must not be re-judged as fresh — the
+    # commit run is dispatchable twice, and the second pass would otherwise
+    # re-write notes and re-restore over whatever happened since.
+    already_repaired = set()
+    for row in db.recent_audit_rows(["speed_to_lead_repair"],
+                                    since - dt.timedelta(days=30)):
+        if row.get("person_id"):
+            already_repaired.add(int(row["person_id"]))
+
+    by_key: Dict[Tuple[int, Optional[int]], List[dict]] = {}
     for row in rows:
         stamps = [parse_dt(row.get("warned_at") or ""),
                   parse_dt(row.get("reassigned_at") or "")]
         if not any(s is not None and s >= since for s in stamps):
             continue
-        by_person.setdefault(int(row["person_id"]), []).append(row)
+        agent = int(row["assigned_user_id"]) if row.get("assigned_user_id") else None
+        by_key.setdefault((int(row["person_id"]), agent), []).append(row)
 
     verdicts: List[dict] = []
-    for person_id in sorted(by_person):
-        gens = by_person[person_id]
-        agent_id = next((int(g["assigned_user_id"]) for g in gens
-                         if g.get("assigned_user_id")), None)
+    for person_id, agent_id in sorted(by_key, key=lambda k: (k[0], k[1] or 0)):
+        gens = by_key[(person_id, agent_id)]
         reassigned = [parse_dt(g.get("reassigned_at") or "") for g in gens]
         warned = [parse_dt(g.get("warned_at") or "") for g in gens]
         reassigned = [t for t in reassigned if t is not None]
@@ -241,13 +257,19 @@ def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
             "anchor_how": anchor_how,
             "touch": touch,
             "false_positive": touch is not None,
+            "already_repaired": person_id in already_repaired,
         })
     return verdicts
 
 
 def apply_repair(db, fub, verdict: dict, peter_user_id: int,
-                 agent_name: str) -> str:
-    """Commit one false positive's repair. Returns the audit status written."""
+                 agent_name: str, latest_routing: bool = True) -> str:
+    """Commit one false positive's repair. Returns the audit status written.
+
+    latest_routing: False when another punished generation for this person
+    was punished LATER (a different agent held the most recent routing) — the
+    verdict still gets its note and suppression, but never the restore.
+    """
     person_id = verdict["person_id"]
     agent_id = verdict["agent_id"]
     touch = verdict["touch"]
@@ -260,7 +282,9 @@ def apply_repair(db, fub, verdict: dict, peter_user_id: int,
     status = "warning_cleared"
     if verdict["punishment"] == "reassigned":
         current = int(person.get("assignedUserId") or 0)
-        if current == int(peter_user_id):
+        if not latest_routing:
+            status = "restore_skipped_not_latest_routing"
+        elif current == int(peter_user_id):
             fub.update_person(person_id, {"assignedUserId": agent_id})
             db.upsert_assignment_watch(person_id, agent_id)
             restored = True
@@ -269,14 +293,23 @@ def apply_repair(db, fub, verdict: dict, peter_user_id: int,
             # Peter (or someone) already re-routed the lead by hand — an
             # automated restore would overwrite a human decision.
             status = "restore_skipped_manual_route"
-        tags = [t for t in (person.get("tags") or []) if isinstance(t, str)]
-        if REPAIR_TAG in tags:
-            fub.update_person(person_id, {"tags": [t for t in tags if t != REPAIR_TAG]})
-    else:
-        status = "warning_cleared"
+        # FUB returns tags either as plain strings or as {"name": ...}
+        # objects; strip by NAME and write the kept names back verbatim
+        # (merge_tags=False — FUB has no tag-removal API, the whole list is
+        # replaced), same as sweep_reply_false_positives.clear_pause_tag.
+        names: List[str] = []
+        for tag in person.get("tags") or []:
+            name = tag.get("name") if isinstance(tag, dict) else tag
+            if name:
+                names.append(str(name))
+        kept = [n for n in names if n.strip().lower() != REPAIR_TAG.lower()]
+        if len(kept) != len(names):
+            fub.update_person(person_id, {"tags": kept})
 
-    # Whatever the punishment was, the timer must not keep running or re-arm.
-    db.cancel_timer(person_id)
+    # The punished agent must not keep a live clock — but ONLY theirs: a
+    # legitimate timer running for whoever holds the lead now stays.
+    if restored or verdict["punishment"] == "warned":
+        db.cancel_timer(person_id, agent_id)
 
     touch_line = (f"{touch['channel']} at {touch['at'].isoformat()}"
                   if touch else "(touch unavailable)")
@@ -289,6 +322,8 @@ def apply_repair(db, fub, verdict: dict, peter_user_id: int,
            if restored else
            "The assignment was already re-routed manually and was left as is."
            if status == "restore_skipped_manual_route" else
+           "A later routing decision supersedes this one; the assignment was left as is."
+           if status == "restore_skipped_not_latest_routing" else
            "No reassignment had happened; the pending timer was cleared.")
     )
     fub.add_note(person_id, "Automation: speed-to-lead repair", body)
@@ -354,12 +389,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     _p(f"=== Speed-to-lead re-judgment since {since.isoformat()} — {mode} ===")
     _p(f"{len(verdicts)} punished lead(s) in the window.\n")
 
-    false_positives = [v for v in verdicts if v["false_positive"]]
+    false_positives = [v for v in verdicts
+                       if v["false_positive"] and not v["already_repaired"]]
     for v in verdicts:
         person = fub.get_person(v["person_id"]) or {}
         name = (f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
                 or f"#{v['person_id']}")
-        head = "FALSE POSITIVE" if v["false_positive"] else "legitimate"
+        head = ("ALREADY REPAIRED" if v["already_repaired"]
+                else "FALSE POSITIVE" if v["false_positive"] else "legitimate")
         _p(f"  [{head}] lead {v['person_id']} {name!r} — agent {_uname(v['agent_id'])}"
            f" ({v['agent_id']}), {v['punishment']} at {v['punished_at'].isoformat()}")
         _p(f"      corrected anchor: {v['anchor'].isoformat()} ({v['anchor_how']})")
@@ -372,18 +409,43 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             _p("      no attributed agent touch in the corrected window — stands.")
 
-    _p(f"\n{len(false_positives)} false positive(s).")
+    _p(f"\n{len(false_positives)} false positive(s) to repair.")
 
     if not args.commit:
         _p("Dry-run: nothing was written (no FUB writes, no state rows).")
         return 0
 
+    # The restore may only follow the person's LATEST routing decision — a
+    # lead punished under agent A, redistributed to B and punished again must
+    # not land back with A.
+    latest_by_person: Dict[int, dt.datetime] = {}
+    for v in verdicts:
+        prev = latest_by_person.get(v["person_id"])
+        if prev is None or v["punished_at"] > prev:
+            latest_by_person[v["person_id"]] = v["punished_at"]
+
+    repaired = 0
+    failures = 0
     for v in false_positives:
-        status = apply_repair(db, fub, v, int(rules.peter_user_id or 0),
-                              _uname(v["agent_id"]))
+        # One lead's FUB hiccup must not strand the rest of the list — and
+        # the audit rows written so far must still reach the state branch.
+        try:
+            status = apply_repair(
+                db, fub, v, int(rules.peter_user_id or 0), _uname(v["agent_id"]),
+                latest_routing=v["punished_at"] == latest_by_person[v["person_id"]])
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            _p(f"  lead {v['person_id']}: REPAIR FAILED — {exc}")
+            continue
+        repaired += 1
         _p(f"  repaired lead {v['person_id']}: {status}")
-    _p("Commit complete. Re-arming on these leads is suppressed for 24h.")
-    return 0
+
+    with open("speed_to_lead_repair_summary.json", "w") as fh:
+        json.dump({"repaired": repaired, "failed": failures,
+                   "since": since.isoformat()}, fh)
+    _p(f"Commit complete: {repaired} repaired, {failures} failed. "
+       "Re-arming on repaired leads is suppressed for 24h.")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

@@ -802,13 +802,25 @@ class AuditDB:
                 (person_id, created_time, assigned_user_id, touch_anchor_at),
             )
 
-    def last_audit_time(self, action: str, status: str) -> Optional[str]:
-        """created_at of the most recent (action, status) audit row, or None."""
+    def last_assignment_observation(self) -> Optional[str]:
+        """observed_at of the most recent assignment-change walk that covered
+        its WHOLE window. A truncated walk (page cap hit with changed records
+        left unread) proves only a slice was observed, so it is logged with
+        status 'truncated' and never advances the touch anchor — otherwise a
+        bulk sweep that keeps 500+ records above a lead in the -updated sort
+        would let the anchor postdate the agent's real first touch, the exact
+        Sunny Chamadia class again. The stamp is the walk's START, not the
+        log time, so the anchor can never postdate an observation."""
         with self.connect() as con:
             row = con.execute(
-                "SELECT created_at FROM audit_log WHERE action=? AND status=? "
-                "ORDER BY created_at DESC LIMIT 1", (action, status)).fetchone()
-        return row[0] if row else None
+                "SELECT details FROM audit_log WHERE action='assignment_scan' "
+                "AND status='completed' ORDER BY created_at DESC LIMIT 1").fetchone()
+        if not row or not row[0]:
+            return None
+        try:
+            return json.loads(row[0]).get("observed_at")
+        except ValueError:
+            return None
 
     def active_new_lead_timers(self) -> List[dict]:
         with self.connect() as con:
@@ -835,12 +847,18 @@ class AuditDB:
                 "AND canceled_at IS NULL AND reassigned_at IS NULL",
                 (now_iso(), person_id))
 
-    def cancel_timer(self, person_id: int) -> None:
+    def cancel_timer(self, person_id: int, assigned_user_id: Optional[int] = None) -> None:
+        """Cancel the person's active generation(s) — optionally only those
+        armed for one agent, so a repair for agent A cannot silence a
+        legitimate timer running for agent B."""
+        query = ("UPDATE new_lead_timers SET canceled_at=? WHERE person_id=? "
+                 "AND canceled_at IS NULL AND reassigned_at IS NULL")
+        args: list = [now_iso(), person_id]
+        if assigned_user_id is not None:
+            query += " AND assigned_user_id=?"
+            args.append(int(assigned_user_id))
         with self.connect() as con:
-            con.execute(
-                "UPDATE new_lead_timers SET canceled_at=? WHERE person_id=? "
-                "AND canceled_at IS NULL AND reassigned_at IS NULL",
-                (now_iso(), person_id))
+            con.execute(query, args)
 
     # ── Assignment safety net (untouched-assignment watch) ──
     def get_assignment_watch(self, person_id: int) -> Optional[dict]:
@@ -5689,17 +5707,49 @@ class RuleEngine:
 
     def process_new_lead_timers(self) -> None:
         now = dt.datetime.now(UTC)
+        # A lead the false-positive repair just touched must hold NO timer for
+        # a day: the scan's repair_suppressed guard stops re-ARMING, but a
+        # racing tick that pulled state before the repair pushed can already
+        # have armed one — this cancels it before any warning can fire.
+        recently_repaired: set = set()
+        for row in self.db.recent_audit_rows(
+                ["speed_to_lead_repair"], now - dt.timedelta(hours=24)):
+            if row.get("person_id"):
+                recently_repaired.add(int(row["person_id"]))
         # A person can hold duplicate ACTIVE generations when two overlapping
         # runs both armed (the 2026-08-28 state-pull race gave Sunny Chamadia
         # two started_polling rows) — mark_warned/mark_reassigned stamp every
-        # active row, but this loop iterates a snapshot, so without the dedup
-        # the second generation warned and reassigned the same lead again.
-        seen_this_run: set = set()
-        for timer in self.db.active_new_lead_timers():
-            person_id = int(timer["person_id"])
-            if person_id in seen_this_run:
+        # active row, but this loop iterates a snapshot, so without collapsing
+        # them the second generation warned and reassigned the same lead
+        # again. Duplicates merge to ONE judgement per person: the OLDEST
+        # budget clock (the first detection is the promise made to the lead)
+        # and the EARLIEST touch clock (a legacy NULL-anchor duplicate must
+        # not mask a sibling row that knows the real assignment moment).
+        merged: Dict[int, dict] = {}
+        for row in self.db.active_new_lead_timers():
+            pid = int(row["person_id"])
+            cur = merged.get(pid)
+            if cur is None:
+                merged[pid] = dict(row)
                 continue
-            seen_this_run.add(person_id)
+            row_touch = parse_dt(row.get("touch_anchor_at") or "") or parse_dt(row["created_at"])
+            cur_touch = parse_dt(cur.get("touch_anchor_at") or "") or parse_dt(cur["created_at"])
+            row_created = parse_dt(row["created_at"])
+            cur_created = parse_dt(cur["created_at"])
+            if row_created and cur_created and row_created < cur_created:
+                cur["created_at"] = row["created_at"]
+            if row_touch and cur_touch and row_touch < cur_touch:
+                cur["touch_anchor_at"] = row.get("touch_anchor_at") or row["created_at"]
+            if row.get("warned_at") and not cur.get("warned_at"):
+                cur["warned_at"] = row["warned_at"]
+            if row.get("assigned_user_id") and not cur.get("assigned_user_id"):
+                cur["assigned_user_id"] = row["assigned_user_id"]
+        for timer in merged.values():
+            person_id = int(timer["person_id"])
+            if person_id in recently_repaired:
+                self.db.cancel_timer(person_id)
+                self.db.log("new_lead_timer", "canceled_repair_suppressed", person_id)
+                continue
             created = parse_dt(timer["created_at"])
             age_min = self.business_minutes_elapsed(created, now)
             person = self.fub.get_person(person_id)
@@ -6056,16 +6106,16 @@ class RuleEngine:
         automation_window = now - dt.timedelta(minutes=self.ASSIGNMENT_AUTOMATION_WINDOW_MIN)
 
         # FUB keeps no "assigned at" timestamp, so the assignment became
-        # current somewhere between the PREVIOUS completed scan (when the old
-        # pair was last provably still stored) and this detection. That is the
-        # touch anchor: the agent's own work inside the detection gap — ticks
-        # arrive 30–50 minutes apart under GitHub's cron delays, or overnight
-        # when a change lands after business hours — is legitimate first
-        # touch, not something to warn about. Before the first completed row
-        # exists, fall back to the scan window itself: a change detected by
-        # this walk is at most ASSIGNMENT_SCAN_WINDOW_HOURS old.
-        prev_observation = parse_dt(
-            self.db.last_audit_time("assignment_scan", "completed") or "") \
+        # current somewhere between the PREVIOUS whole-window walk (when the
+        # old pair was last provably still stored) and this detection. That is
+        # the touch anchor: the agent's own work inside the detection gap —
+        # ticks arrive 30–50 minutes apart under GitHub's cron delays, or
+        # overnight when a change lands after business hours — is legitimate
+        # first touch, not something to warn about. Truncated walks never
+        # advance the anchor (see last_assignment_observation). Before the
+        # first completed row exists, fall back to the scan window itself: a
+        # change detected by a covering walk is at most that old.
+        prev_observation = parse_dt(self.db.last_assignment_observation() or "") \
             or (now - dt.timedelta(hours=self.ASSIGNMENT_SCAN_WINDOW_HOURS))
 
         recently_moved_by_us = set()
@@ -6093,6 +6143,7 @@ class RuleEngine:
         params: Dict[str, Any] = {"sort": "-updated", "limit": 100}
         pages = 0
         stop = False
+        truncated = False
         while pages < self.ASSIGNMENT_SCAN_MAX_PAGES and not stop:
             data = self.fub._request("GET", "/people", params=dict(params))
             people = data.get("people", data.get("data", []))
@@ -6146,16 +6197,25 @@ class RuleEngine:
             cursor = data.get("_metadata", {}).get("next")
             if not cursor or stop:
                 break
+            if pages >= self.ASSIGNMENT_SCAN_MAX_PAGES:
+                # More changed records exist beyond the page cap: this walk
+                # observed only a slice of the window, and its stamp must not
+                # become anyone's touch anchor.
+                truncated = True
+                break
             params["next"] = cursor
 
         if not changes:
             LOGGER.info("Assignment-change scan: walked %s changed records, no new "
                         "agent assignments to arm.", walked)
             # The completion row IS the next run's touch anchor — it must land
-            # on every completed walk, changes or none, or the anchor drifts
-            # back to the last eventful run and over-forgives.
-            self.db.log("assignment_scan", "completed", None,
-                        {"walked": walked, "armed": 0})
+            # on every covering walk, changes or none, or the anchor drifts
+            # back to the last eventful run and over-forgives. observed_at is
+            # the walk's START; a page-capped walk logs 'truncated' instead
+            # and advances nothing.
+            self.db.log("assignment_scan", "truncated" if truncated else "completed",
+                        None, {"walked": walked, "armed": 0,
+                               "observed_at": now.isoformat()})
             return
 
         bulk = len(changes) > self.ASSIGNMENT_BULK_THRESHOLD
@@ -6199,10 +6259,12 @@ class RuleEngine:
 
         if bulk:
             self._send_bulk_assignment_digest(changes, users)
-        self.db.log("assignment_scan", "completed", None,
-                    {"walked": walked, "armed": armed, "changes": len(changes)})
-        LOGGER.info("Assignment-change scan complete: walked %s, armed %s of %s%s.",
-                    walked, armed, len(changes), " (bulk digest)" if bulk else "")
+        self.db.log("assignment_scan", "truncated" if truncated else "completed",
+                    None, {"walked": walked, "armed": armed,
+                           "changes": len(changes), "observed_at": now.isoformat()})
+        LOGGER.info("Assignment-change scan complete: walked %s, armed %s of %s%s%s.",
+                    walked, armed, len(changes), " (bulk digest)" if bulk else "",
+                    " [TRUNCATED at page cap]" if truncated else "")
 
     def _send_bulk_assignment_digest(self, changes: List[Tuple[dict, int]],
                                      users: Dict[int, dict]) -> None:

@@ -274,3 +274,95 @@ def test_judging_alone_writes_nothing(tmp_db):
     assert fub.writes == []
     with tmp_db.connect() as con:
         assert con.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0] == rows_before
+
+
+def test_dict_shaped_fub_tags_still_get_the_tag_stripped(tmp_db):
+    """FUB returns tags as strings OR {'name': ...} objects; the strip matches
+    by name and writes the kept NAMES back — object tags must not survive the
+    strip or be dropped from the kept list."""
+    _sunny_state(tmp_db)
+    fub = _FubStub(calls=[SUNNY_CALL],
+                   person={"id": 6343, "assignedUserId": PETER,
+                           "tags": [{"name": "buyer"}, {"name": repair.REPAIR_TAG}]})
+    v = _false_positive_verdict(tmp_db, fub)
+
+    repair.apply_repair(tmp_db, fub, v, PETER, "Tiffany Proske")
+
+    assert ("update_person", 6343, {"tags": ["buyer"]}) in fub.writes
+
+
+def test_a_manual_reroute_keeps_the_new_agents_timer_running(tmp_db):
+    """Peter re-routed the bounced lead to agent 44, whose own timer is
+    legitimately live — the repair for agent 20 must not silence it."""
+    _sunny_state(tmp_db)
+    tmp_db.add_new_lead_timer(6343, 44, created_at="2026-08-29T18:00:00+00:00")
+    fub = _FubStub(calls=[SUNNY_CALL],
+                   person={"id": 6343, "assignedUserId": 44, "tags": []})
+    v = _false_positive_verdict(tmp_db, fub)
+
+    status = repair.apply_repair(tmp_db, fub, v, PETER, "Tiffany Proske")
+
+    assert status == "restore_skipped_manual_route"
+    active = tmp_db.active_new_lead_timers()
+    assert [t["assigned_user_id"] for t in active] == [44], \
+        "agent 44's live speed-to-lead protection was killed by agent 20's repair"
+
+
+def test_generations_for_different_agents_are_judged_separately(tmp_db):
+    """A lead bounced from agent 20, redistributed to agent 44 and bounced
+    again holds generations for both; each verdict judges its OWN agent, and
+    only the LATEST routing may be restored."""
+    _sunny_state(tmp_db)  # agent 20, punished 08-29 17:00
+    tmp_db.add_new_lead_timer(6343, 44, created_at="2026-08-29T18:00:00+00:00")
+    with tmp_db.connect() as con:
+        con.execute("UPDATE new_lead_timers SET warned_at=?, reassigned_at=? "
+                    "WHERE person_id=6343 AND assigned_user_id=44",
+                    ("2026-08-29T19:00:00+00:00", "2026-08-29T20:00:00+00:00"))
+    _audit_row(tmp_db, "2026-08-29T18:00:01+00:00", 6343, "new_lead_timer",
+               "started_assignment_change", {"assignedUserId": 44})
+    fub = _FubStub(calls=[SUNNY_CALL])  # only agent 20 ever touched
+
+    verdicts = repair.judge_incidents(tmp_db, fub, SINCE)
+
+    assert [(v["agent_id"], v["false_positive"]) for v in verdicts] == \
+        [(20, True), (44, False)], \
+        "agent 20's touch must not excuse agent 44's untouched generation"
+
+    # And agent 20's restore is refused: agent 44 holds the later routing.
+    fub2 = _FubStub(calls=[SUNNY_CALL],
+                    person={"id": 6343, "assignedUserId": PETER, "tags": []})
+    status = repair.apply_repair(tmp_db, fub2, verdicts[0], PETER, "Tiffany Proske",
+                                 latest_routing=False)
+    assert status == "restore_skipped_not_latest_routing"
+    assert not any(w[0] == "update_person" and "assignedUserId" in w[2]
+                   for w in fub2.writes)
+
+
+def test_an_already_repaired_person_is_flagged_not_rejudged_fresh(tmp_db):
+    """The commit run can be dispatched twice; the second pass must see the
+    first pass's rows and leave the lead alone."""
+    _sunny_state(tmp_db)
+    _audit_row(tmp_db, "2026-08-29T18:30:00+00:00", 6343, repair.REPAIR_ACTION,
+               "reassignment_reverted", {})
+    fub = _FubStub(calls=[SUNNY_CALL])
+
+    verdicts = repair.judge_incidents(tmp_db, fub, SINCE)
+
+    assert verdicts[0]["already_repaired"] is True
+
+
+def test_a_generation_armed_by_the_fixed_code_uses_its_stored_anchor(m, tmp_db):
+    """Post-deploy re-runs: a timer that carries touch_anchor_at is judged
+    against exactly that anchor, not the wider historical approximations."""
+    stored = "2026-08-29T10:00:00+00:00"
+    tmp_db.add_new_lead_timer(7003, AGENT, created_at="2026-08-29T12:00:00+00:00",
+                              touch_anchor_at=stored)
+    with tmp_db.connect() as con:
+        con.execute("UPDATE new_lead_timers SET warned_at=? WHERE person_id=7003",
+                    ("2026-08-29T13:00:00+00:00",))
+    fub = _FubStub()
+
+    v = repair.judge_incidents(tmp_db, fub, SINCE)[0]
+
+    assert v["anchor_how"] == "stored_touch_anchor"
+    assert v["anchor"] == m.parse_dt(stored)
