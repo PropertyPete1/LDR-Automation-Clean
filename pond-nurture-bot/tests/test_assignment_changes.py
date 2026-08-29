@@ -781,3 +781,74 @@ def test_duplicate_generations_use_the_earliest_touch_anchor(watch_engine, tmp_d
 
     assert _active_timers(tmp_db) == []
     assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["canceled_touched"]
+
+
+# ── notes count only when they document actual contact (2026-08-29 policy) ───
+# Peter's follow-up to the touch-anchor fix: an assigned agent's note is a
+# first touch ONLY if it carries contact evidence (call/called, vm/voicemail,
+# text/texted, spoke, talked, left message, emailed, reached out). A bare
+# acknowledgment proves the agent saw the alert — the lead still hasn't heard
+# from anyone. Calls, texts and emails through their own channels always count.
+
+@pytest.mark.parametrize("note_text", [
+    "VM and Text",                                   # the Tiffany shape
+    "Called — no answer",
+    "left a message with her husband",
+    "Spoke with him, wants to see homes Saturday",
+    "reached out and texting her now",
+])
+def test_a_note_documenting_contact_is_a_first_touch(watch_engine, tmp_db,
+                                                     fake_http, note_text):
+    anchor = NOW - dt.timedelta(minutes=20)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    person = _stub(42, 9)
+    note = {"id": 9, "created": (anchor + dt.timedelta(minutes=5)).isoformat(),
+            "createdById": 9, "subject": "", "body": note_text}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"notes": [note]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert _active_timers(tmp_db) == [], f"{note_text!r} documents contact — must cancel"
+    assert [r["status"] for r in _audit(tmp_db, "new_lead_timer")] == ["canceled_touched"]
+
+
+@pytest.mark.parametrize("note_text", ["got it", "ok", "on it", "will do", "mine"])
+def test_a_bare_acknowledgment_note_never_stops_the_clock(watch_engine, tmp_db,
+                                                          fake_http, note_text):
+    anchor = NOW - dt.timedelta(minutes=20)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    person = _stub(42, 9)
+    note = {"id": 9, "created": (anchor + dt.timedelta(minutes=5)).isoformat(),
+            "createdById": 9, "subject": "", "body": note_text}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"notes": [note]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert [t["person_id"] for t in _active_timers(tmp_db)] == [42], \
+        f"{note_text!r} is an acknowledgment, not contact — the clock must keep running"
+    assert _audit(tmp_db, "new_lead_timer") == []
+
+
+def test_the_word_boundary_keeps_context_from_counting_as_text(watch_engine, tmp_db, fake_http):
+    """Substring matching would count 'context' as 'text' — the boundary must
+    hold or every chatty note stops the clock."""
+    anchor = NOW - dt.timedelta(minutes=20)
+    tmp_db.add_new_lead_timer(42, 9, created_at=anchor.isoformat())
+    person = _stub(42, 9)
+    note = {"id": 9, "created": (anchor + dt.timedelta(minutes=5)).isoformat(),
+            "createdById": 9, "subject": "",
+            "body": "adding context: relocating from Dallas, per the portal notes"}
+    fake_http.responses = [
+        (200, {"people": [person]}),
+        (200, {"notes": [note]}),
+    ]
+
+    watch_engine.process_new_lead_timers()
+
+    assert [t["person_id"] for t in _active_timers(tmp_db)] == [42]

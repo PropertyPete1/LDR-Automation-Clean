@@ -19,7 +19,10 @@ the corrected anchor:
 A touch is the ASSIGNED AGENT's OWN attributed activity, exactly as the
 strict check defines it — their call (either direction), their outbound
 text/email (bot audit-log sends excluded), their non-Automation note — at or
-after the corrected anchor and before the punishment resolved.
+after the corrected anchor and before the punishment resolved. Per the
+2026-08-29 follow-up policy a note counts only when it documents actual lead
+contact (note_documents_contact); a bare acknowledgment ("got it") does not,
+and such notes are printed WITH their text so every judgment can be eyeballed.
 
 DRY-RUN by default: prints the verdict list and writes NOTHING (no FUB
 writes, no state rows). --commit additionally:
@@ -120,17 +123,36 @@ def corrected_touch_anchor(db, person_id: int,
     return min(anchors, key=lambda a: a[0])
 
 
+def _note_display_text(note: dict) -> str:
+    """The note as a human would read it, whitespace-collapsed."""
+    import re as _re
+
+    parts = [str(note.get("subject") or note.get("title") or "").strip(),
+             str(note.get("body") or "").strip()]
+    text = " — ".join(p for p in parts if p)
+    return _re.sub(r"\s+", " ", text) or "(empty note)"
+
+
 def find_agent_touch(fub, db, person_id: int, agent_id: int,
-                     anchor: dt.datetime, cutoff: dt.datetime) -> Optional[dict]:
-    """The agent's earliest own touch in [anchor, cutoff], or None.
+                     anchor: dt.datetime,
+                     cutoff: dt.datetime) -> Tuple[Optional[dict], List[dict]]:
+    """(earliest qualifying touch or None, the agent's rejected notes).
 
     Attribution mirrors _touched_by_assigned_agent: calls either direction by
     userId, texts/emails outbound-only by userId with the bot's audit-logged
-    sends excluded, notes by createdById minus Automation: subjects. API
-    errors contribute nothing (fail closed — same as the live check).
+    sends excluded, notes by createdById minus Automation: subjects — and,
+    per the 2026-08-29 policy, a note counts only when it documents actual
+    lead contact (note_documents_contact). Notes that fail that gate come
+    back in the second slot WITH their text, so a human reviewing a verdict
+    can eyeball exactly what the note said. API errors contribute nothing
+    (fail closed — same as the live check).
     """
     from fub_automation.funnel import EMAIL_SEND_ACTIONS, SENT_STATUSES
-    from fub_automation.main import is_inbound_message, parse_dt
+    from fub_automation.main import (
+        is_inbound_message,
+        note_documents_contact,
+        parse_dt,
+    )
 
     bot_send_times: List[dt.datetime] = []
     try:
@@ -183,20 +205,26 @@ def find_agent_touch(fub, db, person_id: int, agent_id: int,
             _consider("email", ts, f"subject={str(mail.get('subject') or '')[:60]!r}")
     except Exception:  # noqa: BLE001
         pass
+    rejected_notes: List[dict] = []
     try:
         for note in fub.get_notes(person_id, limit=50):
             if int(note.get("createdById") or 0) != agent_id:
                 continue
             if str(note.get("subject") or note.get("title") or "").startswith("Automation:"):
                 continue
-            _consider("note", _row_ts(note),
-                      f"subject={str(note.get('subject') or '')[:60]!r}")
+            ts = _row_ts(note)
+            if ts is None or not (anchor <= ts <= cutoff):
+                continue
+            if not note_documents_contact(note):
+                rejected_notes.append({"at": ts, "text": _note_display_text(note)})
+                continue
+            _consider("note", ts, f"text={_note_display_text(note)[:160]!r}")
     except Exception:  # noqa: BLE001
         pass
 
     if not candidates:
-        return None
-    return min(candidates, key=lambda c: c["at"])
+        return None, rejected_notes
+    return min(candidates, key=lambda c: c["at"]), rejected_notes
 
 
 def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
@@ -244,9 +272,10 @@ def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
         cutoff = max(reassigned or warned)
         punishment = "reassigned" if reassigned else "warned"
         anchor, anchor_how = corrected_touch_anchor(db, person_id, gens)
-        touch = None
+        touch, rejected_notes = None, []
         if agent_id is not None:
-            touch = find_agent_touch(fub, db, person_id, agent_id, anchor, cutoff)
+            touch, rejected_notes = find_agent_touch(
+                fub, db, person_id, agent_id, anchor, cutoff)
         verdicts.append({
             "person_id": person_id,
             "agent_id": agent_id,
@@ -256,6 +285,7 @@ def judge_incidents(db, fub, since: dt.datetime) -> List[dict]:
             "anchor": anchor,
             "anchor_how": anchor_how,
             "touch": touch,
+            "rejected_notes": rejected_notes,
             "false_positive": touch is not None,
             "already_repaired": person_id in already_repaired,
         })
@@ -311,8 +341,11 @@ def apply_repair(db, fub, verdict: dict, peter_user_id: int,
     if restored or verdict["punishment"] == "warned":
         db.cancel_timer(person_id, agent_id)
 
-    touch_line = (f"{touch['channel']} at {touch['at'].isoformat()}"
-                  if touch else "(touch unavailable)")
+    touch_line = "(touch unavailable)"
+    if touch:
+        touch_line = f"{touch['channel']} at {touch['at'].isoformat()}"
+        if touch["channel"] == "note":
+            touch_line += f", {touch['detail']}"
     body = (
         f"Speed-to-lead repair: the {verdict['punishment']} on this lead was a "
         f"false positive. {agent_name or f'Agent {agent_id}'} touched the lead "
@@ -407,7 +440,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             t = v["touch"]
             _p(f"      missed touch: {t['channel']} at {t['at'].isoformat()} {t['detail']}")
         else:
-            _p("      no attributed agent touch in the corrected window — stands.")
+            _p("      no qualifying agent touch in the corrected window — stands.")
+        for rn in v.get("rejected_notes") or []:
+            _p(f"      note WITHOUT contact evidence (did not stop the clock): "
+               f"{rn['at'].isoformat()} text={rn['text'][:160]!r}")
 
     _p(f"\n{len(false_positives)} false positive(s) to repair.")
 

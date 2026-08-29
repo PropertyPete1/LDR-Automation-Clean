@@ -366,3 +366,33 @@ def test_a_generation_armed_by_the_fixed_code_uses_its_stored_anchor(m, tmp_db):
 
     assert v["anchor_how"] == "stored_touch_anchor"
     assert v["anchor"] == m.parse_dt(stored)
+
+
+def test_a_contact_note_saves_the_lead_and_names_its_text(tmp_db):
+    """The 'VM and Text' shape: the repair's verdict must carry the note's
+    actual text so a human can eyeball the judgment."""
+    _sunny_state(tmp_db)
+    note = {"id": 5, "created": SUNNY_CALL_AT, "createdById": AGENT,
+            "subject": "", "body": "VM and Text"}
+    fub = _FubStub(notes=[note])
+
+    v = repair.judge_incidents(tmp_db, fub, SINCE)[0]
+
+    assert v["false_positive"] is True
+    assert v["touch"]["channel"] == "note"
+    assert "VM and Text" in v["touch"]["detail"]
+
+
+def test_a_bare_acknowledgment_note_does_not_save_the_lead(tmp_db):
+    """'got it' proves the agent saw the alert, not that the lead heard from
+    anyone — the punishment stands, and the rejected note is surfaced WITH
+    its text for the human review."""
+    _sunny_state(tmp_db)
+    note = {"id": 5, "created": SUNNY_CALL_AT, "createdById": AGENT,
+            "subject": "", "body": "got it"}
+    fub = _FubStub(notes=[note])
+
+    v = repair.judge_incidents(tmp_db, fub, SINCE)[0]
+
+    assert v["false_positive"] is False
+    assert [rn["text"] for rn in v["rejected_notes"]] == ["got it"]

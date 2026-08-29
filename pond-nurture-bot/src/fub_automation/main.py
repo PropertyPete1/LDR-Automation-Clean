@@ -6962,6 +6962,12 @@ class RuleEngine:
                     continue
                 if int(note.get("createdById") or 0) != agent_id:
                     continue
+                if not note_documents_contact(note):
+                    LOGGER.info("touched_by_assigned_agent: person %s — agent %s note "
+                                "at %s carries no contact evidence; the lead still "
+                                "hasn't heard from anyone, clock keeps running",
+                                person_id, agent_id, ts.isoformat())
+                    continue
                 LOGGER.info("touched_by_assigned_agent: person %s — agent %s note at %s",
                             person_id, agent_id, ts.isoformat())
                 return True
@@ -7827,6 +7833,36 @@ def now_iso() -> str:
 
 def parse_dt(value: str) -> Optional[dt.datetime]:
     return parse_fub_datetime(value)
+
+
+#: Peter's policy (2026-08-29, follow-up to the touch-anchor fix): a note is
+#: contact EVIDENCE only when it says the lead was actually reached for —
+#: keywords per the policy (call, called, vm, voicemail, text, texted, spoke,
+#: talked, left message, emailed, reached out) plus their direct inflections
+#: (calls/calling, texts/texting, voicemails, msg, "left a message"). Word
+#: boundaries on purpose: substring matching would count "context" as "text".
+NOTE_CONTACT_EVIDENCE = re.compile(
+    r"\b(?:call(?:ed|ing|s)?|vms?|voicemails?|text(?:ed|ing|s)?|spoke|talked|"
+    r"emailed|left\s+(?:a\s+|the\s+)?(?:message|msg)|reached\s+out)\b",
+    re.IGNORECASE)
+
+
+def note_documents_contact(note: dict) -> bool:
+    """Does this note document ACTUAL lead contact?
+
+    Policy 2026-08-29: an assigned agent's note is a first touch only when
+    it carries contact evidence — "VM and Text", "called, no answer",
+    "spoke with her". A bare acknowledgment ("got it", "ok", "on it",
+    "will do", "mine") proves the agent saw the alert, not that the lead
+    heard from anyone, so it must not stop the speed-to-lead clock.
+    Deterministic, case-insensitive keyword check over subject + body;
+    calls, texts and emails arrive through their own attributed channels
+    and are unaffected. Scope matches the 2026-08-26 policy: the strict
+    timer check only — the daily untouched sweep keeps its legacy rule.
+    """
+    text = " ".join(str(note.get(key) or "")
+                    for key in ("subject", "title", "body"))
+    return NOTE_CONTACT_EVIDENCE.search(text) is not None
 
 
 def is_inbound_message(message: dict) -> bool:
