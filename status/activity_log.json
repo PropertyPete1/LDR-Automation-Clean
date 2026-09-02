@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-09-02T20:08:37Z",
+    "type": "needs_reply",
+    "contact_name": "Andrew Altizer",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-09-02T16:57:34Z",
     "type": "drip",
     "contact_name": "Angelica Cabuto",
@@ -591,12 +597,6 @@
     "ts": "2026-09-02T16:44:49Z",
     "type": "sent",
     "contact_name": "Elaina Sconiers",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-09-02T16:44:42Z",
-    "type": "sent",
-    "contact_name": "Armando Rojas",
     "detail": "pond nurture email — San Antonio"
   }
 ]
