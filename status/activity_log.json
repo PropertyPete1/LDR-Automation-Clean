@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-09-03T17:55:42Z",
+    "type": "needs_reply",
+    "contact_name": "Jacob Caldera",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-09-03T16:49:30Z",
     "type": "sent",
     "contact_name": "Tammi",
@@ -592,11 +598,5 @@
     "type": "sent",
     "contact_name": "Ramzan Lakhani",
     "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-09-03T16:37:24Z",
-    "type": "sent",
-    "contact_name": "Robert Rush",
-    "detail": "pond nurture email — Converse"
   }
 ]
