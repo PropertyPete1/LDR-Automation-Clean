@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-09-05T04:39:12Z",
+    "type": "needs_reply",
+    "contact_name": "Dan Corkill",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-09-04T16:37:25Z",
     "type": "sent",
     "contact_name": "Dan Corkill",
@@ -591,12 +597,6 @@
     "ts": "2026-09-04T16:13:09Z",
     "type": "sent",
     "contact_name": "Lindsey Gutierrez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-09-04T16:12:49Z",
-    "type": "sent",
-    "contact_name": "Dandra Diaz",
     "detail": "pond nurture email — San Antonio"
   }
 ]
