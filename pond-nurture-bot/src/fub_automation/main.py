@@ -58,6 +58,8 @@ from .seller_nurture import (
     ramp_daily_cap,
     select_send_address,
 )
+from .mailbox import MailboxReplyReader, strip_quoted_reply
+from .names import greeting_first_name
 
 LOGGER = logging.getLogger("fub_automation")
 logging.basicConfig(
@@ -312,6 +314,14 @@ class AuditDB:
         with self.connect() as con:
             con.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS opt_outs (
+                    person_id INTEGER PRIMARY KEY,
+                    opted_out_at TEXT NOT NULL,
+                    detected_at TEXT NOT NULL,
+                    channel TEXT,
+                    source TEXT,
+                    snippet TEXT
+                );
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     created_at TEXT NOT NULL,
@@ -990,6 +1000,33 @@ class AuditDB:
             row = con.execute("SELECT COUNT(*) FROM reply_time_log").fetchone()
         return row[0] if row else 0
 
+    # ── Opt-out ledger ──────────────────────────────────────────────────────
+    # One row per person who asked us to stop, keyed on the person and
+    # stamped with the moment THEY wrote (opted_out_at), not the moment we
+    # noticed (detected_at). It is our own record: FUB tags can be cleared
+    # by hand and FUB records deleted, and neither may re-enable a send.
+    def record_opt_out(self, person_id: int, opted_out_at: str, channel: str,
+                       source: str, snippet: str = "") -> None:
+        with self.connect() as con:
+            con.execute(
+                """INSERT INTO opt_outs(person_id, opted_out_at, detected_at, channel, source, snippet)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(person_id) DO UPDATE SET
+                       opted_out_at = MIN(opted_out_at, excluded.opted_out_at),
+                       detected_at = MIN(detected_at, excluded.detected_at)""",
+                (int(person_id), opted_out_at, now_iso(), channel, source, (snippet or "")[:200]),
+            )
+
+    def opted_out_at(self, person_id: int) -> Optional[str]:
+        with self.connect() as con:
+            row = con.execute("SELECT opted_out_at FROM opt_outs WHERE person_id=?",
+                              (int(person_id),)).fetchone()
+        return row[0] if row else None
+
+    def opted_out_ids(self) -> set:
+        with self.connect() as con:
+            return {int(r[0]) for r in con.execute("SELECT person_id FROM opt_outs")}
+
 
 class FollowUpBossClient:
     BASE = "https://api.followupboss.com/v1"
@@ -1016,7 +1053,11 @@ class FollowUpBossClient:
                     url,
                     params=params,
                     json=json_body,
-                    headers=self._headers(registered=registered),
+                    # X-System/X-System-Key ride on every GET as well when the
+                    # secrets exist: FUB gates synced-email CONTENT by API client
+                    # (see FUB_HIDDEN_CONTENT); a registered system is the
+                    # documented unlock. No secrets, no header — no change.
+                    headers=self._headers(registered=registered or method.upper() == "GET"),
                     auth=(self.settings.fub_api_key, ""),
                     timeout=60,
                 )
@@ -1393,7 +1434,7 @@ NO_WINDOW"""
             return None
 
     def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "", is_value_led: bool = False) -> dict:
-        first_name = person.get("firstName") or "there"
+        first_name = greeting_first_name(person)
         person_id = int(person.get("id") or 0)
         cycle_seed = f"{person_id}-{dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
         angle_options = [
@@ -1552,7 +1593,7 @@ NO_WINDOW"""
         Includes 2-3 hyper-local spots near the home address.
         Ends with a soft referral ask.
         """
-        first_name = person.get("firstName") or "there"
+        first_name = greeting_first_name(person)
         close_year = ""
         if close_date:
             try:
@@ -1616,7 +1657,7 @@ NO_WINDOW"""
         sets up the relationship for future referrals. No local spots — this is a pure
         celebration email sent the same day the deal closes.
         """
-        first_name = person.get("firstName") or "there"
+        first_name = greeting_first_name(person)
         address_context = (
             f"They just closed on their new home at {deal_address}."
             if deal_address
@@ -1650,7 +1691,7 @@ NO_WINDOW"""
         return json.loads(content)
 
     def generate_welcome_email(self, person: dict, city: str) -> dict:
-        first_name = person.get("firstName") or "there"
+        first_name = greeting_first_name(person)
         city_instruction = (
             f"The lead appears interested in {city}. Tailor the welcome to that city/area."
             if city and city.lower() not in {"texas", "your area", "any city in texas", "texas/general"}
@@ -1700,7 +1741,7 @@ NO_WINDOW"""
           2, 5, 8, ... → lifestyle content relevant to their move
         Each email is AI-written fresh — no templates, no repeats.
         """
-        first_name = person.get("firstName") or "there"
+        first_name = greeting_first_name(person)
         person_id = int(person.get("id") or 0)
 
         # Rotate content type based on how many emails have been sent so far
@@ -1812,14 +1853,19 @@ NO_WINDOW"""
 
         # Collect inbound communications into a single context block
         comm_lines: List[str] = []
+        # is_inbound_message, not isIncoming: this account's email objects
+        # carry only relatedPeople[].sentByPerson (see is_inbound_message), so
+        # the old field test never fed the model a single inbound email.
+        # Hidden content is skipped outright — '[content hidden]' is not
+        # something a lead said.
         for t in texts[:5]:
-            if t.get("isIncoming") or t.get("direction") == "inbound":
+            if is_inbound_message(t):
                 body = str(t.get("message") or t.get("body") or "").strip()
                 if body:
                     comm_lines.append(f"[Inbound SMS] {body[:400]}")
         for e in emails[:5]:
-            if e.get("isIncoming") or e.get("direction") == "inbound":
-                body = str(e.get("body") or e.get("subject") or "").strip()
+            if is_inbound_message(e) and not message_content_hidden(e):
+                body = reply_own_words(e).strip() or str(e.get("subject") or "").strip()
                 if body:
                     comm_lines.append(f"[Inbound Email] {body[:400]}")
         for n in notes[:5]:
@@ -2165,6 +2211,11 @@ class RuleEngine:
         self.sms = None  # SMS intentionally disabled by owner; email-only automation.
         self.market = MarketContextProvider()
         self._user_cache_by_id: Optional[Dict[int, dict]] = None
+        # The mailbox bridge (mailbox.py): reads a lead's reply out of the
+        # sending mailbox when FUB hides its content. Off, and says why,
+        # without credentials or a reachable host — never a crash.
+        self.mailbox = MailboxReplyReader.from_settings(settings)
+        self._opted_out_cache: Optional[set] = None
 
     def _fetch_local_spots(self, address: str) -> List[dict]:
         """Use the Manus Maps proxy (Google Places API) to find new/popular spots near the property address.
@@ -3076,6 +3127,10 @@ class RuleEngine:
         self.scan_agent_followup()
         self.scan_email_address_updates()
         self.send_phase2_daily_summary()
+        if self.mailbox.stats["lookups"] or self.mailbox.disabled_reason:
+            LOGGER.info("Mailbox reply reader: %s — %s",
+                        self.mailbox.describe(), json.dumps(self.mailbox.stats, sort_keys=True))
+        self.mailbox.close()
 
     def scan_stale_leads(self) -> None:
         if not self.rules.customer_reengagement_emails_enabled:
@@ -3266,6 +3321,7 @@ class RuleEngine:
                 # Fetch recent incoming text messages and emails (limit to last 10)
                 texts = self.fub.get_text_messages(person_id, limit=10)
                 emails = self.fub.get_emails(person_id, limit=10)
+                emails = self._reveal_hidden_content(person, emails)
                 
                 # We also check notes/events just in case some sync logs incoming texts as notes/activities
                 notes = self.safe_get_notes(person_id)
@@ -3303,6 +3359,10 @@ class RuleEngine:
                         "source": ai_source,
                         "snippet": trigger_snippet[:200],
                     })
+                    self._record_opt_out(
+                        person_id, latest_inbound_timestamp([*emails, *texts]),
+                        "text" if ai_source == "Inbound SMS" else "email",
+                        "ai_intent", trigger_snippet)
                     continue
 
                 elif intent == "buying_intent":
@@ -3501,7 +3561,8 @@ class RuleEngine:
             try:
                 # Fetch recent inbound communications
                 texts = self.fub.get_text_messages(person_id, limit=10)
-                emails = self.fub.get_emails(person_id, limit=10)
+                emails = self._reveal_hidden_content(
+                    person_detail, self.fub.get_emails(person_id, limit=10))
                 notes = self.safe_get_notes(person_id)
                 
                 # Run AI intent classification
@@ -3579,6 +3640,10 @@ class RuleEngine:
                         "person_name": person_name,
                         "dry_run": self.settings.dry_run,
                     })
+                    self._record_opt_out(
+                        person_id, latest_inbound_timestamp([*emails, *texts]),
+                        "text" if ai_source == "Inbound SMS" else "email",
+                        "ai_intent", trigger_snippet)
                     trashed_count += 1
                     
             except Exception as exc:
@@ -4096,7 +4161,7 @@ class RuleEngine:
                 name = person_name(person)
                 stage = person.get("stage") or "Unknown stage"
                 lead_id = person.get("id")
-                raw_fn = (person.get("firstName") or "").strip(); person_first_name = raw_fn.split()[0].capitalize() if raw_fn.split() else "there"
+                person_first_name = greeting_first_name(person, first_token_only=True)
                 
                 # Determine city focus
                 city, _, _ = self.customer_nurture_context(person)
@@ -4590,6 +4655,12 @@ class RuleEngine:
             - "opt_out_trashed" if an opt-out was detected and the lead was trashed
             - None if no opt-out detected (safe to proceed with sending)
         """
+        # The ledger first: an opt-out any path recorded is final, whatever
+        # FUB's tags say today.
+        if self._is_opted_out(person):
+            self.db.log("pond_nurture", "suppressed", person_id, {
+                "reason": "opt-out ledger", "opted_out_at": self.db.opted_out_at(person_id)})
+            return "suppressed"
         try:
             # Fetch recent emails for this person (limit to 10 most recent)
             emails = self.fub.get_emails(person_id, limit=10)
@@ -4599,42 +4670,39 @@ class RuleEngine:
             LOGGER.warning("_check_incoming_opt_out: Failed to fetch communications for person %s: %s", person_id, exc)
             # Fail OPEN — if we can't check, allow the email (don't block the entire run)
             return None
+        # FUB hides email content on this account; the mailbox supplies the
+        # words when it can (mailbox.py). Hidden emails it cannot supply
+        # stay hidden and are skipped below — the placeholder is not a word
+        # the lead wrote, in either direction.
+        emails = self._reveal_hidden_content(person, emails)
 
-        # Check incoming emails for opt-out language
+        # Check incoming emails for opt-out language. is_inbound_message, not
+        # isIncoming: this account's email objects carry only
+        # relatedPeople[].sentByPerson, so the old field test made this check
+        # blind to every inbound EMAIL from the day it shipped.
         trigger_snippet = ""
         trigger_source = ""
+        trigger_at: Optional[dt.datetime] = None
         for e in emails:
-            if not (e.get("isIncoming") or e.get("direction") == "incoming"):
+            if not is_inbound_message(e) or message_content_hidden(e):
                 continue
-            body = str(e.get("body") or e.get("subject") or "").lower().strip()
-            subject = str(e.get("subject") or "").lower().strip()
-            combined = f"{subject} {body}"
-            for keyword in self._OPT_OUT_KEYWORDS:
-                if keyword in combined:
-                    trigger_snippet = (e.get("body") or e.get("subject") or "")[:200]
-                    trigger_source = "Inbound Email"
-                    break
-            if trigger_snippet:
+            if is_opt_out_text(str(e.get("subject") or ""), reply_message_body(e), is_email=True,
+                               opt_out_keywords=self._OPT_OUT_KEYWORDS):
+                trigger_snippet = reply_display_snippet(e)[:200]
+                trigger_source = "Inbound Email"
+                trigger_at = message_timestamp(e)
                 break
 
-        # Check incoming texts for opt-out language
+        # Check incoming texts for opt-out language (standalone STOP included)
         if not trigger_snippet:
             for t in texts:
-                if not (t.get("isIncoming") or t.get("direction") == "inbound"):
+                if not is_inbound_message(t):
                     continue
-                body = str(t.get("message") or t.get("body") or "").lower().strip()
-                # Standard keyword check
-                for keyword in self._OPT_OUT_KEYWORDS:
-                    if keyword in body:
-                        trigger_snippet = (t.get("message") or t.get("body") or "")[:200]
-                        trigger_source = "Inbound SMS"
-                        break
-                # Special case: standalone "STOP" is the standard SMS opt-out keyword
-                # Only trigger if the entire message is just "stop" (with optional punctuation)
-                if not trigger_snippet and body.rstrip('!. ') == 'stop':
-                    trigger_snippet = (t.get("message") or t.get("body") or "")[:200]
+                if is_opt_out_text("", reply_message_body(t), is_email=False,
+                                   opt_out_keywords=self._OPT_OUT_KEYWORDS):
+                    trigger_snippet = reply_display_snippet(t)[:200]
                     trigger_source = "Inbound SMS"
-                if trigger_snippet:
+                    trigger_at = message_timestamp(t)
                     break
 
         if not trigger_snippet:
@@ -4672,8 +4740,12 @@ class RuleEngine:
             "trigger_source": trigger_source,
             "trigger_snippet": trigger_snippet[:200],
             "person_name": person_name,
+            "opted_out_at": trigger_at.isoformat() if trigger_at else None,
             "dry_run": self.settings.dry_run,
         })
+        self._record_opt_out(person_id, trigger_at,
+                             "email" if trigger_source == "Inbound Email" else "text",
+                             "pre_send_keyword", trigger_snippet)
         return "opt_out_trashed"
 
     def process_stale_agent_no_note_candidate(self, person: dict) -> str:
@@ -5099,6 +5171,20 @@ class RuleEngine:
             if pid:
                 candidates.pop(int(pid), None)
 
+        # A reply whose words FUB hid but the mailbox later supplied
+        # (reply_content_recheck rows): show the words, not the placeholder.
+        for row in self.db.recent_audit_rows(["reply_content_recheck"], since):
+            pid = row.get("person_id")
+            if not pid or int(pid) not in candidates:
+                continue
+            try:
+                details = json.loads(row.get("details") or "{}")
+            except Exception:  # noqa: BLE001
+                continue
+            words = details.get("reply_snippet")
+            if words and details.get("reply_at") == candidates[int(pid)]["reply_at"].isoformat():
+                candidates[int(pid)]["snippet"] = words
+
         # The bot's own sends, so an automated email can never read as a human
         # answering. Going forward "Replied - Paused" stops the bot the moment
         # a reply is detected, but the backfilled fortnight predates the tag —
@@ -5482,7 +5568,7 @@ class RuleEngine:
                 name = person_name(person)
                 stage = person.get("stage") or "Unknown stage"
                 lead_id = person.get("id")
-                raw_fn = (person.get("firstName") or "").strip(); person_first_name = raw_fn.split()[0].capitalize() if raw_fn.split() else "there"
+                person_first_name = greeting_first_name(person, first_token_only=True)
                 city, _, _ = self.customer_nurture_context(person)
                 
                 # Determine days stale (should be 20+ since they were reassigned)
@@ -5547,7 +5633,7 @@ class RuleEngine:
                     name = person_name(person)
                     stage = person.get("stage") or "Pond"
                     lead_id = person.get("id")
-                    raw_fn = (person.get("firstName") or "").strip(); person_first_name = raw_fn.split()[0].capitalize() if raw_fn.split() else "there"
+                    person_first_name = greeting_first_name(person, first_token_only=True)
                     city, _, _ = self.customer_nurture_context(person)
                     
                     # Generate a casual, direct ask re-engagement SMS
@@ -6414,8 +6500,7 @@ class RuleEngine:
             sms_link = ""
             sms_body = ""
             if lead_phone:
-                raw_fn = (person.get("firstName") or "").strip()
-                lead_first = raw_fn.split()[0].capitalize() if raw_fn.split() else "there"
+                lead_first = greeting_first_name(person, first_token_only=True)
                 city = infer_city(person, self.rules.target_cities)
                 sms_body = generate_personalized_sms(
                     first_name=lead_first,
@@ -6506,6 +6591,11 @@ class RuleEngine:
             LOGGER.warning("Failed to send reassignment email to Peter for lead %s: %s", person_id, mail_exc)
 
     def is_excluded(self, person: dict) -> bool:
+        # 0. Our own opt-out ledger: a typed unsubscribe recorded by any
+        # detection path. Local, so a tag cleared in FUB cannot re-enable sends.
+        if self._is_opted_out(person):
+            return True
+
         # 1. Check FUB built-in unsubscribe/opt-out fields
         if person.get("unsubscribed") or person.get("emailOptOut") or person.get("unsubscribedEmail") or person.get("isUnsubscribed"):
             return True
@@ -7095,7 +7185,8 @@ class RuleEngine:
                 # 25 emails, not 10: the lineage anchor (the synced copy of
                 # our send) must be IN the fetch, and busy records — exactly
                 # the ones accumulating third-party mail — push it out.
-                emails = self.fub.get_emails(person_id, limit=25)
+                emails = self._reveal_hidden_content(
+                    person, self.fub.get_emails(person_id, limit=25))
                 texts = self.fub.get_text_messages(person_id, limit=10)
                 inbound: List[Tuple[dt.datetime, dict]] = []
                 for msg in [*emails, *texts]:
@@ -7176,6 +7267,16 @@ class RuleEngine:
             except Exception as exc:
                 LOGGER.exception("Reply detection: error processing lead %s: %s", person_id, exc)
                 self.db.log("reply_detected", "error", person_id, {"error": str(exc)})
+        # Replies already paused as "human" while their words were hidden:
+        # re-read them now that the mailbox may be able to supply the words.
+        try:
+            self._recheck_hidden_replies()
+        except Exception as recheck_exc:  # noqa: BLE001 — never break the scan
+            LOGGER.exception("Hidden-reply recheck failed: %s", recheck_exc)
+        if self.mailbox.stats["lookups"] or self.mailbox.disabled_reason:
+            LOGGER.info("Mailbox reply reader: %s — %s",
+                        self.mailbox.describe(), json.dumps(self.mailbox.stats, sort_keys=True))
+        self.mailbox.close()
         LOGGER.info("Reply detection scan complete. Alerts sent: %s", alerts_sent)
         # Dead-man's switch. The reply-detection workflow runs an inline
         # `python3 -c` block rather than a script file, so there is no entrypoint
@@ -7198,6 +7299,16 @@ class RuleEngine:
         # REPLY DETECTED — take action
         reply_body = reply_display_snippet(reply_found)
         reply_snippet = reply_body[:300]
+        hidden_note = ""
+        if message_content_hidden(reply_found):
+            why = (self.mailbox.last_error or self.mailbox.disabled_reason
+                   or "the mailbox holds no matching message")
+            hidden_note = (
+                "\n\u26a0\ufe0f The reply text is hidden from the API and the mailbox "
+                f"could not supply it ({why}). Read the reply in FUB before doing "
+                "anything else: if it says unsubscribe or stop, move the lead to "
+                "Trash and tag \"unsubscribed\" — do NOT remove the pause tag.\n"
+            )
         reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
         LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
         # 1. Tag the lead
@@ -7217,6 +7328,7 @@ class RuleEngine:
             f"  \u2022 Continue the conversation manually\n"
             f"  \u2022 Remove the \"Replied - Paused\" tag to resume automation\n"
             f"  \u2022 Move to Trash if the reply is an opt-out"
+            + hidden_note
         )
         self.fub.add_note(person_id, note_title, note_body)
         # 3. Send alert email to owning agent (or Peter for pond leads)
@@ -7243,8 +7355,9 @@ class RuleEngine:
             f"<p><strong>Action:</strong> Review the conversation in FUB and respond personally.</p>"
             f"<p>All automation for this lead has been paused (tagged \"Replied - Paused\").</p>"
             f"<p>To resume automation later, simply remove the tag.</p>"
+            + (f"<p><strong>{html.escape(hidden_note.strip())}</strong></p>" if hidden_note else "")
         )
-        alert_plain = f"Lead Reply Detected: {lead_name} replied to an automated email.\nChannel: {reply_channel}\nReply: {reply_snippet}\n\nAction: Review the conversation in FUB and respond personally.\nAll automation for this lead has been paused (tagged 'Replied - Paused').\nTo resume automation later, simply remove the tag."
+        alert_plain = f"Lead Reply Detected: {lead_name} replied to an automated email.\nChannel: {reply_channel}\nReply: {reply_snippet}\n\nAction: Review the conversation in FUB and respond personally.\nAll automation for this lead has been paused (tagged 'Replied - Paused').\nTo resume automation later, simply remove the tag." + hidden_note
         try:
             self.email.send(
                 agent_email,
@@ -7445,8 +7558,240 @@ class RuleEngine:
             "snippet": snippet,
             "channel": channel,
             "person_name": person_name_str,
+            "content_source": message.get("content_source") or "fub",
             "dry_run": self.settings.dry_run,
         })
+        self._record_opt_out(person_id, reply_at, channel, "reply_detection_keyword", snippet)
+
+    # ── The mailbox bridge and the opt-out ledger ────────────────────────
+    def _reveal_hidden_content(self, person: dict, messages: List[dict]) -> List[dict]:
+        """Hidden inbound emails, with their words supplied by the mailbox.
+
+        Returns a new list. A message the mailbox cannot supply comes back
+        unchanged — still hidden — so every caller keeps today's behaviour
+        for it. Texts, outbound mail and readable emails pass straight
+        through. The revealed copy carries `body` (the lead's own words,
+        quoted history removed), a real `subject`, and
+        content_source='mailbox' so audit rows can say where the words came
+        from.
+        """
+        messages = list(messages or [])
+        if not messages or not self.mailbox.enabled:
+            return messages
+        hidden = [m for m in messages
+                  if isinstance(m, dict) and is_inbound_message(m)
+                  and message_content_hidden(m) and m.get("subject") is not None]
+        if not hidden:
+            return messages
+        addresses = self._lead_addresses(person)
+        revealed: Dict[int, dict] = {}
+        for msg in hidden:
+            when = message_timestamp(msg)
+            if not when or not addresses:
+                continue
+            fetched = self.mailbox.find_reply(addresses, when)
+            if fetched is None:
+                if not self.mailbox.enabled:
+                    break  # breaker tripped: stop asking for this run
+                continue
+            copy = dict(msg)
+            copy["subject"] = fetched.subject or "(no subject)"
+            copy["body"] = fetched.text
+            copy["bodyExcerpt"] = fetched.text[:200]
+            copy.pop("bodyHtmlVisibleClean", None)
+            copy.pop("bodyHtmlHiddenClean", None)
+            copy["content_source"] = "mailbox"
+            copy["mailbox_message_id"] = fetched.message_id
+            copy["mailbox_folder"] = fetched.folder
+            revealed[id(msg)] = copy
+            LOGGER.info("Mailbox supplied the words for lead %s email %s (%d chars)",
+                        person.get("id"), msg.get("id"), len(fetched.text))
+        if not revealed:
+            return messages
+        return [revealed.get(id(m), m) for m in messages]
+
+    def _lead_addresses(self, person: dict) -> List[str]:
+        """Every email address on the record — fetching the full record when
+        the caller only holds a list stub without one."""
+        def _from(record: dict) -> List[str]:
+            out = []
+            for entry in record.get("emails") or []:
+                if isinstance(entry, dict):
+                    value = entry.get("value") or entry.get("email")
+                elif isinstance(entry, str):
+                    value = entry
+                else:
+                    value = None
+                if value and "@" in str(value):
+                    out.append(str(value).strip().lower())
+            return out
+        addresses = _from(person)
+        if not addresses and person.get("id"):
+            try:
+                full = self.fub.get_person(int(person["id"]))
+                if full:
+                    addresses = _from(full)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.debug("Could not fetch addresses for lead %s: %s", person.get("id"), exc)
+        return addresses
+
+    def _is_opted_out(self, person: dict) -> bool:
+        pid = person.get("id") if isinstance(person, dict) else None
+        if pid in (None, ""):
+            return False
+        if self._opted_out_cache is None:
+            try:
+                self._opted_out_cache = self.db.opted_out_ids()
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Opt-out ledger unreadable (%s) — treating as empty", exc)
+                self._opted_out_cache = set()
+        try:
+            return int(pid) in self._opted_out_cache
+        except (TypeError, ValueError):
+            return False
+
+    def _record_opt_out(self, person_id: int, opted_out_at, channel: str,
+                        source: str, snippet: str = "") -> None:
+        """Write the ledger row every opt-out path shares. `opted_out_at` is
+        the lead's own timestamp when known; now() only when it is not."""
+        when = opted_out_at if isinstance(opted_out_at, dt.datetime) \
+            else parse_fub_datetime(opted_out_at)
+        if when is None:
+            when = dt.datetime.now(UTC)
+        try:
+            self.db.record_opt_out(int(person_id), when.isoformat(), channel, source, snippet)
+        except Exception as exc:  # noqa: BLE001 — the FUB writes already happened
+            LOGGER.error("Opt-out ledger write failed for lead %s: %s", person_id, exc)
+            return
+        if self._opted_out_cache is not None:
+            self._opted_out_cache.add(int(person_id))
+
+    #: Hidden-content replies re-read per run. Bounded: each costs a person
+    #: fetch, an email fetch and a mailbox lookup.
+    HIDDEN_RECHECK_MAX_PER_RUN = 20
+
+    def _recheck_hidden_replies(self) -> int:
+        """Re-read replies that were paused as human while their words were hidden.
+
+        Ka Cp, 2026-09-08: the 10-minute scan saw her reply, could not read
+        it, tagged her "Replied - Paused" and paged Peter as a hot lead. The
+        reply said Unsubscribe. This pass takes every reply_detected row in
+        the NEEDS-A-REPLY window whose snippet is the hidden placeholder,
+        asks the mailbox for the words, and applies to an opt-out exactly
+        what a reply classified live gets: trash + tags + note + the
+        disqualification row (which drops her from NEEDS A REPLY and WARM)
+        + the ledger. A human or auto verdict is recorded too, with the
+        real words, so the summary can show them.
+
+        One reply_content_recheck row per reply for any verdict the mailbox
+        actually returned, so nothing is re-read every ten minutes; a lookup
+        that errored (host down, login refused) leaves no row and is retried
+        next run. Returns how many replies were re-read.
+        """
+        if not self.mailbox.enabled:
+            return 0
+        now = dt.datetime.now(UTC)
+        since = now - dt.timedelta(days=self.NEEDS_REPLY_BACKLOG_DAYS)
+
+        def _details(row: dict) -> dict:
+            try:
+                return json.loads(row.get("details") or "{}")
+            except Exception:  # noqa: BLE001
+                return {}
+
+        done = set()
+        for row in self.db.recent_audit_rows(["reply_content_recheck"], since):
+            details = _details(row)
+            if row.get("person_id") and details.get("reply_at"):
+                done.add((int(row["person_id"]), details["reply_at"]))
+        voided = set()
+        for row in self.db.recent_audit_rows(["reply_false_positive_cleared"], since):
+            details = _details(row)
+            if row.get("person_id") and details.get("reply_at"):
+                voided.add((int(row["person_id"]), details["reply_at"]))
+        closed = {
+            int(row["person_id"]) for row in self.db.recent_audit_rows(
+                ["reply_intent_disqualification", "pond_opt_out_trash", "lead_deleted"], since)
+            if row.get("person_id")
+        }
+        pending: List[Tuple[int, str, dict]] = []
+        seen = set()
+        for row in self.db.recent_audit_rows(["reply_detected"], since):
+            if row.get("status") not in ("alert_sent", "backfilled") or not row.get("person_id"):
+                continue
+            pid = int(row["person_id"])
+            details = _details(row)
+            reply_at = details.get("reply_at")
+            snippet = str(details.get("reply_snippet") or "")
+            if not reply_at or "hidden" not in snippet.lower():
+                continue
+            if details.get("reply_channel", "email") != "email":
+                continue
+            if pid in closed or pid in seen or (pid, reply_at) in done or (pid, reply_at) in voided:
+                continue
+            seen.add(pid)
+            pending.append((pid, reply_at, details))
+
+        rechecked = 0
+        for pid, reply_at_str, details in pending[:self.HIDDEN_RECHECK_MAX_PER_RUN]:
+            if not self.mailbox.enabled:
+                break
+            try:
+                person = self.fub.get_person(pid)
+                if not person:
+                    continue
+                contact = (f"{person.get('firstName', '')} "
+                           f"{person.get('lastName', '')}").strip() or f"Lead #{pid}"
+                if str(person.get("stage") or "").lower() == "trash" or self._is_opted_out(person):
+                    self.db.log("reply_content_recheck", "already_closed", pid, {
+                        "reply_at": reply_at_str, "contact_name": contact})
+                    continue
+                reply_at = parse_fub_datetime(reply_at_str)
+                if not reply_at:
+                    continue
+                emails = self.fub.get_emails(pid, limit=25)
+                target = None
+                for msg in emails:
+                    when = message_timestamp(msg)
+                    if is_inbound_message(msg) and when and \
+                            abs((when - reply_at).total_seconds()) <= 60:
+                        target = msg
+                        break
+                if target is None:
+                    self.db.log("reply_content_recheck", "message_gone", pid, {
+                        "reply_at": reply_at_str, "contact_name": contact})
+                    continue
+                revealed = target
+                if message_content_hidden(target):
+                    revealed = self._reveal_hidden_content(person, [target])[0]
+                if message_content_hidden(revealed):
+                    if self.mailbox.last_outcome == "not_found":
+                        self.db.log("reply_content_recheck", "not_in_mailbox", pid, {
+                            "reply_at": reply_at_str, "contact_name": contact,
+                            "reason": self.mailbox.last_error})
+                    # error / disabled: no row, so the next run tries again
+                    continue
+                send_dt = latest_outbound_before(emails, reply_at) \
+                    or (reply_at - dt.timedelta(days=3650))
+                kind = classify_reply(revealed, send_dt, reply_at, self._OPT_OUT_KEYWORDS)
+                words = reply_display_snippet(revealed)[:200]
+                self.db.log("reply_content_recheck", kind, pid, {
+                    "reply_at": reply_at_str,
+                    "reply_snippet": words,
+                    "contact_name": contact,
+                    "content_source": revealed.get("content_source") or "fub",
+                })
+                rechecked += 1
+                if kind == "opt_out":
+                    LOGGER.warning("Hidden-reply recheck: lead %s's paused reply was an opt-out", pid)
+                    self._trash_opt_out_reply(pid, person, reply_at, revealed)
+                else:
+                    LOGGER.info("Hidden-reply recheck: lead %s's paused reply reads %s", pid, kind)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("Hidden-reply recheck failed for lead %s: %s", pid, exc)
+        if pending:
+            LOGGER.info("Hidden-reply recheck: %s pending, %s re-read", len(pending), rechecked)
+        return rechecked
 
     #: How far back the daily wide sweep looks. Two days overlaps consecutive
     #: daily runs, so a reply can never fall between them.
@@ -7654,10 +7999,21 @@ class RuleEngine:
         inbound on a thread none of our sends belongs to is surfaced as
         unverified instead of alerting.
         """
-        messages = [
-            *self.fub.get_emails(person_id, limit=25),
-            *self.fub.get_text_messages(person_id, limit=10),
-        ]
+        emails = self.fub.get_emails(person_id, limit=25)
+        texts = self.fub.get_text_messages(person_id, limit=10)
+        if person is None and any(
+                message_content_hidden(msg)
+                for _, msg in inbound_messages_since(emails, inbound_floor)):
+            # The mailbox lookup needs the lead's addresses; the rotation
+            # path fetches the record only when there is inbound to read.
+            person = self.fub.get_person(person_id)
+            if not person:
+                return "none"
+            if self.has_any_tag(person, ["Replied - Paused"]) or self.is_excluded(person):
+                return "none"
+        if person is not None:
+            emails = self._reveal_hidden_content(person, emails)
+        messages = [*emails, *texts]
         classified = []
         for when, msg in inbound_messages_since(messages, inbound_floor):
             anchor = latest_outbound_before(messages, when)
@@ -8024,6 +8380,51 @@ def reply_message_body(message: dict) -> str:
     return str(message.get("body") or message.get("message") or message.get("text") or "")
 
 
+#: A message that is nothing but "stop" — the SMS-standard opt-out, honoured
+#: for email too since 2026-09-08. Whole-message only: "stop by the office
+#: Tuesday" is a person making plans, not an opt-out.
+STANDALONE_STOP = re.compile(
+    r"^\W*(please\s+)?stop(\s+(it|now|please|this|these|that|all|emailing|texting|"
+    r"messaging|contacting|sending)(\s+(me|us|them))?)?\s*(please)?\W*$",
+    re.I,
+)
+
+
+def reply_own_words(message: dict) -> str:
+    """The lead's own text: an email body with its quoted history removed
+    (a text message carries none). A mailbox-revealed body is already the
+    unquoted top; stripping it again is a no-op."""
+    body = reply_message_body(message)
+    if message.get("subject") is None:
+        return body
+    return strip_quoted_reply(body)
+
+
+def is_opt_out_text(subject: str, body: str, is_email: bool,
+                    opt_out_keywords: Optional[Iterable[str]] = None) -> bool:
+    """Does this message ask us to stop? Shared by the reply classifier and
+    the pre-send check so the two can never disagree on what an opt-out is."""
+    keywords = list(opt_out_keywords) if opt_out_keywords is not None \
+        else list(RuleEngine._OPT_OUT_KEYWORDS)
+    top = strip_quoted_reply(body or "") if is_email else str(body or "")
+    combined = f"{subject or ''} {top}".lower()
+    if any(keyword in combined for keyword in keywords):
+        return True
+    return STANDALONE_STOP.match(top.strip()) is not None
+
+
+def latest_inbound_timestamp(messages: List[dict]) -> Optional[dt.datetime]:
+    """When the lead last wrote, across both channels; None if never."""
+    best: Optional[dt.datetime] = None
+    for msg in messages:
+        if not is_inbound_message(msg):
+            continue
+        when = message_timestamp(msg)
+        if when and (best is None or when > best):
+            best = when
+    return best
+
+
 def classify_reply(
     message: dict,
     send_dt: dt.datetime,
@@ -8037,30 +8438,30 @@ def classify_reply(
     safe direction to over-trigger in), so the timing heuristic below must not
     be able to shadow it.
 
-    KNOWN LIMIT while the account hides email content from the API
-    (message_content_hidden): subject and body are the literal placeholder,
-    so the keyword and marker scans cannot fire — an "UNSUBSCRIBE" typed in
-    the body classifies as human and reaches Peter as a NEEDS-A-REPLY entry
-    rather than being auto-trashed. FUB's own `unsubscribed` flag (their
-    unsubscribe link) is honoured below regardless. Restoring body access is
-    an FUB admin setting, not a code change.
+    Only the lead's OWN words are scanned (reply_own_words): every reply
+    quotes our email, whose footer says "reply UNSUBSCRIBE", so scanning the
+    quoted history would trash every lead who ever wrote back. A message that
+    is nothing but "stop" is an opt-out on either channel.
+
+    While FUB hides email content from the API (message_content_hidden) the
+    scans cannot fire on the placeholder; callers run the message through
+    RuleEngine._reveal_hidden_content first so the mailbox can supply the
+    words (Ka Cp, 2026-09-08: an "Unsubscribe" that classified human and
+    paged Peter as a hot lead). A hidden message the mailbox cannot supply
+    still classifies human and reaches Peter as NEEDS-A-REPLY, and the alert
+    says so. FUB's own `unsubscribed` flag (their unsubscribe link) is
+    honoured regardless.
     """
     # FUB's own unsubscribe-link flag on the email object — content sharing
     # cannot hide it.
     if message.get("unsubscribed"):
         return "opt_out"
 
-    subject = str(message.get("subject") or "").lower().strip()
-    body = reply_message_body(message).lower().strip()
-    combined = f"{subject} {body}"
-
-    for keyword in opt_out_keywords:
-        if keyword in combined:
-            return "opt_out"
-    # Standalone STOP is the SMS-standard opt-out; only when it is the whole
-    # message, same as the pre-send check (_check_incoming_opt_out).
-    if message.get("subject") is None and body.rstrip("!. ") == "stop":
+    if is_opt_out_text(str(message.get("subject") or ""), reply_message_body(message),
+                       is_email=message.get("subject") is not None,
+                       opt_out_keywords=opt_out_keywords):
         return "opt_out"
+    combined = f"{str(message.get('subject') or '')} {reply_own_words(message)}".lower()
 
     if (reply_dt - send_dt).total_seconds() <= AUTO_REPLY_WINDOW_SECONDS:
         return "auto_reply"

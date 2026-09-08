@@ -149,6 +149,14 @@ This script is the watchdog for the entire stack. Every morning it:
 
 ## All Rules at a Glance
 
+### Opt-outs: the mailbox bridge and the opt-out ledger
+
+FUB's API returns `[content hidden]` for the subject and body of every synced email on this account, so a lead who *types* "Unsubscribe" or "Stop" in a reply is invisible to any scan that reads FUB alone (Stephen Herrera 2026-08-23, Ka Cp 2026-09-08 — both classified as human replies and paged as hot leads). Two pieces close that hole:
+
+- **Mailbox bridge** (`pond-nurture-bot/src/fub_automation/mailbox.py`). The mailbox the bot sends from receives the same reply, unmasked. When FUB hides an inbound email's content, the reply scans, the daily wide sweep, the pre-send opt-out check and the AI intent classifier ask that mailbox — over IMAP, read-only, with the SMTP credentials the bot already holds — for the one message the lead sent at that timestamp, and classify the lead's own words (quoted history removed: our footer says "reply UNSUBSCRIBE", so the quote must never be scanned). Configuration: nothing, when `SMTP_HOST` is Gmail/Google Workspace or Office 365 (the IMAP host is derived); otherwise `IMAP_HOST`. Optional `IMAP_USER`/`IMAP_PASSWORD`/`IMAP_PORT`/`IMAP_MAILBOX`; `MAILBOX_REPLY_READ=false` switches it off. Without credentials or a reachable host it fails open to the previous behaviour and the hot-lead alert says the words were unreadable.
+- **Opt-out ledger** (`opt_outs` table in the state DB). Every opt-out path — reply keyword, pre-send check, AI intent, and the hidden-reply recheck that re-reads replies paused as "human" while their words were hidden — records the person with the timestamp of *their* message. `is_excluded()` and the pre-send check consult it first, so clearing a tag in FUB can no longer re-enable sends. Merge rule: both clocks only move earlier.
+- The read-only diagnostic (`diagnose-reply-surfaces.yml`, `probe_mailbox: true`) reports whether the mailbox can supply a given lead's hidden reply — counts and verdicts only, never text.
+
 ### Lead Suppression Rules (Python Pond Nurture)
 
 | Rule | Detail |
@@ -163,6 +171,7 @@ This script is the watchdog for the entire stack. Every morning it:
 | Tags | All 20 shared suppression tags (see `config/suppression_tags.json`) |
 | No email address | Cannot send |
 | 14-day cadence | Already emailed within last 14 days |
+| Opt-out ledger | Any recorded typed opt-out (reply "unsubscribe"/"stop", pre-send check, AI intent, hidden-reply recheck) — local, survives FUB tag edits |
 
 ### Timing Rules
 

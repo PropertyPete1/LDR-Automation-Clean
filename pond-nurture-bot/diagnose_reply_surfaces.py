@@ -35,6 +35,7 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import re
 import sys
@@ -163,11 +164,68 @@ def describe_events(fub, pid: int) -> None:
               flush=True)
 
 
+def probe_mailbox(fub, settings, pid: int) -> None:
+    """Can the mailbox bridge (mailbox.py) supply the words FUB hides?
+
+    Prints, per hidden inbound email on the record: whether the sending
+    mailbox held a matching message, how many characters of the lead's own
+    words it yielded, and how classify_reply reads them. NEVER the words
+    themselves and never an address — this output lands in a public run log.
+    Read-only on both sides: FUB GETs, and the mailbox is opened read-only
+    with BODY.PEEK (nothing is marked read).
+    """
+    from fub_automation.main import (
+        RuleEngine, classify_reply, is_inbound_message, latest_outbound_before,
+        message_content_hidden, message_timestamp,
+    )
+    from fub_automation.mailbox import MailboxReplyReader
+
+    reader = MailboxReplyReader.from_settings(settings)
+    print(f"  mailbox: {reader.describe()}", flush=True)
+    if not reader.enabled:
+        return
+    person = fub.get_person(pid) or {}
+    addresses = []
+    for entry in person.get("emails") or []:
+        value = entry.get("value") if isinstance(entry, dict) else entry
+        if value and "@" in str(value):
+            addresses.append(str(value).strip().lower())
+    print(f"  addresses on record: {len(addresses)}", flush=True)
+    emails = fub.get_emails(pid, limit=25)
+    hidden = [m for m in emails if is_inbound_message(m) and message_content_hidden(m)]
+    print(f"  inbound emails: {sum(1 for m in emails if is_inbound_message(m))}, "
+          f"content hidden: {len(hidden)}", flush=True)
+    for msg in hidden[:5]:
+        when = message_timestamp(msg)
+        if when is None:
+            print("    (inbound email with no timestamp — skipped)", flush=True)
+            continue
+        fetched = reader.find_reply(addresses, when)
+        if fetched is None:
+            print(f"    {when.isoformat()} -> {reader.last_outcome}: "
+                  f"{clip_and_redact(reader.last_error, 160)}", flush=True)
+            continue
+        revealed = dict(msg)
+        revealed["subject"] = fetched.subject or "(no subject)"
+        revealed["body"] = fetched.text
+        revealed["bodyExcerpt"] = fetched.text[:200]
+        revealed["content_source"] = "mailbox"
+        anchor = latest_outbound_before(emails, when) or (when - dt.timedelta(days=3650))
+        kind = classify_reply(revealed, anchor, when, RuleEngine._OPT_OUT_KEYWORDS)
+        print(f"    {when.isoformat()} -> REVEALED from {fetched.folder!r}: "
+              f"{len(fetched.text)} chars of the lead's own words "
+              f"(message {fetched.full_text_length} chars before quote-stripping), "
+              f"classify_reply={kind}", flush=True)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Print every FUB surface that could hold a lead's replies.")
     parser.add_argument("--emails", required=True,
                         help="Comma-separated lead email addresses to inspect.")
+    parser.add_argument("--probe-mailbox", action="store_true",
+                        help="Also ask the sending mailbox for the words FUB hides "
+                             "(counts and verdicts only — never the text).")
     args = parser.parse_args(argv)
 
     # Read-only: force dry-run so even a code-path mistake cannot write.
@@ -190,6 +248,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         describe_messages(fub, pid, "/textMessages", "textMessages", "/textMessages")
         describe_notes(fub, pid)
         describe_events(fub, pid)
+        if args.probe_mailbox:
+            probe_mailbox(fub, settings, pid)
     print(f"\n{'=' * 70}\nDone. Every call above was a GET.", flush=True)
     return 0
 

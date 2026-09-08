@@ -4,16 +4,23 @@
 # /emails and person.updated blind to inbound mail in this account — the fix
 # for reply detection depends on seeing where the replies actually live.
 #
-# Every FUB call is a GET. No state DB, no writes, nothing to commit.
+# Every FUB call is a GET. No state DB, no writes, nothing to commit. The
+# optional mailbox probe opens the sending mailbox read-only and prints
+# counts and verdicts, never message text or addresses.
 name: Diagnose reply surfaces
 
 on:
   workflow_dispatch:
     inputs:
       emails:
-        description: "Comma-separated lead email addresses to inspect"
+        description: "Comma-separated lead email addresses to inspect (or id:<personId>)"
         required: true
         default: "joe_munoz@att.net,sjherrera987@gmail.com"
+      probe_mailbox:
+        description: "Also ask the sending mailbox for the words FUB hides (counts and verdicts only, never the text)"
+        type: boolean
+        required: false
+        default: false
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -21,6 +28,12 @@ env:
   FUB_DISABLE_SCHEDULER: "true"
   FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
   RULES_PATH: "config/rules.yaml"
+  # The mailbox probe shares the bot's SMTP credentials (mailbox.py derives
+  # the IMAP host from SMTP_HOST). Read-only: the folder is opened read-only
+  # and messages are fetched with BODY.PEEK.
+  SMTP_HOST: ${{ secrets.SMTP_HOST }}
+  SMTP_USER: ${{ secrets.SMTP_USER }}
+  SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
 
 jobs:
   diagnose:
@@ -47,4 +60,5 @@ jobs:
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 diagnose_reply_surfaces.py --emails "${{ inputs.emails }}"
+          python3 diagnose_reply_surfaces.py --emails "${{ inputs.emails }}" \
+            ${{ inputs.probe_mailbox && '--probe-mailbox' || '' }}

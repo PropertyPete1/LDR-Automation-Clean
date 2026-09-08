@@ -737,3 +737,29 @@ def test_the_cli_refuses_rather_than_pretend_when_a_file_is_missing(dbs, tmp_pat
     ours, _ = dbs
     assert sm.main(["--ours", str(ours), "--theirs", str(tmp_path / "gone.sqlite3")]) == 1
     assert "does not exist" in capsys.readouterr().err
+
+
+def test_the_opt_out_ledger_keeps_the_earliest_moment_from_either_side(dbs):
+    """opt_outs: a typed unsubscribe recorded by any path. The earliest
+    opted_out_at wins in BOTH directions — a later merge must never shorten
+    the protection — and a row only one side holds is carried over."""
+    ours, theirs = dbs
+    ins = ("INSERT INTO opt_outs(person_id, opted_out_at, detected_at, channel, source, snippet) "
+           "VALUES (?, ?, ?, ?, ?, ?)")
+    execute(ours, ins, 1931, "2026-09-08T17:20:00+00:00", "2026-09-08T17:51:00+00:00",
+            "email", "reply_detection_keyword", "Unsubscribe")
+    execute(theirs, ins, 1931, "2026-09-08T16:59:00+00:00", "2026-09-09T12:00:00+00:00",
+            "email", "pre_send_keyword", "Unsubscribe")
+    execute(theirs, ins, 2000, "2026-09-09T08:00:00+00:00", "2026-09-09T08:05:00+00:00",
+            "text", "ai_intent", "STOP")
+
+    sm.merge_databases(str(ours), str(theirs))
+
+    assert rows(ours, "SELECT opted_out_at, detected_at FROM opt_outs WHERE person_id=1931") == \
+        [("2026-09-08T16:59:00+00:00", "2026-09-08T17:51:00+00:00")]
+    assert rows(ours, "SELECT person_id FROM opt_outs WHERE person_id=2000") == [(2000,)]
+
+    # The other direction reaches the same clocks.
+    sm.merge_databases(str(theirs), str(ours))
+    assert rows(theirs, "SELECT opted_out_at, detected_at FROM opt_outs WHERE person_id=1931") == \
+        [("2026-09-08T16:59:00+00:00", "2026-09-08T17:51:00+00:00")]

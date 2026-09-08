@@ -188,6 +188,17 @@ PERSON_ROWS: tuple[PersonRow, ...] = (
         clock=("updated_at",),
         forward_only=("updated_at",),
     ),
+    # The opt-out ledger: one row per person who asked us to stop, from any
+    # detection path (reply keyword, pre-send check, AI intent, the hidden-
+    # reply recheck). Both clocks only ever move EARLIER — the first moment
+    # the lead asked is the one that counts, and a merge must never shorten
+    # the protection. A row present on either side survives (person-row
+    # merges never delete), which is the whole point of keeping it locally.
+    PersonRow(
+        name="opt_outs",
+        clock=("detected_at",),
+        backward_only=("opted_out_at", "detected_at"),
+    ),
     PersonRow(
         name="new_lead_timers",
         # One row per timer GENERATION since the assignment watch re-arms
