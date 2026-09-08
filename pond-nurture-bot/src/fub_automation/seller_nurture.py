@@ -30,6 +30,8 @@ import textwrap
 from datetime import timezone
 from typing import List, Optional, Tuple
 
+from .names import greeting_first_name
+
 LOGGER = logging.getLogger("fub_automation.seller_nurture")
 
 # ── Seller Sequence Schedule ──────────────────────────────────────────────────
@@ -181,7 +183,7 @@ def generate_seller_email(
     Returns:
         dict with keys: subject, email_body
     """
-    first_name = person.get("firstName") or "there"
+    first_name = greeting_first_name(person)
     today_str = dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
     # Location context for personalization

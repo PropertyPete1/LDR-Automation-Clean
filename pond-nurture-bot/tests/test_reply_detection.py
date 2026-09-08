@@ -1132,3 +1132,341 @@ def test_a_backfilled_row_does_not_suppress_the_live_note(
 
     assert notes == ["Automation: unverified inbound email — review"], \
         "the backfill's note-less row must not eat the live path's one note"
+
+
+# ── the mailbox bridge: the words FUB hides (2026-09-08, Ka Cp) ─────────────
+#
+# A pond nurture email went to FUB person 1931 at 16:50Z; her reply landed in
+# the sending mailbox and FUB synced it with '[content hidden]' on the subject
+# and body. The 17:50Z scan classified it human, tagged her "Replied - Paused"
+# and paged Peter as a HOT LEAD. The reply said Unsubscribe. These tests pin
+# the bridge that reads the words out of the mailbox and the ledger that
+# records the opt-out, end to end through the same scans.
+
+class StubMailbox:
+    """Stands in for mailbox.MailboxReplyReader: canned words per address."""
+
+    def __init__(self, words_by_address=None, *, outcome_when_missing="not_found", enabled=True):
+        self.words = {k.lower(): v for k, v in (words_by_address or {}).items()}
+        self.enabled = enabled
+        self.disabled_reason = None if enabled else "stubbed off"
+        self.last_outcome = "idle"
+        self.last_error = None
+        self.stats = {"lookups": 0, "revealed": 0, "not_found": 0, "errors": 0}
+        self.calls = []
+        self.outcome_when_missing = outcome_when_missing
+
+    def describe(self):
+        return "stub mailbox"
+
+    def close(self):
+        self.closed = True
+
+    def find_reply(self, addresses, around, tolerance=None):
+        from fub_automation.mailbox import FetchedReply
+        self.calls.append((list(addresses), around))
+        self.stats["lookups"] += 1
+        for address in addresses:
+            if address.lower() in self.words:
+                self.stats["revealed"] += 1
+                self.last_outcome, self.last_error = "revealed", None
+                return FetchedReply(subject="Re: Your next home in Austin",
+                                    text=self.words[address.lower()], date=around,
+                                    from_address=address.lower(), message_id="<x@example.com>",
+                                    folder="[Gmail]/All Mail")
+        self.last_outcome = self.outcome_when_missing
+        if self.outcome_when_missing == "not_found":
+            self.stats["not_found"] += 1
+            self.last_error = "no message from the lead within 12:00:00"
+        else:
+            self.stats["errors"] += 1
+            self.last_error = "OSError: connection timed out"
+        return None
+
+
+KA = {"id": 42, "firstName": "Ka", "lastName": "Cp", "tags": [], "stage": "Lead",
+      "assignedPondId": 2, "emails": [{"value": "ka@example.com", "isPrimary": 1}]}
+HIDDEN_SNIPPET = "(email content hidden by FUB settings — open the thread in FUB)"
+
+
+def _ka_thread(sent_at, reply_at):
+    """Her record's real shape: the synced copy of our send and her reply,
+    one thread, both '[CONTENT HIDDEN]'."""
+    return [
+        _real_outbound_email(sent_at, email_id=61001, person_id=42, thread_id=48666),
+        _real_inbound_email(reply_at, email_id=61002, person_id=42, thread_id=48666),
+    ]
+
+
+def test_a_hidden_unsubscribe_is_trashed_once_the_mailbox_supplies_the_words(m, scan, tmp_db, fake_http, monkeypatch):
+    """The Ka Cp case, fixed: same payload as the pinned limitation, plus a
+    mailbox that holds her reply. No alert, no pause — trash, tags, note, the
+    disqualification row, and the ledger stamped with HER timestamp."""
+    updates, notes = [], []
+    monkeypatch.setattr(scan.fub, "update_person", lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    monkeypatch.setattr(scan.fub, "add_note", lambda pid, subject, body: notes.append((pid, subject, body)) or {})
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(emails=_ka_thread(sent_at, reply_at), texts=[], person=dict(KA))
+    scan.mailbox = StubMailbox({"ka@example.com": "Unsubscribe"})
+
+    scan.scan_reply_detection()
+
+    assert _alerts(tmp_db) == [], "an unsubscribe must never page anyone as a hot lead"
+    disq = _disqualifications(tmp_db)
+    assert len(disq) == 1 and disq[0]["status"] == "opt_out_trashed"
+    details = json.loads(disq[0]["details"])
+    assert details["content_source"] == "mailbox"
+    assert details["snippet"] == "Unsubscribe"
+    assert details["reply_at"] == reply_at.isoformat()
+    assert "Trash" in [p.get("stage") for _, p in updates]
+    assert any("unsubscribed" in (p.get("tags") or []) for _, p in updates)
+    assert notes and "Opted Out" in notes[0][1]
+    # The ledger: her moment, not ours — and it now excludes her everywhere.
+    assert tmp_db.opted_out_at(42) == reply_at.isoformat()
+    assert scan.is_excluded({"id": 42, "stage": "Lead", "tags": []}) is True
+    # The mailbox was asked for exactly her address at exactly FUB's timestamp.
+    assert scan.mailbox.calls == [(["ka@example.com"], reply_at)]
+
+
+def test_a_hidden_human_reply_alerts_with_the_real_words(m, scan, tmp_db, fake_http):
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(emails=_ka_thread(sent_at, reply_at), texts=[], person=dict(KA))
+    scan.mailbox = StubMailbox({"ka@example.com": "Yes! Still looking in Austin. Can we talk Thursday?"})
+
+    scan.scan_reply_detection()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1
+    details = json.loads(alerts[0]["details"])
+    assert details["reply_snippet"].startswith("Yes! Still looking in Austin")
+    assert "hidden" not in details["reply_snippet"].lower()
+    assert _disqualifications(tmp_db) == []
+
+
+def test_without_a_readable_mailbox_the_limitation_stands_and_the_note_says_so(m, scan, tmp_db, fake_http, monkeypatch):
+    """Ka's payload with the mailbox unable to help: today's behaviour —
+    human, alert, honest placeholder — plus a note and alert that tell the
+    reviewer NOT to lift the pause until the reply has been read."""
+    notes, mails = [], []
+    monkeypatch.setattr(scan.fub, "add_note", lambda pid, subject, body: notes.append(body) or {})
+    monkeypatch.setattr(scan.email, "send", lambda to, subject, body, **kw: mails.append((subject, body, kw.get("html_body", ""))))
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(emails=_ka_thread(sent_at, reply_at), texts=[], person=dict(KA))
+    scan.mailbox = StubMailbox({}, outcome_when_missing="error")
+
+    scan.scan_reply_detection()
+
+    alerts = _alerts(tmp_db)
+    assert len(alerts) == 1 and "hidden" in json.loads(alerts[0]["details"])["reply_snippet"].lower()
+    assert _disqualifications(tmp_db) == []
+    assert notes and "do NOT remove the pause tag" in notes[0]
+    assert "connection timed out" in notes[0]
+    assert mails and "do NOT remove the pause tag" in mails[0][1]
+    assert "do NOT remove the pause tag" in mails[0][2]
+
+
+def test_a_reader_switched_off_says_why_in_the_note(m, scan, tmp_db, fake_http, monkeypatch):
+    notes = []
+    monkeypatch.setattr(scan.fub, "add_note", lambda pid, subject, body: notes.append(body) or {})
+    sent_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    fake_http.responses = _fub_responses(emails=_ka_thread(sent_at, reply_at), texts=[], person=dict(KA))
+    assert not scan.mailbox.enabled, "the test env has no SMTP credentials, so the real reader is off"
+
+    scan.scan_reply_detection()
+
+    assert notes and "credentials" in notes[0], "the note must name the reason the words were unreadable"
+
+
+def test_a_revealed_reply_that_quotes_our_footer_is_human_not_an_opt_out(m):
+    """Every reply quotes our email, whose footer says 'reply UNSUBSCRIBE'.
+    Only the lead's own words may be scanned — on a mailbox-revealed body
+    AND on a FUB-shared body."""
+    send = dt.datetime(2026, 9, 8, 16, 50, tzinfo=dt.timezone.utc)
+    reply = send + dt.timedelta(minutes=30)
+    quoted = ("Yes, still looking!\n\nOn Tue, Sep 8, 2026 at 11:50 AM Lifestyle Design Realty "
+              "<team@lifestyledesignrealty.com> wrote:\n> Hey there,\n> ...\n"
+              "> If you no longer want market updates from us, reply UNSUBSCRIBE and we will remove you.")
+    kw = m.RuleEngine._OPT_OUT_KEYWORDS
+    assert m.classify_reply({"subject": "Re: hi", "body": quoted}, send, reply, kw) == "human"
+    assert m.classify_reply({"subject": "Re: hi", "body": quoted, "content_source": "mailbox"},
+                            send, reply, kw) == "human"
+    # And the same quote under a real unsubscribe still trashes.
+    assert m.classify_reply({"subject": "Re: hi", "body": "Unsubscribe\n\n" + quoted[len("Yes, still looking!"):]},
+                            send, reply, kw) == "opt_out"
+
+
+@pytest.mark.parametrize("body, expected", [
+    ("STOP", "opt_out"),
+    ("Stop.", "opt_out"),
+    ("Please stop", "opt_out"),
+    ("stop emailing me", "opt_out"),
+    ("Stop sending these please!", "opt_out"),
+    ("Unsubscribe", "opt_out"),
+    ("unsubscribe me please", "opt_out"),
+    ("Stop by the office Tuesday?", "human"),
+    ("Can't stop thinking about that house on Elm", "human"),
+    ("Yes, still looking!", "human"),
+])
+def test_stop_counts_for_email_when_it_is_the_whole_message(m, body, expected):
+    send = dt.datetime(2026, 9, 8, 16, 50, tzinfo=dt.timezone.utc)
+    reply = send + dt.timedelta(hours=1)
+    assert m.classify_reply({"subject": "Re: hi", "body": body}, send, reply,
+                            m.RuleEngine._OPT_OUT_KEYWORDS) == expected
+
+
+def test_the_recheck_trashes_a_paused_hidden_reply_that_said_unsubscribe(m, scan, tmp_db, fake_http, monkeypatch):
+    """Ka Cp as she stands tonight: paused, alerted, snippet hidden. Once the
+    mailbox can supply the words the recheck applies the live opt-out path,
+    and she leaves NEEDS A REPLY."""
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person", lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=3)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    tmp_db.log("reply_detected", "alert_sent", 42, {
+        "reply_channel": "email", "reply_snippet": HIDDEN_SNIPPET,
+        "reply_at": reply_at.isoformat(), "contact_name": "Ka Cp"})
+    paused = dict(KA, tags=["Replied - Paused"])
+    fake_http.responses = [(200, {"people": [paused]}), (200, {"emails": _ka_thread(sent_at, reply_at)})]
+    scan.mailbox = StubMailbox({"ka@example.com": "Unsubscribe"})
+
+    assert scan._recheck_hidden_replies() == 1
+
+    disq = _disqualifications(tmp_db)
+    assert len(disq) == 1 and disq[0]["status"] == "opt_out_trashed"
+    assert json.loads(disq[0]["details"])["reply_at"] == reply_at.isoformat()
+    rechecks = tmp_db.recent_audit_rows(["reply_content_recheck"], now - dt.timedelta(days=1))
+    assert [r["status"] for r in rechecks] == ["opt_out"]
+    assert "Trash" in [p.get("stage") for _, p in updates]
+    assert tmp_db.opted_out_at(42) == reply_at.isoformat()
+    # She is no longer owed an answer: the summary list drops her without
+    # asking FUB (the disqualification row closes the loop).
+    assert scan._collect_needs_reply() == []
+    # And the next scan does not read her again.
+    fake_http.responses = [(500, {})]
+    assert scan._recheck_hidden_replies() == 0
+
+
+def test_the_recheck_records_a_human_verdict_and_the_summary_shows_the_words(m, scan, tmp_db, fake_http):
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=3)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    tmp_db.log("reply_detected", "alert_sent", 42, {
+        "reply_channel": "email", "reply_snippet": HIDDEN_SNIPPET,
+        "reply_at": reply_at.isoformat(), "contact_name": "Ka Cp"})
+    paused = dict(KA, tags=["Replied - Paused"])
+    thread = _ka_thread(sent_at, reply_at)
+    fake_http.responses = [(200, {"people": [paused]}), (200, {"emails": thread})]
+    scan.mailbox = StubMailbox({"ka@example.com": "Yes, still looking. Fall works."})
+
+    assert scan._recheck_hidden_replies() == 1
+
+    assert _disqualifications(tmp_db) == []
+    rechecks = tmp_db.recent_audit_rows(["reply_content_recheck"], now - dt.timedelta(days=1))
+    assert [r["status"] for r in rechecks] == ["human"]
+    assert json.loads(rechecks[0]["details"])["reply_snippet"] == "Yes, still looking. Fall works."
+    # NEEDS A REPLY still lists her — now with her words, not the placeholder.
+    fake_http.responses = [(200, {"emails": thread}), (200, {"textMessages": []})]
+    needs = scan._collect_needs_reply()
+    assert [n["person_id"] for n in needs] == [42]
+    assert needs[0]["snippet"] == "Yes, still looking. Fall works."
+
+
+def test_the_recheck_leaves_no_row_on_a_mailbox_error_so_it_retries(m, scan, tmp_db, fake_http):
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(hours=3)
+    reply_at = sent_at + dt.timedelta(minutes=49)
+    _seed_send(tmp_db, 42, sent_at)
+    tmp_db.log("reply_detected", "alert_sent", 42, {
+        "reply_channel": "email", "reply_snippet": HIDDEN_SNIPPET,
+        "reply_at": reply_at.isoformat(), "contact_name": "Ka Cp"})
+    paused = dict(KA, tags=["Replied - Paused"])
+    fake_http.responses = [(200, {"people": [paused]}), (200, {"emails": _ka_thread(sent_at, reply_at)})]
+    scan.mailbox = StubMailbox({}, outcome_when_missing="error")
+
+    assert scan._recheck_hidden_replies() == 0
+    assert tmp_db.recent_audit_rows(["reply_content_recheck"], now - dt.timedelta(days=1)) == []
+
+    # A definite miss IS recorded, so it is not re-read every ten minutes.
+    fake_http.responses = [(200, {"people": [paused]}), (200, {"emails": _ka_thread(sent_at, reply_at)})]
+    scan.mailbox = StubMailbox({}, outcome_when_missing="not_found")
+    assert scan._recheck_hidden_replies() == 0
+    rows = tmp_db.recent_audit_rows(["reply_content_recheck"], now - dt.timedelta(days=1))
+    assert [r["status"] for r in rows] == ["not_in_mailbox"]
+
+
+def test_the_recheck_skips_replies_a_human_already_trashed(m, scan, tmp_db, fake_http):
+    now = dt.datetime.now(dt.timezone.utc)
+    reply_at = now - dt.timedelta(hours=2)
+    tmp_db.log("reply_detected", "alert_sent", 42, {
+        "reply_channel": "email", "reply_snippet": HIDDEN_SNIPPET,
+        "reply_at": reply_at.isoformat(), "contact_name": "Ka Cp"})
+    fake_http.responses = [(200, {"people": [dict(KA, stage="Trash", tags=["unsubscribed"])]})]
+    scan.mailbox = StubMailbox({"ka@example.com": "Unsubscribe"})
+
+    assert scan._recheck_hidden_replies() == 0
+    rows = tmp_db.recent_audit_rows(["reply_content_recheck"], now - dt.timedelta(days=1))
+    assert [r["status"] for r in rows] == ["already_closed"]
+    assert scan.mailbox.calls == []
+
+
+def test_the_wide_sweep_rotation_reveals_hidden_inbound_before_classifying(m, scan, tmp_db, fake_http, monkeypatch):
+    """The rotation path holds no person record until inbound is found; a
+    hidden inbound must fetch it (for the addresses) and then read the words."""
+    updates = []
+    monkeypatch.setattr(scan.fub, "update_person", lambda pid, payload, **kw: updates.append((pid, payload)) or {})
+    now = dt.datetime.now(dt.timezone.utc)
+    sent_at = now - dt.timedelta(days=12)
+    reply_at = now - dt.timedelta(days=1)
+    fake_http.responses = [
+        (200, {"emails": _ka_thread(sent_at, reply_at)}),
+        (200, {"textMessages": []}),
+        (200, {"people": [dict(KA)]}),
+    ]
+    scan.mailbox = StubMailbox({"ka@example.com": "Please stop emailing me"})
+
+    outcome = scan._sweep_classify_and_act(42, sent_at, {}, person=None, bot_sends=[sent_at])
+
+    assert outcome == "opt_out"
+    assert "Trash" in [p.get("stage") for _, p in updates]
+    assert tmp_db.opted_out_at(42) == reply_at.isoformat()
+
+
+def test_the_ai_intent_classifier_now_sees_sent_by_person_emails(m, engine, monkeypatch):
+    """classify_lead_intent tested isIncoming, which this account never sends
+    on emails — so it never fed the model an inbound email. Hidden content is
+    skipped; revealed content is included; quoted history is stripped."""
+    prompts = []
+
+    def fake_llm(messages, **kw):
+        prompts.append(messages[0]["content"])
+        return json.dumps({"intent": "opt_out", "confidence": 95, "reason": "asked to stop",
+                           "trigger_snippet": "Unsubscribe", "source": "Inbound Email"})
+
+    monkeypatch.setattr(engine.content, "_llm_call", fake_llm)
+    now = dt.datetime.now(dt.timezone.utc)
+    hidden = _real_inbound_email(now)
+    revealed = dict(_real_inbound_email(now), subject="Re: hi",
+                    body="Unsubscribe\n\nOn Tue wrote:\n> reply UNSUBSCRIBE", bodyExcerpt="Unsubscribe",
+                    content_source="mailbox")
+    result = engine.content.classify_lead_intent(dict(KA), [], [hidden, revealed], [])
+    assert result["intent"] == "opt_out"
+    assert len(prompts) == 1
+    assert "[Inbound Email] Unsubscribe" in prompts[0]
+    assert "CONTENT HIDDEN" not in prompts[0]
+    assert "reply UNSUBSCRIBE" not in prompts[0], "quoted history must not reach the model"
+
+    # Hidden-only history: no inbound words, no model call.
+    prompts.clear()
+    result = engine.content.classify_lead_intent(dict(KA), [], [hidden], [])
+    assert result["intent"] == "none" and prompts == []
