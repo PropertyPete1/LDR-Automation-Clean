@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-09-08T17:51:18Z",
+    "type": "needs_reply",
+    "contact_name": "Ka Cp",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-09-08T16:56:56Z",
     "type": "sent",
     "contact_name": "Nicole Wiggins",
@@ -592,11 +598,5 @@
     "type": "sent",
     "contact_name": "Edri!!!!",
     "detail": "pond nurture email — Austin"
-  },
-  {
-    "ts": "2026-09-08T16:33:24Z",
-    "type": "sent",
-    "contact_name": "Austin Stout",
-    "detail": "pond nurture email — San Antonio"
   }
 ]
