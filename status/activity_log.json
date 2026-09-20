@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-09-20T18:55:56Z",
+    "type": "needs_reply",
+    "contact_name": "Jan Wheeler",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-09-20T16:12:39Z",
     "type": "sent",
     "contact_name": "Zia Acevedo",
@@ -592,11 +598,5 @@
     "type": "sent",
     "contact_name": "Randee Witt",
     "detail": "pond nurture email — Austin"
-  },
-  {
-    "ts": "2026-09-20T15:52:32Z",
-    "type": "sent",
-    "contact_name": "Cinthia Vanessa",
-    "detail": "pond nurture email — San Antonio"
   }
 ]
