@@ -55,10 +55,11 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      - name: Investigate
+      # DIAGNOSTIC BRANCH ONLY (diag/recruiting-sources-probe) — never merged.
+      # Same read-only job (state DB pulled, never pushed; token contents: read),
+      # running the recruiting-source probe instead. Counts only: the repo is public.
+      - name: Probe recruiting sources
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 investigate_assignments.py \
-            --hours "${{ inputs.hours }}" \
-            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
+          python3 probe_recruiting_sources.py
