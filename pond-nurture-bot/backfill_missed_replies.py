@@ -64,7 +64,8 @@ UTC = dt.timezone.utc
 #: The audit actions/statuses that mean a real email left the building —
 #: matching scan_reply_detection's watch-list build in main.py.
 SEND_ACTIONS = ("pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
-                "long_term_nurture_drip", "instant_welcome_email", "seller_nurture")
+                "long_term_nurture_drip", "instant_welcome_email", "seller_nurture",
+                "recruiting_email")
 SEND_STATUSES = ("sent", "email_sent", "completed")
 
 

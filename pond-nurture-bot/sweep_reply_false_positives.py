@@ -78,7 +78,8 @@ UTC = dt.timezone.utc
 #: Same lists the scanners watch — a lineage anchor can be weeks older than
 #: the alert it vindicates, so the send lookback is wider than --days.
 SEND_ACTIONS = ("pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
-                "long_term_nurture_drip", "instant_welcome_email", "seller_nurture")
+                "long_term_nurture_drip", "instant_welcome_email", "seller_nurture",
+                "recruiting_email")
 SEND_STATUSES = ("sent", "email_sent", "completed")
 SEND_LOOKBACK_DAYS = 60
 

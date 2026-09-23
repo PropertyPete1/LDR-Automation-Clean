@@ -6,6 +6,10 @@ company_name: "Lifestyle Design Realty"
 company_address: "1212 Chicon St, Suite 101, Austin, TX 78702"
 owner_email: "peter@lifestyledesignrealty.com"
 team_email: "team@lifestyledesignrealty.com"  # Lead-facing From address (verified alias on peter@ GWS)
+# Peter's cell — the number the seller signature shows and pond SMS sends from.
+# The recruiting track closes every email with "reply here or text me" and this
+# number; it refuses to send without one.
+owner_phone: "520.373.7839"
 default_agent_reminder_cc: "peter@lifestyledesignrealty.com"
 # Agent reminder digest emails: DISABLED — replaced by Lifestyle Bot clock-in/clock-out emails.
 agent_reminder_emails_enabled: true
@@ -196,3 +200,24 @@ untouched_assignment_alert_enabled: true
 untouched_assignment_hours: 24
 untouched_assignment_realert_hours: 72
 untouched_assignment_max_alerts_per_run: 10
+
+# ── Recruiting track (2026-09-23) ─────────────────────────────────────────────
+# FUB contacts from these sources are licensed Texas agents answering recruiting
+# posts — NEVER leads. Matched like excluded_sources: case-insensitive, the
+# configured words CONTAINED in the FUB source ("Agent Scouting - LinkedIn"
+# counts). Every lead path refuses them (RuleEngine.is_excluded): no pond, seller,
+# drip, congrats or welcome email, no speed-to-lead timer, alert or reassignment,
+# no untouched-assignment or stale-agent sweep. Their only email is the recruiting
+# track below. Keep in step with lifestyle-brain's business.json recruitingSources.
+recruiting_sources:
+  - "New Agent Inquiry"
+  - "Agent Scouting"
+recruiting_track_enabled: true
+# One email every 3 weeks per recruit, from Peter (owner_email), plain text.
+recruiting_cadence_days: 21
+# The first send goes to recruits ADDED in the last N days who have never had a
+# recruiting email; once enrolled they stay on the cadence whatever their age.
+recruiting_first_send_window_days: 30
+# Daily send cap: one step per week from the first recruiting send, holding at
+# the last value. Cold outreach from Peter's own mailbox — ramp, never blast.
+recruiting_daily_cap_ramp: [50, 100, 150]

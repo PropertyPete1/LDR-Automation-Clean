@@ -195,6 +195,7 @@ def run_automation() -> int:
     engine.scan_stale_agent_no_note_reassignment()
     engine.scan_stale_leads()
     engine.scan_seller_nurture()  # Seller nurture track: 5-email sequence for "Seller Lead" tagged pond leads
+    engine.scan_recruiting_track()  # Recruiting track: one email every 3 weeks to recruiting-source agents (never leads)
     engine.scan_agent_followup()
     engine.scan_untouched_assignments()  # Assignment safety net: 24h+ untouched agent assignments (task + note + summary section)
     # Backup sweep. Primary discovery is the 5-minute speed-to-lead job

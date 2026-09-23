@@ -163,6 +163,8 @@ _OWN_FOOTER_MARKERS = (
     "information about brokerage services",
     "trec consumer protection notice",
     "if you no longer want market updates",
+    # The recruiting track's footer (recruiting.py FOOTER_UNSUBSCRIBE).
+    "rather not hear about joining us",
 )
 
 
