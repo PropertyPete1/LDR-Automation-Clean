@@ -62,4 +62,5 @@ jobs:
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
+          python3 probe_default_fields.py
           python3 probe_recruiting_dryrun.py
