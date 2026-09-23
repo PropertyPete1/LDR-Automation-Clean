@@ -55,10 +55,11 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      - name: Investigate
+      # DIAGNOSTIC BRANCH ONLY (diag/recruiting-track-dryrun) — never merged.
+      # Same read-only job (state DB pulled, never pushed; token contents: read),
+      # running the recruiting track in DRY_RUN against live FUB. Counts only.
+      - name: Recruiting track dry run
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 investigate_assignments.py \
-            --hours "${{ inputs.hours }}" \
-            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
+          python3 probe_recruiting_dryrun.py
