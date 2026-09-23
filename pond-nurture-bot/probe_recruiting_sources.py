@@ -88,6 +88,15 @@ def main() -> int:
         tags = collections.Counter(t.lower() for p in group for t in (p.get("tags") or []) if isinstance(t, str))
         _p(f"  tagged 'agent': {tags.get('agent', 0)} | 'realtor': {tags.get('realtor', 0)} | "
            f"'replied - paused': {tags.get('replied - paused', 0)} | distinct tags: {len(tags)}")
+        # Staff user ids and names are not lead data (the roster is in this repo already).
+        users = engine.user_cache_by_id()
+        owners = collections.Counter(str(p.get("assignedUserId") or "-") for p in group)
+        _p("  assigned to (FUB user id: name × count): " + ", ".join(
+            f"{uid}:{(users.get(int(uid)) or {}).get('name', '?') if uid != '-' else 'nobody'}×{n}"
+            for uid, n in owners.most_common(6)))
+        _p("  tags (system labels): " + ", ".join(f"{t!r}×{n}" for t, n in tags.most_common(8)))
+        days = collections.Counter(c.date().isoformat() for c in created if c)
+        _p("  created per day: " + ", ".join(f"{d}×{n}" for d, n in sorted(days.items())[-10:]))
         with_email = sum(1 for p in group if p.get("emails"))
         _p(f"  with an email address: {with_email}")
         # The pond-nurture gates, evaluated with the real predicates.
@@ -136,6 +145,23 @@ def main() -> int:
                     _p(f"  {table}: {n} recruiting-source rows")
             except sqlite3.Error as exc:
                 _p(f"  {table}: unreadable ({exc})")
+        _p("\n  speed-to-lead actions on recruiting-source contacts, per day (UTC):")
+        for action, status in (("new_lead_timer", "started_polling"), ("new_lead_warning", "created"),
+                               ("new_lead_warning", "created_at_reassignment"), ("new_lead_reassigned", "completed"),
+                               ("speed_to_lead_alert", "sent"), ("untouched_assignment_alert", "created")):
+            per_day = con.execute(
+                """SELECT substr(a.created_at, 1, 10), COUNT(*) FROM audit_log a
+                   JOIN recruits r ON r.person_id = a.person_id
+                   WHERE a.action = ? AND a.status = ? GROUP BY 1 ORDER BY 1""",
+                (action, status),
+            ).fetchall()
+            _p(f"    {action}/{status}: " + (", ".join(f"{d}×{n}" for d, n in per_day[-10:]) or "none"))
+        reassigned_twice = con.execute(
+            """SELECT COUNT(*) FROM (SELECT a.person_id FROM audit_log a JOIN recruits r ON r.person_id = a.person_id
+               WHERE a.action = 'new_lead_reassigned' AND a.status = 'completed'
+               GROUP BY a.person_id HAVING COUNT(*) > 1)"""
+        ).fetchone()[0]
+        _p(f"    recruiting-source contacts reassigned to Peter MORE than once: {reassigned_twice}")
         # Of all pond_nurture sends in the last 30 days, how many went to recruits?
         total30, recruit30 = con.execute(
             f"""SELECT COUNT(*), SUM(CASE WHEN r.person_id IS NULL THEN 0 ELSE 1 END)
