@@ -28,7 +28,7 @@ import smtplib
 import sqlite3
 import textwrap
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -60,6 +60,14 @@ from .seller_nurture import (
 )
 from .mailbox import MailboxReplyReader, strip_quoted_reply
 from .names import greeting_first_name
+from .recruiting import (
+    RECRUITING_AUDIT_ACTION,
+    RECRUITING_TRACK,
+    angle_for,
+    compose_recruiting_email,
+    is_due as recruiting_is_due,
+    recruiting_footer,
+)
 
 LOGGER = logging.getLogger("fub_automation")
 logging.basicConfig(
@@ -192,6 +200,17 @@ class Rules:
     untouched_assignment_hours: int
     untouched_assignment_realert_hours: int
     untouched_assignment_max_alerts_per_run: int
+    # Recruiting track (2026-09-23). Contacts from a recruiting source are
+    # licensed agents answering recruiting posts — never leads. Defaulted so
+    # a rules file without the section loads with the track off and no source
+    # treated as recruiting.
+    recruiting_sources: List[str] = field(default_factory=list)  # lowercased
+    recruiting_track_enabled: bool = False
+    recruiting_cadence_days: int = 21
+    recruiting_first_send_window_days: int = 30
+    recruiting_daily_cap_ramp: List[int] = field(default_factory=lambda: [50, 100, 150])
+    # Peter's cell for the recruiting emails' "reply here or text me" line.
+    owner_phone: str = ""
 
     @classmethod
     def load(cls, path: str) -> "Rules":
@@ -222,7 +241,7 @@ class Rules:
             except Exception as e:
                 LOGGER.warning("Failed to load excluded_sources from suppression_tags.json: %s", e)
         if not shared_excluded_sources:
-            shared_excluded_sources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"]
+            shared_excluded_sources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"]
         return cls(
             stale_stages=data.get("stale_stages", ["Stale", "Cold", "Long Term Nurture"]),
             stale_tags=data.get("stale_tags", ["stale", "cold", "long-term"]),
@@ -298,6 +317,14 @@ class Rules:
             untouched_assignment_hours=int(data.get("untouched_assignment_hours", 24)),
             untouched_assignment_realert_hours=int(data.get("untouched_assignment_realert_hours", 72)),
             untouched_assignment_max_alerts_per_run=int(data.get("untouched_assignment_max_alerts_per_run", 10)),
+            recruiting_sources=[
+                str(name).strip().lower() for name in (data.get("recruiting_sources") or []) if str(name).strip()
+            ],
+            recruiting_track_enabled=bool(data.get("recruiting_track_enabled", False)),
+            recruiting_cadence_days=int(data.get("recruiting_cadence_days", 21)),
+            recruiting_first_send_window_days=int(data.get("recruiting_first_send_window_days", 30)),
+            recruiting_daily_cap_ramp=[int(c) for c in data.get("recruiting_daily_cap_ramp", [50, 100, 150])] or [50],
+            owner_phone=str(data.get("owner_phone") or "").strip(),
         )
 
 
@@ -425,6 +452,33 @@ class AuditDB:
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS seller_send_claims (
+                    person_id    INTEGER NOT NULL,
+                    email_number INTEGER NOT NULL,
+                    claimed_at   TEXT NOT NULL,
+                    PRIMARY KEY (person_id, email_number)
+                );
+                """
+            )
+            # Recruiting track (2026-09-23): one row per recruit on the
+            # three-week cadence — enrolled when first seen inside the first-send
+            # window, bumped only after a send leaves. The claims ledger is the
+            # seller track's crash-safe pattern: claim (person, email number)
+            # BEFORE the send, release only if the send raises.
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recruiting_drip (
+                    person_id    INTEGER PRIMARY KEY,
+                    enrolled_at  TEXT NOT NULL,
+                    last_sent_at TEXT,
+                    emails_sent  INTEGER NOT NULL DEFAULT 0,
+                    last_angle   TEXT,
+                    source       TEXT
+                );
+                """
+            )
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recruiting_send_claims (
                     person_id    INTEGER NOT NULL,
                     email_number INTEGER NOT NULL,
                     claimed_at   TEXT NOT NULL,
@@ -702,6 +756,78 @@ class AuditDB:
                 (SELLER_NURTURE_AUDIT_ACTION, since_iso),
             ).fetchone()
         return int(row[0] or 0)
+
+    # ── Recruiting track ─────────────────────────────────────────────────────
+
+    def recruiting_enrollments(self) -> Dict[int, dict]:
+        """Every recruit on the recruiting track, by person_id."""
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            rows = con.execute("SELECT * FROM recruiting_drip").fetchall()
+        return {int(row["person_id"]): dict(row) for row in rows}
+
+    def enroll_recruit(self, person_id: int, source: str, when_iso: str) -> bool:
+        """Put a recruit on the track. False = already enrolled (never re-enrolled)."""
+        with self.connect() as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO recruiting_drip(person_id, enrolled_at, emails_sent, source) "
+                "VALUES (?, ?, 0, ?)",
+                (person_id, when_iso, source),
+            )
+            return cur.rowcount > 0
+
+    def record_recruiting_send(self, person_id: int, angle: str, when_iso: str) -> None:
+        """After a send left: one more email, its angle, and the cadence clock."""
+        with self.connect() as con:
+            con.execute(
+                "UPDATE recruiting_drip SET emails_sent = emails_sent + 1, last_sent_at = ?, "
+                "last_angle = ? WHERE person_id = ?",
+                (when_iso, angle, person_id),
+            )
+
+    def claim_recruiting_send(self, person_id: int, email_number: int) -> bool:
+        """Reserve (person_id, email_number) before sending. False = already claimed."""
+        with self.connect() as con:
+            cur = con.execute(
+                "INSERT OR IGNORE INTO recruiting_send_claims(person_id, email_number, claimed_at) "
+                "VALUES (?, ?, ?)",
+                (person_id, email_number, now_iso()),
+            )
+            return cur.rowcount > 0
+
+    def release_recruiting_send_claim(self, person_id: int, email_number: int) -> None:
+        """Undo a claim when the send raised — the email never left, so retry."""
+        with self.connect() as con:
+            con.execute(
+                "DELETE FROM recruiting_send_claims WHERE person_id=? AND email_number=?",
+                (person_id, email_number),
+            )
+
+    def count_recruiting_sends_since(self, since_iso: str) -> int:
+        """Recruiting emails sent (or dry-run sent) since `since_iso` — the daily cap's count."""
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE action=? "
+                "AND status IN ('sent','dry_run_sent') AND created_at >= ?",
+                (RECRUITING_AUDIT_ACTION, since_iso),
+            ).fetchone()
+        return int(row[0] or 0)
+
+    def first_recruiting_send_at(self) -> Optional[dt.datetime]:
+        """The first recruiting email that really left — the weekly ramp's anchor.
+
+        Dry runs never start the ramp: a week of rehearsals must not hand the
+        first live day the week-three cap.
+        """
+        with self.connect() as con:
+            row = con.execute(
+                "SELECT MIN(created_at) FROM audit_log WHERE action=? AND status='sent'",
+                (RECRUITING_AUDIT_ACTION,),
+            ).fetchone()
+        raw = row[0] if row else None
+        if not raw:
+            return None
+        return parse_fub_datetime(raw)
 
     def get_seller_first_send_at(self) -> Optional[dt.datetime]:
         """Return the timestamp of the first seller nurture email ever sent.
@@ -2323,6 +2449,13 @@ class RuleEngine:
         """Send a same-day congratulations email to a newly closed lead."""
         person_id = int(person["id"])
 
+        # These two gates predate is_excluded() and this path never asked it:
+        # a recruit is never a lead, and a recorded opt-out stops every track.
+        stop = self._never_a_lead_email(person)
+        if stop:
+            self.db.log("closed_congrats", "suppressed", person_id, {"reason": stop})
+            return "suppressed"
+
         # Already sent a congrats email to this person
         if self.db.get_congrats_sent(person_id) is not None:
             self.db.log("closed_congrats", "skipped", person_id, {"reason": "already sent"})
@@ -2631,6 +2764,13 @@ class RuleEngine:
     def process_long_term_nurture_candidate(self, person: dict) -> str:
         """Process a single long-term nurture lead for the 60-day AI drip."""
         person_id = int(person["id"])
+
+        # These two gates predate is_excluded() and this path never asked it:
+        # a recruit is never a lead, and a recorded opt-out stops every track.
+        stop = self._never_a_lead_email(person)
+        if stop:
+            self.db.log("long_term_nurture_drip", "suppressed", person_id, {"reason": stop})
+            return "suppressed"
 
         # Suppression checks — tag-based only (stage is intentionally 'Nurture', not excluded)
         hard_suppress_tags = {
@@ -5140,6 +5280,10 @@ class RuleEngine:
                 details = json.loads(row.get("details") or "{}")
             except Exception:  # noqa: BLE001
                 details = {}
+            # A recruit's reply is the recruiting track's, never a lead
+            # waiting on a human: PRIMARY surfaces it apart (track "recruiting").
+            if details.get("track") == RECRUITING_TRACK:
+                continue
             reply_at = parse_fub_datetime(details.get("reply_at")) \
                 or parse_fub_datetime(row.get("created_at"))
             if not reply_at:
@@ -5841,6 +5985,13 @@ class RuleEngine:
             person = self.fub.get_person(person_id)
             if not person:
                 self.db.cancel_timer(person_id)
+                continue
+            # A recruit is never a lead: a timer armed before recruiting
+            # sources were recognised (Agent Scouting, 2026-09-20: 1,771 of
+            # them) is cancelled here, never warned about or reassigned.
+            if self.recruiting_source(person):
+                self.db.cancel_timer(person_id)
+                self.db.log("new_lead_timer", "canceled_recruiting_source", person_id)
                 continue
             # created_at anchors the 30/60-minute BUDGET at detection time.
             # The TOUCH check anchors at touch_anchor_at — when the assignment
@@ -6591,7 +6742,15 @@ class RuleEngine:
             LOGGER.warning("Failed to send reassignment email to Peter for lead %s: %s", person_id, mail_exc)
 
     def is_excluded(self, person: dict) -> bool:
-        # 0. Our own opt-out ledger: a typed unsubscribe recorded by any
+        # 0. A RECRUIT is never on a lead path. Contacts from a recruiting
+        # source (rules.yaml recruiting_sources) are licensed agents answering
+        # recruiting posts: every lead path that asks this gate — pond, drips,
+        # welcome, speed-to-lead, the assignment and stale-agent sweeps —
+        # refuses them, and their only email is the recruiting track, which
+        # asks recruiting_suppressed() instead.
+        if self.recruiting_source(person):
+            return True
+        # 1. Our own opt-out ledger: a typed unsubscribe recorded by any
         # detection path. Local, so a tag cleared in FUB cannot re-enable sends.
         if self._is_opted_out(person):
             return True
@@ -6641,10 +6800,94 @@ class RuleEngine:
         source = str(person.get("source") or person.get("leadSource") or "").lower().strip()
         if not source:
             return None
-        for excluded in self.rules.excluded_sources:
+        # Recruiting sources are excluded from every lead path too — the
+        # source-gated ones included (getattr: a stub rules object may carry
+        # only excluded_sources).
+        recruiting = getattr(self.rules, "recruiting_sources", None) or []
+        for excluded in [*self.rules.excluded_sources, *recruiting]:
             if excluded and excluded in source:
                 return person.get("source") or person.get("leadSource") or source
         return None
+
+    def recruiting_source(self, person: dict) -> Optional[str]:
+        """The recruiting source a contact came from, or None — a recruit, not a lead.
+
+        The same rule as _is_excluded_source: case-insensitive, the configured
+        words CONTAINED in the FUB source, so "Agent Scouting - LinkedIn" is a
+        recruit. lifestyle-brain's business.json recruitingSources uses the
+        identical rule, so both systems sort one contact the same way.
+        """
+        names = getattr(self.rules, "recruiting_sources", None) or []
+        if not names or not isinstance(person, dict):
+            return None
+        source = str(person.get("source") or person.get("leadSource") or "").lower().strip()
+        if not source:
+            return None
+        for name in names:
+            if name and name in source:
+                return person.get("source") or person.get("leadSource") or source
+        return None
+
+    #: Tags that describe what a recruit IS — never a reason to skip one.
+    _RECRUIT_IDENTITY_TAGS = frozenset({"realtor", "agent"})
+
+    def recruiting_suppressed(self, person: dict) -> Optional[str]:
+        """Why the recruiting track must not email this recruit, or None.
+
+        is_excluded() refuses every recruit by design, so the track asks this
+        instead: the same suppressions a lead gets — the opt-out ledger FIRST
+        (an unsubscribe from either track stops both), FUB's unsubscribe
+        flags, trash/opt-out stages, every configured suppression tag, SOI
+        silence and the reply pause — except the "realtor"/"agent" tags,
+        which on a recruit are a description, not an objection.
+        """
+        if self._is_opted_out(person):
+            return "opted out (ledger)"
+        if (person.get("unsubscribed") or person.get("emailOptOut")
+                or person.get("unsubscribedEmail") or person.get("isUnsubscribed")):
+            return "unsubscribed in FUB"
+        for email_dict in person.get("emails") or []:
+            if isinstance(email_dict, dict) and (
+                    email_dict.get("unsubscribed") or email_dict.get("isUnsubscribed")
+                    or email_dict.get("optOut")):
+                return "email address unsubscribed in FUB"
+        stage = str(person.get("stage", "")).lower()
+        if stage in {s.lower() for s in self.rules.excluded_stages}:
+            return f"stage {person.get('stage')}"
+        suppress = {
+            "unsubscribe", "unsubscribed", "email opt out", "opt out", "do not email",
+            "do not contact", "dnc", "bounced", "bad-email", "do not nurture",
+            "manual review", "no ai email", "spam", "replied - paused",
+        } | {t.lower() for t in self.rules.excluded_tags}
+        suppress -= self._RECRUIT_IDENTITY_TAGS
+        if self.has_any_tag(person, suppress):
+            return "suppression tag"
+        soi = self._is_soi_silenced(person)
+        if soi:
+            return f"soi_silenced ({soi})"
+        return None
+
+    def _never_a_lead_email(self, person: dict) -> Optional[str]:
+        """The two refusals every lead email owes, for the paths that do not
+        ask is_excluded(): a recruit, and a recorded opt-out. None = neither."""
+        recruit = self.recruiting_source(person)
+        if recruit:
+            return f"recruiting source: {recruit}"
+        if self._is_opted_out(person):
+            return "opted out (ledger)"
+        return None
+
+    def _reply_scan_skips(self, person: dict) -> bool:
+        """Whether a reply scan passes this person by.
+
+        A lead: the lead gate, as ever. A recruit: the recruiting track's own
+        gate — is_excluded() refuses every recruit, and a recruit's answer to a
+        recruiting email must still be read, classified, and — on UNSUBSCRIBE
+        — trashed and written to the opt-out ledger.
+        """
+        if self.recruiting_source(person):
+            return self.recruiting_suppressed(person) is not None
+        return self.is_excluded(person)
 
     def _is_soi_silenced(self, person: dict) -> Optional[str]:
         """Check if a lead is SOI-silenced (total silence from ALL automation).
@@ -7067,6 +7310,201 @@ class RuleEngine:
 
         return False
 
+    # ── Recruiting track ─────────────────────────────────────────────────────
+
+    def scan_recruiting_track(self, now: Optional[dt.datetime] = None) -> Dict[str, int]:
+        """One recruiting email every rules.recruiting_cadence_days to every recruit.
+
+        Recruits are contacts from a recruiting source (rules.yaml
+        recruiting_sources) — licensed agents, never leads; this is the only
+        email they get. Two kinds of send, under one daily cap (the weekly
+        ramp in recruiting_daily_cap_ramp, counted per local day so a re-run
+        never earns a second cap):
+
+          1. DUE — enrolled recruits whose last recruiting email is a full
+             cadence (three weeks) old, oldest first. A recruit enrolled on an
+             earlier day whose first send the cap deferred is owed it here.
+          2. FIRST — recruits FUB created inside
+             recruiting_first_send_window_days who have never had a recruiting
+             email, oldest arrival first. They are enrolled the moment they are
+             seen, so a first send the cap delays is still owed after the
+             window closes.
+
+        Each send re-reads nothing it does not have to and asks
+        recruiting_suppressed() — the opt-out ledger shared with the buyer
+        track first — and a (person, email number) claim is written before the
+        SMTP handoff, released only if the send raises: a crash or a re-run
+        never sends one email twice.
+        """
+        counts = {"sent": 0, "suppressed": 0, "skipped": 0, "enrolled": 0,
+                  "due": 0, "first": 0, "capped": 0, "errors": 0}
+        if not self.rules.recruiting_track_enabled:
+            LOGGER.info("[recruiting] track disabled by rules.yaml (recruiting_track_enabled: false)")
+            return counts
+        if not self.rules.recruiting_sources:
+            LOGGER.info("[recruiting] no recruiting_sources configured — nothing to do")
+            return counts
+        if not self.rules.email_outreach_enabled:
+            LOGGER.info("[recruiting] email outreach is disabled by rules.yaml")
+            return counts
+        if not self.rules.owner_phone:
+            # Every recruiting email closes "reply here or text me" and the
+            # number; without one the track refuses rather than half-sends.
+            LOGGER.error("[recruiting] owner_phone is not configured in rules.yaml — nothing sent")
+            self.db.log(RECRUITING_AUDIT_ACTION, "refused", None, {"reason": "owner_phone missing"})
+            return counts
+
+        now = (now or dt.datetime.now(UTC)).astimezone(UTC)
+        try:
+            from zoneinfo import ZoneInfo
+            local_tz = ZoneInfo(self.rules.local_timezone)
+        except Exception:  # noqa: BLE001
+            from zoneinfo import ZoneInfo
+            local_tz = ZoneInfo("UTC")
+        day_start = now.astimezone(local_tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        cap = ramp_daily_cap(self.rules.recruiting_daily_cap_ramp, self.db.first_recruiting_send_at(), now)
+        sent_today = self.db.count_recruiting_sends_since(day_start.isoformat())
+        remaining = max(0, int(cap) - sent_today)
+        LOGGER.info("[recruiting] daily cap %s (ramp %s), %s already sent today, %s left",
+                    cap, self.rules.recruiting_daily_cap_ramp, sent_today, remaining)
+
+        enrolled = self.db.recruiting_enrollments()
+        cadence = int(self.rules.recruiting_cadence_days)
+        now_str = now.isoformat()
+
+        # FIRST: the window's recruits, enrolled on sight whatever the cap.
+        window_start = now - dt.timedelta(days=int(self.rules.recruiting_first_send_window_days))
+        try:
+            recent = self.fub.get_people(
+                createdAfter=window_start.strftime("%Y-%m-%d %H:%M:%S"), fields="allFields")
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("[recruiting] could not read recent people from FUB: %s", exc)
+            recent = []
+        first: Dict[int, dict] = {}
+        for person in recent:
+            source = self.recruiting_source(person)
+            if not source or not person.get("id"):
+                continue  # a buyer or seller lead is never on this track
+            pid = int(person["id"])
+            if pid not in enrolled:
+                if self.db.enroll_recruit(pid, str(source), now_str):
+                    counts["enrolled"] += 1
+                enrolled[pid] = {"person_id": pid, "enrolled_at": now_str, "emails_sent": 0,
+                                 "last_sent_at": None, "last_angle": None}
+            if int(enrolled[pid].get("emails_sent") or 0) == 0:
+                first[pid] = person
+
+        # DUE: a full cadence since the last send — plus enrolled recruits
+        # still owed a first send that today's window read did not return.
+        due: List[Tuple[dt.datetime, int]] = []
+        for pid, row in enrolled.items():
+            if pid in first:
+                continue
+            if int(row.get("emails_sent") or 0) == 0:
+                due.append((parse_fub_datetime(row.get("enrolled_at")) or now, pid))
+                continue
+            last = parse_fub_datetime(row.get("last_sent_at")) if row.get("last_sent_at") else None
+            if last is None:
+                last = now  # a clock that will not parse is "just sent", never "overdue"
+            if recruiting_is_due(last, cadence, now):
+                due.append((last, pid))
+        due.sort()
+        first_order = sorted(
+            first.items(),
+            key=lambda item: (parse_fub_datetime(item[1].get("created")) or now, item[0]))
+        counts["due"] = len(due)
+        counts["first"] = len(first_order)
+
+        queue: List[Tuple[int, Optional[dict]]] = [(pid, None) for _, pid in due]
+        queue += [(pid, person) for pid, person in first_order]
+        for pid, person in queue:
+            if remaining <= 0:
+                counts["capped"] += 1
+                continue
+            try:
+                if person is None:
+                    person = self.fub.get_person(pid)
+                    if not person:
+                        self.db.log(RECRUITING_AUDIT_ACTION, "skipped", pid, {"reason": "not found in FUB"})
+                        counts["skipped"] += 1
+                        continue
+                status = self._send_recruiting_email(person, enrolled.get(pid) or {}, now)
+            except Exception as exc:  # noqa: BLE001
+                counts["errors"] += 1
+                LOGGER.exception("[recruiting] send failed for person %s", pid)
+                self.db.log(RECRUITING_AUDIT_ACTION, "error", pid, {"error": str(exc)})
+                continue
+            if status in ("sent", "dry_run_sent"):
+                counts["sent"] += 1
+                remaining -= 1
+            elif status == "suppressed":
+                counts["suppressed"] += 1
+            else:
+                counts["skipped"] += 1
+
+        LOGGER.info("[recruiting] %s", json.dumps(counts, sort_keys=True))
+        return counts
+
+    def _send_recruiting_email(self, person: dict, row: dict, now: dt.datetime) -> str:
+        """One recruiting email to one recruit. 'sent', 'dry_run_sent', 'suppressed' or 'skipped'."""
+        pid = int(person["id"])
+        source = self.recruiting_source(person)
+        if not source:
+            # The source changed in FUB since enrollment: not a recruit any more.
+            self.db.log(RECRUITING_AUDIT_ACTION, "suppressed", pid, {"reason": "no longer a recruiting source"})
+            return "suppressed"
+        reason = self.recruiting_suppressed(person)
+        if reason:
+            self.db.log(RECRUITING_AUDIT_ACTION, "suppressed", pid, {"reason": reason})
+            return "suppressed"
+        to_email = ""
+        for entry in person.get("emails") or []:
+            value = (entry.get("value") or entry.get("email") or "").strip() if isinstance(entry, dict) else ""
+            if value:
+                to_email = value
+                break
+        if not to_email:
+            self.db.log(RECRUITING_AUDIT_ACTION, "suppressed", pid, {"reason": "no email address"})
+            return "suppressed"
+
+        emails_sent = int(row.get("emails_sent") or 0)
+        email_number = emails_sent + 1
+        angle = angle_for(pid, emails_sent)
+        if angle.key == row.get("last_angle"):
+            # Rotation cannot repeat by construction; a hand-edited row could.
+            angle = angle_for(pid, emails_sent + 1)
+        # greeting_first_name answers "there" for a blank or unusable name.
+        subject, body = compose_recruiting_email(
+            greeting_first_name(person), angle, email_number, self.rules.owner_phone)
+        full_body = body + "\n\n" + recruiting_footer(
+            self.rules.company_address, TREC_IABS_URL, TREC_CONSUMER_PROTECTION_URL)
+
+        if not self.db.claim_recruiting_send(pid, email_number):
+            self.db.log(RECRUITING_AUDIT_ACTION, "skipped", pid,
+                        {"reason": f"recruiting email {email_number} already claimed"})
+            return "skipped"
+        try:
+            self.email.send(
+                to_email,
+                subject,
+                full_body,
+                from_email=f"{self.rules.peter_name} <{self.rules.owner_email}>",
+                reply_to=self.rules.owner_email,
+            )
+        except Exception:
+            self.db.release_recruiting_send_claim(pid, email_number)
+            raise
+        status = "dry_run_sent" if self.settings.dry_run else "sent"
+        self.db.record_recruiting_send(pid, angle.key, now.isoformat())
+        self.db.log(RECRUITING_AUDIT_ACTION, status, pid, {
+            "email_number": email_number,
+            "angle": angle.key,
+            "subject": subject,
+            "contact_name": (f"{person.get('firstName', '')} {person.get('lastName', '')}").strip(),
+            "recruiting_source": source,
+        })
+        return status
+
     def scan_reply_detection(self) -> None:
         """Scans leads that received a bot email in the last 7 days for incoming replies.
 
@@ -7088,8 +7526,11 @@ class RuleEngine:
         LOGGER.info("Reply detection scan starting...")
         since = dt.datetime.now(UTC) - dt.timedelta(days=7)
         # Get all leads that received any bot email in the last 7 days
+        # recruiting_email: a recruit's answer to the recruiting track is read
+        # by the same scan — UNSUBSCRIBE lands in the shared opt-out ledger.
         email_actions = ["pond_nurture", "agent_bot_email", "closed_congrats", "closed_drip",
-                         "long_term_nurture_drip", "instant_welcome_email", "seller_nurture"]
+                         "long_term_nurture_drip", "instant_welcome_email", "seller_nurture",
+                         RECRUITING_AUDIT_ACTION]
         recent_sends = self.db.recent_audit_rows(email_actions, since)
         # Filter to only real sends — exclude dry_run_sent (no email was actually delivered)
         sent_rows = [r for r in recent_sends if r.get("status") in ("sent", "email_sent", "completed")]
@@ -7172,7 +7613,7 @@ class RuleEngine:
                 # Skip if already tagged
                 if self.has_any_tag(person, ["Replied - Paused"]):
                     continue
-                if self.is_excluded(person):
+                if self._reply_scan_skips(person):
                     continue
                 # Parse the send time to compare against incoming emails
                 send_dt = parse_fub_datetime(send_time_str)
@@ -7293,6 +7734,10 @@ class RuleEngine:
     ) -> None:
         """A real person answered: tag, note, hot-lead alert, audit row.
 
+        A recruit (recruiting_source) gets the pause, a recruiting note and a
+        reply_detected row tagged track "recruiting" — the reply queue PRIMARY
+        surfaces apart from leads — and no hot-lead alert email.
+
         Shared by the 10-minute scan and the daily wide sweep so the two can
         never drift apart on what a detected reply does.
         """
@@ -7310,15 +7755,46 @@ class RuleEngine:
                 "Trash and tag \"unsubscribed\" — do NOT remove the pause tag.\n"
             )
         reply_channel = "email" if reply_found.get("subject") is not None or "email" in str(reply_found.get("type", "")).lower() else "text"
-        LOGGER.info("Reply detected for lead %s via %s", person_id, reply_channel)
-        # 1. Tag the lead
+        # A RECRUIT's reply (an agent answering the recruiting track) is not a
+        # lead's: the pause and the note, then the reply queue tagged
+        # "recruiting" so PRIMARY surfaces it apart from lead replies — and no
+        # hot-lead alert email, which is lead machinery end to end.
+        recruit = self.recruiting_source(person)
+        LOGGER.info("Reply detected for %s %s via %s", "recruit" if recruit else "lead", person_id, reply_channel)
+        # 1. Tag the lead — the pause stops the recruiting track too.
         tags_to_add = ["Replied - Paused"]
         # If this is a seller lead, also add "Seller-Replied" tag for Monday digest
-        if self.has_any_tag(person, [SELLER_LEAD_TAG]):
+        if not recruit and self.has_any_tag(person, [SELLER_LEAD_TAG]):
             tags_to_add.append(SELLER_REPLIED_TAG)
             LOGGER.info("Reply detected for SELLER lead %s — adding '%s' tag", person_id, SELLER_REPLIED_TAG)
         self.fub.update_person(person_id, {"tags": tags_to_add}, merge_tags=True)
         # 2. Add FUB note
+        if recruit:
+            self.fub.add_note(
+                person_id,
+                "\U0001f91d Automation: Recruit Replied — Recruiting Emails Paused",
+                f"This agent ({recruit}) replied to a recruiting email from "
+                f"{self.rules.peter_name}. The recruiting track is paused until someone reviews.\n\n"
+                f"\U0001f4e8 Reply channel: {reply_channel}\n"
+                f"\U0001f4ac Reply snippet: \"{reply_snippet}\"\n\n"
+                f"\u2705 Action required: answer them personally — a recruit, not a buyer or "
+                f"seller lead. Remove the \"Replied - Paused\" tag to resume the recruiting "
+                f"emails, or move to Trash if they asked to stop."
+                + hidden_note,
+            )
+            lead_name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"Lead #{person_id}"
+            # 3. No alert email — the reply queue, tagged, is where it surfaces.
+            # 4. The reply queue row: track "recruiting" rides the audit details
+            # into telemetry's activity log (and keeps replies_needed leads-only).
+            self.db.log("reply_detected", "alert_sent", person_id, {
+                "reply_channel": reply_channel,
+                "reply_snippet": reply_snippet[:200],
+                "reply_at": reply_at.isoformat(),
+                "contact_name": lead_name,
+                "track": RECRUITING_TRACK,
+                "recruiting_source": recruit,
+            })
+            return
         note_title = "\U0001f525 Automation: Lead Replied — All Automation Paused"
         note_body = (
             f"This lead replied to an automated email. All automation has been **paused** until an agent reviews.\n\n"
@@ -7805,7 +8281,8 @@ class RuleEngine:
     #: the same list scan_reply_detection builds its 7-day watch from.
     SWEEP_SEND_ACTIONS = ("pond_nurture", "agent_bot_email", "closed_congrats",
                           "closed_drip", "long_term_nurture_drip",
-                          "instant_welcome_email", "seller_nurture")
+                          "instant_welcome_email", "seller_nurture",
+                          RECRUITING_AUDIT_ACTION)
     SWEEP_SEND_STATUSES = ("sent", "email_sent", "completed")
 
     #: The old-thread rotation: every lead emailed 7–60 days ago is re-read at
@@ -7898,7 +8375,7 @@ class RuleEngine:
                 person_id = int(person_stub["id"])
                 if person_id in already_alerted or person_id in already_disqualified:
                     continue
-                if self.is_excluded(person_stub):
+                if self._reply_scan_skips(person_stub):
                     continue
                 if alerts_sent >= cap:
                     LOGGER.info("Wide reply sweep: alert cap (%s) reached. Stopping.", cap)
@@ -7921,7 +8398,7 @@ class RuleEngine:
                         continue
                     if self.has_any_tag(person, ["Replied - Paused"]):
                         continue
-                    if self.is_excluded(person):
+                    if self._reply_scan_skips(person):
                         continue
 
                     if self._sweep_classify_and_act(
@@ -8009,7 +8486,7 @@ class RuleEngine:
             person = self.fub.get_person(person_id)
             if not person:
                 return "none"
-            if self.has_any_tag(person, ["Replied - Paused"]) or self.is_excluded(person):
+            if self.has_any_tag(person, ["Replied - Paused"]) or self._reply_scan_skips(person):
                 return "none"
         if person is not None:
             emails = self._reveal_hidden_content(person, emails)
@@ -8030,7 +8507,7 @@ class RuleEngine:
             person = self.fub.get_person(person_id)
             if not person:
                 return "none"
-            if self.has_any_tag(person, ["Replied - Paused"]) or self.is_excluded(person):
+            if self.has_any_tag(person, ["Replied - Paused"]) or self._reply_scan_skips(person):
                 return "none"
 
         opt_outs = [(w, m) for w, m, kind in classified if kind == "opt_out"]

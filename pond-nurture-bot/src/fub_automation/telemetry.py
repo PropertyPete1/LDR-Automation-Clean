@@ -35,9 +35,10 @@ leads_scored — DISTINCT person_id in engagement_tier whose last_classified_at
     keeps only the current tier per person (no history), which is exactly why
     this counts by last_classified_at rather than by row.
 
-replies_needed — POINT-IN-TIME BACKLOG, not a per-run event count. A lead
-    counts when reply detection has seen them write back and nothing since
-    says a human closed the loop:
+replies_needed — POINT-IN-TIME BACKLOG, not a per-run event count. LEADS
+    only: a recruit's reply (details.track "recruiting") is never a lead
+    waiting on a human. A lead counts when reply detection has seen them
+    write back and nothing since says a human closed the loop:
 
         reply_detected/alert_sent (or /backfilled, the retro-repair's rows)
         within REPLY_BACKLOG_DAYS
@@ -65,6 +66,13 @@ Four types, fixed by the LIFESTYLE ticker contract: sent, drip, needs_reply,
 heating_up. Each entry is one audit_log row rendered for a human, and
 `detail` is written for a scrolling ticker — under 60 characters, and never
 repeating contact_name, which the ticker prints alongside it.
+
+One optional fifth field: `track: "recruiting"` on a needs_reply entry whose
+reply came from a RECRUIT (an agent answering the recruiting track — main.py
+writes `track` into the reply_detected row's details). lifestyle-brain's
+ActivityEvent.track keeps such an entry off every lead count and push and
+surfaces it apart. Recruiting SENDS are never entries: hundreds of them would
+rotate the lead events out of the hundred this log keeps.
 
 Contact names live in the audit row's `details` JSON (main.py writes
 "contact_name" at each of these sites, matching the "person_name" key
@@ -122,6 +130,10 @@ REPLY_BACKLOG_DAYS = 30
 
 # The ticker contract. Four values, no others.
 ACTIVITY_TYPES: Tuple[str, ...] = ("sent", "drip", "needs_reply", "heating_up")
+
+# The one `track` value an entry may carry (recruiting.RECRUITING_TRACK —
+# spelled here so this read-only module imports nothing from the engine).
+RECRUITING_TRACK = "recruiting"
 
 MAX_ACTIVITY_ENTRIES = 100
 
@@ -254,16 +266,20 @@ def count_replies_needed(
     latest_reply: Dict[int, str] = {}
     # 'backfilled' alongside 'alert_sent': the retroactive repair of missed
     # replies (backfill_missed_replies.py) writes those rows without paging
-    # anyone, and the leads behind them are waiting just the same.
-    for person_id, created_at in conn.execute(
-        """SELECT person_id, MAX(created_at) FROM audit_log
+    # anyone, and the leads behind them are waiting just the same. A recruit's
+    # reply (details.track "recruiting") is left out: never a lead's.
+    for person_id, created_at, raw_details in conn.execute(
+        """SELECT person_id, created_at, details FROM audit_log
            WHERE created_at >= ?
              AND action = 'reply_detected' AND status IN ('alert_sent', 'backfilled')
-             AND person_id IS NOT NULL
-           GROUP BY person_id""",
+             AND person_id IS NOT NULL""",
         (since,),
     ):
-        latest_reply[int(person_id)] = created_at
+        if _details(raw_details).get("track") == RECRUITING_TRACK:
+            continue
+        pid = int(person_id)
+        if pid not in latest_reply or str(created_at) > str(latest_reply[pid]):
+            latest_reply[pid] = created_at
 
     if not latest_reply:
         return 0
@@ -407,14 +423,15 @@ def activity_entries(
             entry_type, detail = _describe(action, details)
         except ValueError:
             continue
-        entries.append(
-            {
-                "ts": iso_z(ts),
-                "type": entry_type,
-                "contact_name": _contact_name(details, person_id),
-                "detail": detail,
-            }
-        )
+        entry = {
+            "ts": iso_z(ts),
+            "type": entry_type,
+            "contact_name": _contact_name(details, person_id),
+            "detail": detail,
+        }
+        if entry_type == "needs_reply" and details.get("track") == RECRUITING_TRACK:
+            entry["track"] = RECRUITING_TRACK
+        entries.append(entry)
     return entries
 
 
@@ -442,14 +459,18 @@ def _key(entry: dict) -> Tuple[str, str, str, str]:
 
 
 def _public(entry: dict) -> dict:
-    """Normalize to the four contract fields — drops anything a hand-edited or
-    future-version file carried in."""
-    return {
+    """Normalize to the four contract fields, plus `track` when it is exactly
+    "recruiting" — drops anything else a hand-edited or future-version file
+    carried in."""
+    public = {
         "ts": str(entry["ts"]),
         "type": str(entry["type"]),
         "contact_name": str(entry["contact_name"]),
         "detail": _clip(str(entry.get("detail") or "")),
     }
+    if entry.get("track") == RECRUITING_TRACK:
+        public["track"] = RECRUITING_TRACK
+    return public
 
 
 def _valid(entry: object) -> bool:

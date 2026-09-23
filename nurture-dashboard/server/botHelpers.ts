@@ -61,7 +61,7 @@ export function getSharedSuppressionTags(): string[] {
     "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
     "landlord", "lease listing inquiry",
   ];
-  _sharedExcludedSources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"];
+  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"];
   return _sharedSuppressionTags;
 }
 

@@ -139,6 +139,12 @@ LEDGERS: tuple[Ledger, ...] = (
         key=("person_id", "email_number"),
         earliest=("claimed_at",),
     ),
+    # The recruiting track's crash-safe claims — the seller ledger's shape.
+    Ledger(
+        name="recruiting_send_claims",
+        key=("person_id", "email_number"),
+        earliest=("claimed_at",),
+    ),
 )
 
 PERSON_ROWS: tuple[PersonRow, ...] = (
@@ -167,6 +173,15 @@ PERSON_ROWS: tuple[PersonRow, ...] = (
     ),
     PersonRow(
         name="seller_nurture_drip",
+        clock=("last_sent_at", "enrolled_at"),
+        forward_only=("last_sent_at", "emails_sent"),
+        backward_only=("enrolled_at",),
+    ),
+    # The recruiting track: last_sent_at/emails_sent only move forward — a
+    # merge regressing either would reopen the three-week window and send a
+    # recruit a duplicate; last_angle rides with the newer clock.
+    PersonRow(
+        name="recruiting_drip",
         clock=("last_sent_at", "enrolled_at"),
         forward_only=("last_sent_at", "emails_sent"),
         backward_only=("enrolled_at",),

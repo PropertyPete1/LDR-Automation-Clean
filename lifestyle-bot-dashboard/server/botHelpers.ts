@@ -75,7 +75,7 @@ export function getSharedExcludedSources(): string[] {
   getSharedSuppressionTags();
   if (_sharedExcludedSources) return _sharedExcludedSources;
   // Fallback
-  _sharedExcludedSources = ["new agent inquiry", "botm newsletter", "zillow rentals", "lease listing inquiry"];
+  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"];
   return _sharedExcludedSources;
 }
 
