@@ -567,3 +567,22 @@ export const agentBots = mysqlTable("agent_bots", {
 });
 export type AgentBot = typeof agentBots.$inferSelect;
 export type InsertAgentBot = typeof agentBots.$inferInsert;
+
+/**
+ * The engine's AI skip check, remembered per version of the lead's notes
+ * (2026-09 cost audit). The skip decision was never stored, so a skipped lead
+ * went back to Claude on every run while it stayed in the 3–19-day window,
+ * with a new "[Bot] Skipped automated follow-up" note each time. Now the check
+ * runs once per version of the notes it reads (bot/Cowork notes excluded) and
+ * the stored verdict is reused until those notes change.
+ */
+export const leadSkipReviews = mysqlTable("lead_skip_reviews", {
+  /** FUB person ID */
+  personId: int("personId").primaryKey(),
+  /** sha256 of the notes the check read, plus SKIP_REVIEW_VERSION */
+  notesFingerprint: varchar("notesFingerprint", { length: 64 }).notNull(),
+  shouldSkip: boolean("shouldSkip").notNull(),
+  reason: text("reason"),
+  reviewedAt: timestamp("reviewedAt").defaultNow().notNull(),
+});
+export type LeadSkipReview = typeof leadSkipReviews.$inferSelect;
