@@ -13,11 +13,12 @@
  */
 
 import nodemailer from "nodemailer";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getDb } from "./db";
-import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog, purchaseWindow } from "../drizzle/schema";
+import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog, purchaseWindow, leadSkipReviews } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import { ENV } from "./_core/env";
 
@@ -722,7 +723,86 @@ export async function isLeaseListingSilenced(personId: number): Promise<boolean>
  * Returns { skip: true, reason: string } if the lead should be skipped.
  * Returns { skip: false } if it's safe to send a follow-up.
  */
-export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
+// ─── AI skip check memory (2026-09 cost audit) ───────────────────────────────
+// The skip decision used to be forgotten: a skipped lead went back to Claude on
+// every run while it stayed in the 3–19-day window, and each re-check posted
+// another "[Bot] Skipped automated follow-up" note that the next check then
+// read as evidence. The check now runs once per version of the notes it reads,
+// and the verdict is reused until those notes change.
+
+/** Bump whenever the skip prompt changes: every stored verdict is re-checked once. */
+export const SKIP_REVIEW_VERSION = "2026-09-25.1";
+
+/** This bot's own log notes: "[Lexi] Skipped automated follow-up…", "[Lexi] Follow-up email sent by…". */
+const LIFESTYLE_LOG_NOTE = /^\s*\[[^\]]{1,60}\]\s*(?:skipped automated follow-up|follow-up (?:email )?sent)/i;
+
+type FubNote = NonNullable<FubPerson["notes"]>[number];
+
+/** Claude Cowork's texting notes. Owner's rule (2026-09-24): never evidence for an
+ *  email decision and never a reason to re-check a lead. */
+export function isCoworkNote(body: string | undefined | null): boolean {
+  return (body ?? "").toLowerCase().includes("[cowork reengage]");
+}
+
+/** The notes the AI skip check reads — and the only ones whose change makes it run again. */
+export function notesForSkipReview(notes: FubNote[]): FubNote[] {
+  return notes.filter(
+    n => !isBotAuthoredNote(n.body) && !isCoworkNote(n.body) && !LIFESTYLE_LOG_NOTE.test(n.body ?? "")
+  );
+}
+
+/** Moves when a note the check reads is added, edited or removed, or SKIP_REVIEW_VERSION changes. */
+export function skipReviewFingerprint(notes: FubNote[]): string {
+  const rows = notesForSkipReview(notes)
+    .map(n => JSON.stringify([n.createdAt ?? "", n.userId ?? null, n.body ?? ""]))
+    .sort();
+  const hash = createHash("sha256").update(SKIP_REVIEW_VERSION);
+  for (const row of rows) hash.update(row);
+  return hash.digest("hex");
+}
+
+export interface SkipReviewStore {
+  get(personId: number, fingerprint: string): Promise<{ shouldSkip: boolean; reason: string | null } | null>;
+  set(personId: number, fingerprint: string, shouldSkip: boolean, reason: string | null): Promise<void>;
+}
+
+const dbSkipReviewStore: SkipReviewStore = {
+  async get(personId, fingerprint) {
+    try {
+      const db = await getDb();
+      if (!db) return null;
+      const [row] = await db.select().from(leadSkipReviews).where(eq(leadSkipReviews.personId, personId)).limit(1);
+      return row && row.notesFingerprint === fingerprint ? { shouldSkip: row.shouldSkip, reason: row.reason } : null;
+    } catch (err) {
+      // Until migration 0006 is applied the table does not exist: no memory,
+      // exactly the old behaviour.
+      console.warn(`[skipReview] lookup failed for person ${personId}: ${(err as Error).message}`);
+      return null;
+    }
+  },
+  async set(personId, fingerprint, shouldSkip, reason) {
+    try {
+      const db = await getDb();
+      if (!db) return;
+      const reviewedAt = new Date();
+      await db
+        .insert(leadSkipReviews)
+        .values({ personId, notesFingerprint: fingerprint, shouldSkip, reason, reviewedAt })
+        .onDuplicateKeyUpdate({ set: { notesFingerprint: fingerprint, shouldSkip, reason, reviewedAt } });
+    } catch (err) {
+      console.warn(`[skipReview] save failed for person ${personId}: ${(err as Error).message}`);
+    }
+  },
+};
+
+let skipReviewStore: SkipReviewStore = dbSkipReviewStore;
+
+/** Test seam: an in-memory store instead of MySQL. Pass null to restore the DB store. */
+export function setSkipReviewStoreForTests(store: SkipReviewStore | null): void {
+  skipReviewStore = store ?? dbSkipReviewStore;
+}
+
+export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string; remembered?: boolean }> {
   // Source-based exclusion (cheap local check — no API call)
   const excludedSrc = isExcludedSource(person);
   if (excludedSrc) {
@@ -773,8 +853,20 @@ export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean
   }
 
   // ── Anthropic Direct: Intelligent skip decision ──────────────────────────
+  // Only what people wrote: this bot's skip/sent logs, the pond bot's logs and
+  // Cowork's texting notes are not evidence (they made the check agree with
+  // its own earlier verdicts).
+  const reviewNotes = notesForSkipReview(notes);
+  if (reviewNotes.length === 0) return { skip: false };
+  const fingerprint = skipReviewFingerprint(notes);
+  const remembered = await skipReviewStore.get(person.id, fingerprint);
+  if (remembered) {
+    // Decided on these same notes before: no second Claude call, no fresh roll.
+    return { skip: remembered.shouldSkip, reason: remembered.reason ?? undefined, remembered: true };
+  }
+
   // Build a compact note summary (most recent 5, max 400 chars each)
-  const sorted = [...notes].sort((a, b) => {
+  const sorted = [...reviewNotes].sort((a, b) => {
     const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
     const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
     return bDate - aDate;
@@ -841,8 +933,11 @@ SKIP: NO`;
       const reasonMatch = raw.match(/reason:\s*(.+)/i);
       // person_id only — no lead names/emails in logs (public repo)
       console.log(`[skipGate] person ${person.id} skipped: LLM intent check`);
-      return { skip: true, reason: reasonMatch?.[1]?.trim() ?? "Notes indicate lead should be skipped" };
+      const reason = reasonMatch?.[1]?.trim() ?? "Notes indicate lead should be skipped";
+      await skipReviewStore.set(person.id, fingerprint, true, reason);
+      return { skip: true, reason };
     }
+    await skipReviewStore.set(person.id, fingerprint, false, null);
     return { skip: false };
   } catch (err) {
     console.error("[shouldSkipLead] Anthropic call failed:", err);
