@@ -500,6 +500,22 @@ class AuditDB:
                 );
                 """
             )
+            # The skip and timeline checks, remembered per version of the notes
+            # they read (note_review_fingerprint). One row per lead.
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS note_review (
+                    person_id           INTEGER PRIMARY KEY,
+                    fingerprint         TEXT NOT NULL,
+                    skip_checked_at     TEXT,
+                    should_skip         INTEGER,
+                    skip_reason         TEXT,
+                    skip_note_at        TEXT,
+                    timeline_checked_at TEXT,
+                    reviewed_at         TEXT NOT NULL
+                );
+                """
+            )
             # Read-path indexes (2026-08-26). audit_log is append-only and never
             # pruned; recent_audit_rows filters on action+created_at and several
             # consumers scan by person_id — both were full-table scans. Indexes
@@ -1095,6 +1111,50 @@ class AuditDB:
                 (person_id, window_start, raw_text, detected_from_note_date, now_iso()),
             )
 
+    # ── Note review memory (skip check + timeline check) ──
+    def get_note_review(self, person_id: int, fingerprint: str) -> Optional[dict]:
+        """The stored review — only if it was reached on these same notes."""
+        with self.connect() as con:
+            con.row_factory = sqlite3.Row
+            row = con.execute("SELECT * FROM note_review WHERE person_id=?", (person_id,)).fetchone()
+        if row is None or row["fingerprint"] != fingerprint:
+            return None
+        return dict(row)
+
+    def _write_note_review(self, person_id: int, fingerprint: str, **fields: Any) -> None:
+        """Record one check's result. Different notes start a fresh row, so a
+        result reached on other notes can never ride along with this one."""
+        now = now_iso()
+        with self.connect() as con:
+            current = con.execute(
+                "SELECT fingerprint FROM note_review WHERE person_id=?", (person_id,)).fetchone()
+            if current is None or current[0] != fingerprint:
+                con.execute(
+                    "INSERT OR REPLACE INTO note_review(person_id, fingerprint, reviewed_at) VALUES (?, ?, ?)",
+                    (person_id, fingerprint, now),
+                )
+            assignments = ", ".join(f"{column}=?" for column in fields)
+            con.execute(
+                f"UPDATE note_review SET {assignments}, reviewed_at=? WHERE person_id=?",
+                [*fields.values(), now, person_id],
+            )
+
+    def record_skip_review(self, person_id: int, fingerprint: str, should_skip: bool, reason: str) -> None:
+        self._write_note_review(
+            person_id, fingerprint,
+            skip_checked_at=now_iso(), should_skip=int(bool(should_skip)), skip_reason=(reason or "")[:500],
+        )
+
+    def record_timeline_review(self, person_id: int, fingerprint: str) -> None:
+        self._write_note_review(person_id, fingerprint, timeline_checked_at=now_iso())
+
+    def mark_skip_note_written(self, person_id: int, fingerprint: str) -> None:
+        with self.connect() as con:
+            con.execute(
+                "UPDATE note_review SET skip_note_at=?, reviewed_at=? WHERE person_id=? AND fingerprint=?",
+                (now_iso(), now_iso(), person_id, fingerprint),
+            )
+
     def count_timeline_adjusted_leads(self) -> dict:
         """Return count and avg days-out for leads with active purchase windows."""
         with self.connect() as con:
@@ -1279,6 +1339,26 @@ class FollowUpBossClient:
         data = self._request("GET", "/notes", params={"personId": person_id, "limit": min(limit, 100)})
         return data.get("notes", data.get("data", []))
 
+    def get_notes_deep(self, person_id: int, max_pages: int = 3) -> List[dict]:
+        """Up to max_pages × 100 notes, newest first. One page is almost always
+        all of them; the extra pages exist because the old daily re-skip loop
+        wrote a note per day, and on long-skipped leads those pushed the human
+        note a skip rested on past the first 100 — where no check could see it.
+        Stops at the first short page, or at a page with nothing new (an API
+        that ignored offset must not return page one three times)."""
+        notes: List[dict] = []
+        seen: set = set()
+        for page in range(max_pages):
+            data = self._request(
+                "GET", "/notes", params={"personId": person_id, "limit": 100, "offset": page * 100})
+            batch = data.get("notes", data.get("data", []))
+            fresh = [n for n in batch if n.get("id") is None or n.get("id") not in seen]
+            seen.update(n.get("id") for n in fresh if n.get("id") is not None)
+            notes.extend(fresh)
+            if len(batch) < 100 or not fresh:
+                break
+        return notes
+
     def get_events(self, person_id: int, limit: int = 100) -> List[dict]:
         data = self._request("GET", "/events", params={"personId": person_id, "limit": min(limit, 100)})
         return data.get("events", data.get("data", []))
@@ -1320,6 +1400,136 @@ class FollowUpBossClient:
             LOGGER.info("DRY_RUN log_text_message %s", person_id)
             return {"dry_run": True}
         return self._request("POST", "/textMessages", json_body=payload, registered=True)
+
+
+# ── Note review memory: the skip check and the timeline check ────────────────
+#
+# Both checks used to re-read a lead's notes on every daily run. A lead the
+# model skipped was due again the next morning, re-read, and skipped again —
+# ~210 leads a day, 97–99% the same people (2026-09-11..24 run logs) — and each
+# re-skip wrote another "Pond Nurture Skipped" note that the next re-read took
+# as evidence ("across 25+ skip decisions"). Every re-read was also a fresh
+# roll: 11 leads skipped at 85–95% were emailed one to three days later when a
+# re-read came out the other way. Rechecked against their human notes, none of
+# those skips was real — seven leads had no human notes at all and were skipped
+# over the bot's own "Pond Nurture EMAIL Sent" logs.
+#
+# So each check now runs once per version of the notes it reads. The result is
+# stored with a fingerprint of those notes and reused until they change. The
+# bot's own action logs, the lifestyle bot's logs and Cowork's texting notes are
+# neither evidence for the checks nor a reason to run them again.
+
+#: Bump whenever the skip or the timeline prompt changes: every stored result
+#: was reached under the old wording and is re-checked once under the new one.
+NOTE_REVIEW_VERSION = "2026-09-25.1"
+
+#: Subjects of the notes this bot writes about its OWN actions — sends, skips,
+#: reassignments, agent warnings. Lower-cased substring match. They say nothing
+#: about what the lead wants.
+_BOT_LOG_SUBJECT_MARKERS = (
+    "pond nurture",  # "Pond Nurture EMAIL Sent", "🤖 Pond Nurture Skipped", older variants
+    "check-in email sent",
+    "long-term nurture email sent",
+    "welcome email sent",
+    "seller nurture email sent",
+    "reassigned to lead pond",
+    "pond lead reassigned",
+    "moved to lead pond",
+    "speed-to-lead warning",
+    "untouched assignment warning",
+    "click-to-text",  # "Click-to-Text Follow-up Reminder Sent" (this bot), "📲 Click-to-Text Sent" (Power Queue)
+    "lifestyle bot follow-up",  # nurture-dashboard's retired lifestyle bot
+)
+#: The lifestyle bot's notes have no subject and open with "[<bot name>] ":
+#: "[Lexi] Skipped automated follow-up…", "[Lexi] Follow-up email sent by…",
+#: and the older "[Laila's Lifestyle Bot] Follow-up sent by…".
+_LIFESTYLE_BOT_LOG_BODY = re.compile(
+    r"^\s*\[[^\]]{1,60}\]\s*(?:skipped automated follow-up|follow-up (?:email )?sent)",
+    re.IGNORECASE,
+)
+#: Claude Cowork's texting notes. Owner's rule (2026-09-24): never a reason to
+#: re-check a lead, never evidence for an email decision.
+COWORK_NOTE_MARKER = "[cowork reengage]"
+
+
+def _raw_note_body(note: dict) -> str:
+    return str(note.get("body") or note.get("text") or note.get("note") or "")
+
+
+def is_bot_log_note(note: dict) -> bool:
+    subject = str(note.get("subject") or note.get("title") or "").lower()
+    if any(marker in subject for marker in _BOT_LOG_SUBJECT_MARKERS):
+        return True
+    body = re.sub(r"<[^>]+>", " ", _raw_note_body(note))
+    return bool(_LIFESTYLE_BOT_LOG_BODY.match(body))
+
+
+def is_cowork_note(note: dict) -> bool:
+    subject = str(note.get("subject") or note.get("title") or "").lower()
+    return COWORK_NOTE_MARKER in subject or COWORK_NOTE_MARKER in _raw_note_body(note).lower()
+
+
+def notes_for_review(notes: Optional[List[dict]]) -> List[dict]:
+    """The notes the skip and timeline checks read, and the only ones whose
+    change makes them run again."""
+    return [n for n in (notes or []) if not is_bot_log_note(n) and not is_cowork_note(n)]
+
+
+def note_review_fingerprint(notes: Optional[List[dict]]) -> str:
+    """Moves when a note the checks read is added, edited or removed, or when
+    NOTE_REVIEW_VERSION is bumped — and at no other time."""
+    digest = hashlib.sha256(NOTE_REVIEW_VERSION.encode("utf-8"))
+    rows = sorted(
+        (
+            str(n.get("id") or ""),
+            str(n.get("created") or n.get("createdAt") or ""),
+            str(n.get("subject") or ""),
+            _raw_note_body(n),
+        )
+        for n in notes_for_review(notes)
+    )
+    for row in rows:
+        digest.update(json.dumps(row).encode("utf-8"))
+    return digest.hexdigest()
+
+
+#: A preferred channel: "email only", "wants to just receive emails", "text
+#: only", "prefers texting". Owner's rule (2026-09-24): a channel preference
+#: narrows the channel; it never turns into a skip. Janie Valdez (1992) was
+#: skipped on "she said she wants to just receive emails" as a request to stop.
+_CHANNEL_PREFERENCE = re.compile(
+    r"\b(?:e-?mail|text|texting|sms)[- ]only\b"
+    r"|\bonly\b[^.]{0,30}\b(?:e-?mails?|texts?|texting|sms)\b"
+    r"|\bjust\b[^.]{0,30}\b(?:e-?mails?|texts?|texting|sms)\b"
+    r"|\bprefer(?:s|red|ence)?\b[^.]{0,40}\b(?:e-?mails?|texts?|texting|sms)\b",
+    re.IGNORECASE,
+)
+#: Anything asking us to stop, on any channel. When it is present the skip
+#: stands: the preference rule only removes skips where nothing asks to stop.
+_STOP_LANGUAGE = re.compile(
+    r"\bstop|\bunsubscrib|\bopt(?:ed|s|ing)?[- ]?out\b|\bremov|\bblock"
+    r"|\bdo not (?:contact|call|e-?mail|text|send|reach)|\bdon'?t (?:contact|call|e-?mail|text|send|reach)"
+    r"|\bnot to (?:contact|call|e-?mail|text)|\bno (?:more )?(?:e-?mails?|calls?|texts?|contact)\b"
+    r"|\bleave (?:me|her|him|them|us) alone\b|\bdnc\b|\bdo[- ]not[- ]contact\b",
+    re.IGNORECASE,
+)
+SKIP_INTENTS = ("A", "B", "C", "D")
+
+
+def is_channel_preference_only(*texts: str) -> bool:
+    combined = " ".join(t for t in texts if t)
+    return bool(_CHANNEL_PREFERENCE.search(combined)) and not _STOP_LANGUAGE.search(combined)
+
+
+def evidence_in_notes(evidence: str, notes_text: str) -> bool:
+    """Is the model's quote really in the notes? Compared on letters and digits
+    only, on its opening 60 characters, so a trimmed or re-punctuated quote of a
+    real note still counts and an invented one does not."""
+    def norm(text: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+    probe = norm(evidence)[:60].strip()
+    return len(probe) >= 8 and probe in norm(notes_text)
 
 
 class ContentGenerator:
@@ -1410,6 +1620,10 @@ class ContentGenerator:
         return content
 
     def should_skip_lead_llm(self, person: dict, notes: List[dict]) -> Tuple[bool, str]:
+        # Only what people wrote about the lead. The bot's own send/skip logs
+        # were behind most bad skips — the model read "Pond Nurture EMAIL Sent"
+        # as "already emailed enough" and its own skip notes as a consensus.
+        notes = notes_for_review(notes)
         if not notes:
             return False, ""
         rendered_notes: List[str] = []
@@ -1461,6 +1675,12 @@ class ContentGenerator:
           "needs 3 more months to save", "watching rates", "not ready until after the holidays").
         - The notes are vague, sparse, or could be interpreted either way. When in doubt, do NOT skip.
         - The most recent note is old and there is no clear disqualifying intent in the full history.
+        - The notes only state a preferred channel, such as "email only", "wants to just receive emails",
+          "text only" or "prefers texting". A channel preference narrows how we reach the lead. It is not
+          a request to stop, and it is never a reason to skip an email.
+        - The lead is assigned, reassigned or referred to Peter Allen or to any Lifestyle Design Realty
+          agent. That is our own team, not "someone else".
+        - The lead has received earlier emails from us or has not replied to them.
 
         CONFIDENCE REQUIREMENT:
         Only set should_skip to true if you are highly confident (80% or more) that the notes communicate
@@ -1471,6 +1691,8 @@ class ContentGenerator:
         - should_skip: boolean
         - intent_category: one of "A", "B", "C", "D", or "none" (which intent triggered the skip, or none)
         - confidence: integer from 0 to 100 representing your confidence in the skip decision
+        - evidence: the words, copied exactly from one note above, that show the skip intent (at most 200
+          characters); an empty string when should_skip is false
         - reason: plain-English explanation of your reasoning, maximum 25 words
 
         Notes to review (newest first):
@@ -1484,12 +1706,38 @@ class ContentGenerator:
             should_skip = bool(parsed.get("should_skip"))
             confidence = int(parsed.get("confidence") or 0)
             reason = str(parsed.get("reason") or "").strip()
-            intent_cat = str(parsed.get("intent_category") or "none").strip()
+            intent_cat = str(parsed.get("intent_category") or "none").strip().upper()
+            evidence = str(parsed.get("evidence") or "").strip()
             # Enforce confidence gate: only skip if LLM is at least 80% confident
             if should_skip and confidence < 80:
                 LOGGER.info(
                     "LLM skip check for person %s: low confidence (%s%%) — overriding to not skip. Reason: %s",
                     person.get("id"), confidence, reason,
+                )
+                return False, ""
+            # A skip is now remembered until the notes change, so a misread
+            # would stick. These refusals are deterministic backstops for the
+            # misreads the 2026-09 recheck found.
+            if should_skip and intent_cat not in SKIP_INTENTS:
+                # "SKIP (intent=none)" — no named reason is no reason.
+                LOGGER.info(
+                    "LLM skip check for person %s: skip without a skip intent (%s) — not skipping. Reason: %s",
+                    person.get("id"), intent_cat, reason,
+                )
+                return False, ""
+            if should_skip and is_channel_preference_only(evidence, reason):
+                LOGGER.info(
+                    "LLM skip check for person %s: a channel preference is not a skip — not skipping. Reason: %s",
+                    person.get("id"), reason,
+                )
+                return False, ""
+            if should_skip and intent_cat in ("A", "D") and not evidence_in_notes(evidence, "\n".join(rendered_notes)):
+                # Bought/renting and moved away must point at a real note. Not
+                # applied to B (another agent) or C (asked to stop): there a
+                # paraphrased quote must never cost the lead their protection.
+                LOGGER.info(
+                    "LLM skip check for person %s: intent %s quote not found in the notes — not skipping. Reason: %s",
+                    person.get("id"), intent_cat, reason,
                 )
                 return False, ""
             if should_skip:
@@ -1505,7 +1753,9 @@ class ContentGenerator:
     def extract_purchase_window(self, person: dict, notes: List[dict]) -> Optional[dict]:
         """Extract a future purchase timeline window from notes using Anthropic.
         Returns {window_start: 'YYYY-MM-DD', raw_text: str, source_note_date: str} or None.
-        Re-extracts every cycle — newer notes override older windows."""
+        Called once per version of the notes it reads (note_review) — newer
+        notes still override older windows."""
+        notes = notes_for_review(notes)
         if not notes:
             return None
         # Build compact note summary (most recent 10)
@@ -2342,6 +2592,37 @@ class RuleEngine:
         # without credentials or a reachable host — never a crash.
         self.mailbox = MailboxReplyReader.from_settings(settings)
         self._opted_out_cache: Optional[set] = None
+        # Per-run tally of note checks run fresh vs remembered (note_review),
+        # logged at the end of each scan so the saving is visible in the log.
+        self.review_stats: Dict[str, Dict[str, int]] = {"pond": {}, "seller": {}}
+
+    def _count_review(self, track: str, key: str) -> None:
+        stats = self.review_stats.setdefault(track, {})
+        stats[key] = stats.get(key, 0) + 1
+
+    def _suppress_pond_skip(self, person_id: int, fingerprint: str, reason: str) -> str:
+        """Suppress a lead the skip check said to skip. The FUB note is written
+        once per decision (and retried only if that write failed); every later
+        day records an audit row and nothing else."""
+        review = self.db.get_note_review(person_id, fingerprint) or {}
+        if not review.get("skip_note_at"):
+            try:
+                self.fub.add_note(
+                    person_id,
+                    "🤖 Pond Nurture Skipped",
+                    "Automated pond nurture email was skipped after reviewing recent FUB notes.\n\n"
+                    f"Reason: {reason or 'Recent notes indicate this lead should not receive automated pond nurture right now.'}\n\n"
+                    "No email was sent. The bot will not re-review this lead until its notes change."
+                )
+                self.db.mark_skip_note_written(person_id, fingerprint)
+                self._count_review("pond", "skip_notes_written")
+            except Exception as note_exc:
+                LOGGER.warning("Failed to log LLM pond nurture skip note for person %s: %s", person_id, note_exc)
+        details: Dict[str, Any] = {"reason": reason or "LLM note review skip"}
+        if review.get("skip_checked_at"):
+            details["decided_at"] = review["skip_checked_at"]
+        self.db.log("pond_nurture", "suppressed", person_id, details)
+        return "suppressed"
 
     def _fetch_local_spots(self, address: str) -> List[dict]:
         """Use the Manus Maps proxy (Google Places API) to find new/popular spots near the property address.
@@ -2946,6 +3227,7 @@ class RuleEngine:
 
         LOGGER.info("Seller nurture: completed. Sent this run=%s (today total=%s, cap=%s)",
                     sent_count - already_sent_today, sent_count, cap)
+        LOGGER.info("Note reviews (seller): %s", json.dumps(self.review_stats.get("seller", {}), sort_keys=True))
 
     def process_seller_nurture_candidate(self, person: dict) -> str:
         """Process a single seller lead for the nurture drip.
@@ -3049,7 +3331,11 @@ class RuleEngine:
                     return "skipped"
 
         # ── Fetch notes for AI context ──
-        notes = self.safe_get_notes(person_id)
+        notes = self.safe_get_notes_deep(person_id)
+        if notes is None:
+            # Unreadable is not empty — a remembered skip would be invisible.
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {"reason": "FUB notes unavailable — retry next run"})
+            return "skipped"
         notes_context_parts: List[str] = []
         for idx, note in enumerate(notes[:10], 1):
             raw = str(note.get("body") or note.get("text") or note.get("note") or "")
@@ -3065,8 +3351,16 @@ class RuleEngine:
         if not prop_addr and not neighborhood:
             prop_addr, neighborhood = extract_property_address_from_notes(notes)
 
-        # ── LLM skip check (same as buyer track) ──
-        should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
+        # ── LLM skip check (same as buyer track), once per version of the notes ──
+        fingerprint = note_review_fingerprint(notes)
+        review = self.db.get_note_review(person_id, fingerprint)
+        if review and review.get("skip_checked_at"):
+            should_skip, skip_reason = bool(review.get("should_skip")), review.get("skip_reason") or ""
+            self._count_review("seller", "skip_remembered")
+        else:
+            should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
+            self._count_review("seller", "skip_fresh")
+            self.db.record_skip_review(person_id, fingerprint, should_skip, skip_reason)
         if should_skip:
             self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {"reason": f"LLM skip: {skip_reason}"})
             return "skipped"
@@ -3370,6 +3664,7 @@ class RuleEngine:
             except Exception as exc:  # noqa: BLE001
                 LOGGER.exception("pond nurture failed for person %s", person.get("id"))
                 self.db.log("pond_nurture", "error", person.get("id"), {"error": str(exc)})
+        LOGGER.info("Note reviews (pond): %s", json.dumps(self.review_stats.get("pond", {}), sort_keys=True))
 
     def scan_stale_agent_no_note_reassignment(self) -> None:
         if not self.rules.stale_agent_no_note_reassignment_enabled:
@@ -4561,17 +4856,64 @@ class RuleEngine:
             )
             return "skipped"
 
+        # ── NO-AI CHECKS FIRST (2026-09 cost audit) ──────────────────────────
+        # The email-channel check, the 3-day contact gap and the pre-send
+        # opt-out check all used to run AFTER the timeline and skip calls, so
+        # ~140 leads a day paid for Anthropic calls and were then dropped by a
+        # check that needs no AI. Same checks, same outcomes, now ahead of any
+        # model call.
+        emails = person.get("emails") or []
+        if not self.rules.email_outreach_enabled or not emails:
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
+            return "suppressed"
+
+        # One notes fetch serves the fingerprint, both checks and the draft.
+        notes_for_timeline = self.safe_get_notes_deep(person_id)
+        if notes_for_timeline is None:
+            # Unreadable is not empty: today's remembered skip would be
+            # invisible. Retry next run rather than email blind.
+            self.db.log("pond_nurture", "skipped", person_id, {"reason": "FUB notes unavailable — retry next run"})
+            return "skipped"
+        notes = notes_for_timeline
+        fingerprint = note_review_fingerprint(notes)
+        review = self.db.get_note_review(person_id, fingerprint)
+
+        # A skip decided on these same notes stands until they change: no
+        # re-read, no fresh roll of the dice, no second FUB note.
+        if review and review.get("skip_checked_at") and review.get("should_skip"):
+            self._count_review("pond", "skip_remembered")
+            return self._suppress_pond_skip(person_id, fingerprint, review.get("skip_reason") or "")
+
+        if self.was_contacted_recently(person, days=3):
+            self.db.log("pond_nurture", "skipped", person_id, {"reason": "contacted within last 3 days"})
+            return "skipped"
+
+        # ── CRITICAL: Check for opt-out replies BEFORE sending any email ──
+        # This catches leads who replied "unsubscribe"/"stop" to a previous email.
+        # Without this check, leads who opted out would continue receiving emails
+        # because the tag-based check only works AFTER the disqualification scan runs.
+        opt_out_result = self._check_incoming_opt_out(person_id, person)
+        if opt_out_result:
+            return opt_out_result
+
         # ── Timeline-Aware Cadence Override (stretches cadence, never shortens) ──
         is_value_led = False
-        notes_for_timeline = self.safe_get_notes(person_id)
-        window_result = self.content.extract_purchase_window(person, notes_for_timeline)
-        if window_result:
-            self.db.upsert_purchase_window(
-                person_id,
-                window_result["window_start"],
-                window_result.get("raw_text"),
-                window_result.get("source_note_date"),
-            )
+        window_result = None
+        if review and review.get("timeline_checked_at"):
+            # The last extraction read these same notes; whatever it found is
+            # already in purchase_window below.
+            self._count_review("pond", "timeline_remembered")
+        else:
+            window_result = self.content.extract_purchase_window(person, notes_for_timeline)
+            self._count_review("pond", "timeline_fresh")
+            if window_result:
+                self.db.upsert_purchase_window(
+                    person_id,
+                    window_result["window_start"],
+                    window_result.get("raw_text"),
+                    window_result.get("source_note_date"),
+                )
+            self.db.record_timeline_review(person_id, fingerprint)
         # Check stored window (may be from this cycle or previous)
         stored_window = self.db.get_purchase_window(person_id) if not window_result else window_result
         if stored_window:
@@ -4593,38 +4935,18 @@ class RuleEngine:
         if last and dt.datetime.now(UTC) - last < dt.timedelta(days=cadence_days):
             self.db.log("pond_nurture", "skipped", person_id, {"reason": f"{tier}-tier cadence cap ({cadence_days}d){' [timeline-adjusted]' if is_value_led else ''}"})
             return "skipped"
-        emails = person.get("emails") or []
-        if not self.rules.email_outreach_enabled or not emails:
-            self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
-            return "suppressed"
 
-        notes = self.safe_get_notes(person_id)
-        should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
+        if review and review.get("skip_checked_at"):
+            # Decided on these same notes, and not a skip (a remembered skip
+            # returned above).
+            should_skip, skip_reason = False, ""
+            self._count_review("pond", "skip_remembered")
+        else:
+            should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
+            self._count_review("pond", "skip_fresh")
+            self.db.record_skip_review(person_id, fingerprint, should_skip, skip_reason)
         if should_skip:
-            try:
-                self.fub.add_note(
-                    person_id,
-                    "🤖 Pond Nurture Skipped",
-                    "Automated pond nurture email was skipped after reviewing recent FUB notes.\n\n"
-                    f"Reason: {skip_reason or 'Recent notes indicate this lead should not receive automated pond nurture right now.'}\n\n"
-                    "No email was sent."
-                )
-            except Exception as note_exc:
-                LOGGER.warning("Failed to log LLM pond nurture skip note for person %s: %s", person_id, note_exc)
-            self.db.log("pond_nurture", "suppressed", person_id, {"reason": skip_reason or "LLM note review skip"})
-            return "suppressed"
-
-        if self.was_contacted_recently(person, days=3):
-            self.db.log("pond_nurture", "skipped", person_id, {"reason": "contacted within last 3 days"})
-            return "skipped"
-
-        # ── CRITICAL: Check for opt-out replies BEFORE sending any email ──
-        # This catches leads who replied "unsubscribe"/"stop" to a previous email.
-        # Without this check, leads who opted out would continue receiving emails
-        # because the tag-based check only works AFTER the disqualification scan runs.
-        opt_out_result = self._check_incoming_opt_out(person_id, person)
-        if opt_out_result:
-            return opt_out_result
+            return self._suppress_pond_skip(person_id, fingerprint, skip_reason)
 
         city, lead_context, city_source = self.customer_nurture_context(person, notes=notes)
         market_context = self.market.get(city) if city else ""
@@ -5121,6 +5443,16 @@ class RuleEngine:
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Could not fetch FUB notes for person %s: %s", person_id, exc)
             return []
+
+    def safe_get_notes_deep(self, person_id: int) -> Optional[List[dict]]:
+        """The notes a review reads — or None when FUB could not be read. None is
+        NOT "no notes": a remembered skip is invisible without them, so the
+        caller skips the lead for the day instead of emailing blind."""
+        try:
+            return self.fub.get_notes_deep(person_id)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Could not fetch FUB notes for person %s: %s", person_id, exc)
+            return None
 
     def get_recent_email_thread(self, person_id: int, limit: int = 5, max_age_days: int = 30) -> str:
         """Fetch the most recent emails for a lead and format them as a readable thread.
