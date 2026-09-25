@@ -1,44 +1,42 @@
 #!/usr/bin/env python3
 """DIAG BRANCH ONLY (diag/skip-recheck) — never merge.
 
-Read-only recheck for the 2026-09-24 cost audit: 11 pond leads the LLM skip
-check said to skip (2026-09-11..23) that were drafted a day or three later.
-For each one this prints the lead's HUMAN notes verbatim (bot-authored notes
-are summarised by subject only), inbound texts, the pond_nurture audit trail
-and any opt-out ledger row, so each skip can be judged against the original
-notes rather than the bot's own skip reasons.
+Pre-merge preflight for fix 1 (fix/remember-note-checks): for every lead the
+daily run skipped on 2026-09-24, show the notes fix 1 would still let the skip
+check read (human notes and any note it does not recognise as a bot log), how
+many notes FUB holds beyond the first 100, and the lead's tags — so the owner
+can see which leads would start receiving pond email once the bot stops reading
+its own skip/send/reassignment logs.
 
-READ-ONLY: every FUB call is a GET, DRY_RUN is pinned, the state DB is pulled
-and never pushed (the workflow has contents: read). Runs under the registered
-investigate-assignments workflow, which passes --hours/--focus; both ignored.
+READ-ONLY: FUB GETs only, DRY_RUN pinned, state DB never pushed.
 """
 from __future__ import annotations
 
 import argparse
-import collections
 import os
 import re
-import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-PIDS = [3725, 3883, 4017, 4461, 4504, 4556, 4804, 5019, 5103]
+PIDS = [113,152,194,211,311,329,332,339,383,394,395,421,427,444,487,493,547,583,690,761,783,821,931,955,981,1006,1015,1056,1077,1119,1193,1251,1271,1283,1285,1300,1301,1389,1406,1449,1464,1535,1572,1575,1579,1590,1636,1723,1752,1755,1759,1797,1807,1820,1821,1839,1856,1883,1885,1900,1927,1933,1963,1965,1972,1975,2003,2019,2030,2039,2055,2131,2135,2182,2209,2210,2252,2275,2297,2357,2476,2493,2508,2580,2605,2618,2625,2641,2655,2664,2667,2722,2741,2763,2786,2795,2800,2806,2823,2873,2893,2898,2914,2995,3023,3038,3060,3068,3072,3083,3095,3114,3115,3125,3131,3139,3140,3147,3150,3179,3190,3191,3193,3203,3206,3252,3259,3267,3284,3298,3322,3324,3353,3355,3361,3368,3385,3426,3452,3453,3476,3499,3520,3578,3606,3630,3650,3677,3682,3688,3696,3710,3711,3725,3743,3748,3763,3775,3802,3827,3853,3883,3903,3914,3917,3961,3971,3994,4017,4019,4034,4082,4396,4398,4452,4461,4504,4505,4509,4513,4556,4559,4562,4575,4584,4600,4603,4604,4621,4664,4778,4779,4804,4819,4822,4834,4875,4918,4942,4976,4993,4994,5019,5041,5071,5075,5103,5107,5125,5138,5848,5855,5869,5951,5986,6053,6208,6215,6217]
 
-# Notes this bot (and Cowork) write. Summarised, not printed: the question is
-# what HUMANS wrote about the lead.
-BOT_SUBJECT_MARKERS = (
-    "pond nurture", "automation:", "quarterly check-in email sent",
-    "long-term nurture email sent", "instant welcome email sent",
-    "seller nurture", "[cowork reengage]",
-)
-# Exactly fix 1's filter (fix/remember-note-checks), to show what it would hide.
 FIX1_MARKERS = ("pond nurture", "check-in email sent", "long-term nurture email sent",
     "welcome email sent", "seller nurture email sent", "reassigned to lead pond",
     "pond lead reassigned", "moved to lead pond", "speed-to-lead warning",
     "untouched assignment warning")
 FIX1_LIFESTYLE = re.compile(r"^\s*\[[^\]]{1,60}\]\s*(?:skipped automated follow-up|follow-up email sent)", re.I)
+
+
+def _p(line: str = "") -> None:
+    print(line, flush=True)
+
+
+def _clean(text, limit):
+    text = re.sub(r"<[^>]+>", " ", str(text or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 def fix1_hides(note):
@@ -49,88 +47,39 @@ def fix1_hides(note):
     return "[cowork reengage]" in subject or "[cowork reengage]" in body.lower()
 
 
-def _p(line: str = "") -> None:
-    print(line, flush=True)
-
-
-def _clean(text: str, limit: int) -> str:
-    text = re.sub(r"<[^>]+>", " ", str(text or ""))
-    text = re.sub(r"\s+", " ", text).strip()
-    return text if len(text) <= limit else text[:limit] + " …[truncated]"
-
-
-def _is_bot_note(note: dict) -> bool:
-    subject = str(note.get("subject") or note.get("title") or "").lower()
-    body = str(note.get("body") or "").lower()
-    return any(m in subject for m in BOT_SUBJECT_MARKERS) or "[cowork reengage]" in body[:200]
-
-
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--hours", default=None)
-    parser.add_argument("--focus", default=None)
-    parser.parse_args(argv)
-
+    argparse.ArgumentParser().parse_known_args(argv)
     os.environ["DRY_RUN"] = "true"
     os.environ.setdefault("FUB_DISABLE_SCHEDULER", "true")
-
-    from fub_automation.main import FollowUpBossClient, Settings, is_inbound_message
+    from fub_automation.main import FollowUpBossClient, Settings
 
     settings = Settings.from_env()
     if not settings.fub_api_key:
-        _p("FUB_API_KEY missing — nothing to check.")
+        _p("FUB_API_KEY missing")
         return 2
     fub = FollowUpBossClient(settings)
-    con = sqlite3.connect(settings.database_path)
-    con.row_factory = sqlite3.Row
-
     for pid in PIDS:
-        _p("=" * 100)
-        person = fub.get_person(pid) or {}
+        try:
+            person = fub.get_person(pid) or {}
+            page1 = fub._request("GET", "/notes", params={"personId": pid, "limit": 100}).get("notes", [])
+            beyond = []
+            if len(page1) == 100:
+                for offset in (100, 200):
+                    more = fub._request("GET", "/notes", params={"personId": pid, "limit": 100, "offset": offset}).get("notes", [])
+                    beyond.extend(more)
+                    if len(more) < 100:
+                        break
+        except Exception as exc:  # noqa: BLE001
+            _p(f"LEAD {pid} ERROR {exc}")
+            continue
         name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
         tags = [t.get("name") if isinstance(t, dict) else t for t in (person.get("tags") or [])]
-        _p(f"LEAD {pid} {name!r} stage={person.get('stage')!r} source={person.get('source')!r} "
-           f"assignedTo={person.get('assignedTo')!r} pond={person.get('assignedPondId')} "
-           f"created={person.get('created')}")
-        _p(f"  tags={tags}")
-        _p(f"  emails_on_record={len(person.get('emails') or [])} "
-           f"unsubscribed_flags={[k for k in ('unsubscribed', 'emailOptOut', 'unsubscribedEmail', 'isUnsubscribed') if person.get(k)]}")
-
-        ledger = con.execute("SELECT * FROM opt_outs WHERE person_id=?", (pid,)).fetchall()
-        _p(f"  opt-out ledger: {[dict(r) for r in ledger] or 'none'}")
-        rows = con.execute(
-            "SELECT created_at, action, status, details FROM audit_log WHERE person_id=? "
-            "AND created_at >= '2026-09-08' AND action IN ('pond_nurture','seller_nurture') "
-            "ORDER BY created_at", (pid,)).fetchall()
-        _p("  pond/seller audit since 09-08:")
-        for r in rows:
-            _p(f"    {r['created_at'][:16]} {r['action']} {r['status']} {_clean(r['details'], 180)}")
-
-        notes = fub.get_notes(pid, limit=100)
-        human = [n for n in notes if not _is_bot_note(n)]
-        bot = [n for n in notes if _is_bot_note(n)]
-        by_subject = collections.Counter(str(n.get("subject") or "")[:60] for n in bot)
-        _p(f"  notes: {len(notes)} total, {len(human)} human/other, {len(bot)} bot-authored")
-        _p(f"  bot notes by subject: {dict(by_subject)}")
-        _p("  NOTES MENTIONING tiffany/automation/remove (newest first):")
-        for n in notes:
-            text = f"{n.get('subject') or ''} {n.get('body') or ''}".lower()
-            if not re.search(r"tiffany|automation|remov|do not|don't", text):
-                continue
-            tag = "HIDDEN-BY-FIX1" if fix1_hides(n) else "KEPT"
-            _p(f"   - [{tag}] [{str(n.get('created') or '')[:10]}] by={n.get('createdBy')!r} subject={_clean(n.get('subject'), 80)!r}")
-            _p(f"     {_clean(n.get('body'), 500)}")
-        kept = [n for n in notes if not fix1_hides(n)]
-        _p(f"  fix1 keeps {len(kept)} of {len(notes)} notes as evidence")
-        try:
-            texts = fub.get_text_messages(pid, limit=20)
-        except Exception as exc:  # noqa: BLE001
-            texts = []
-            _p(f"  texts: fetch failed ({exc})")
-        inbound = [t for t in texts if is_inbound_message(t)]
-        _p(f"  texts: {len(texts)} fetched, {len(inbound)} inbound")
-        for t in inbound[:10]:
-            _p(f"   < [{str(t.get('created') or '')[:10]}] {_clean(t.get('message') or t.get('body'), 200)}")
+        kept = [n for n in page1 if not fix1_hides(n)]
+        kept_beyond = [n for n in beyond if not fix1_hides(n)]
+        _p(f"LEAD {pid} | {name} | stage={person.get('stage')} | pond={person.get('assignedPondId')} "
+           f"| assigned={person.get('assignedTo')} | notes={len(page1)}+{len(beyond)} | kept={len(kept)}+{len(kept_beyond)} | tags={tags}")
+        for n in (kept + kept_beyond)[:6]:
+            _p(f"    [{str(n.get('created') or '')[:10]}] by={n.get('createdBy')} | {_clean(n.get('subject'), 60)} | {_clean(n.get('body'), 260)}")
     return 0
 
 
