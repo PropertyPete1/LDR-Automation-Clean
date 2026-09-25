@@ -214,6 +214,8 @@ def run_automation() -> int:
     # (Joe Muñoz, 2026-08-22) is caught within a day instead of never.
     engine.scan_wide_reply_sweep()
     engine.send_phase2_daily_summary()
+    # Calls, tokens and list-price cost by call type, for this run (log + audit row).
+    engine.log_llm_usage()
     
     # Auto-refresh the dashboard data. refresh_dashboard.sh now lives in this
     # repo (it used to exist only on the retired Cloud Computer), so this runs

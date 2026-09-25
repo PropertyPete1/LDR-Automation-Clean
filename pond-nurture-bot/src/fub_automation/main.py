@@ -17,6 +17,7 @@ import base64
 import datetime as dt
 from datetime import timezone
 import email.message
+import functools
 import hashlib
 import hmac
 import html
@@ -77,6 +78,62 @@ logging.basicConfig(
 
 UTC = dt.timezone.utc
 
+#: The one model every LLM call uses, pinned here (owner's rule, 2026-09-24).
+#: It used to come from the LLM_MODEL GitHub secret, whose value cannot be read
+#: back: the switch to Haiku (d2c849e, 2026-07-24) was only visible as an
+#: 8-minute-later secret update, and the README still said Sonnet 4.6. A dated
+#: snapshot, not an alias, so the model cannot change without a commit here.
+LLM_MODEL_ID = "claude-haiku-4-5-20251001"
+#: Haiku 4.5 list prices, USD per token — only for the per-run usage summary.
+LLM_PRICE_PER_TOKEN = {
+    "input": 1.00e-6,
+    "output": 5.00e-6,
+    "cache_write": 1.25e-6,
+    "cache_read": 0.10e-6,
+}
+
+
+def _json_schema(properties: Dict[str, dict]) -> dict:
+    """A structured-output schema: every property required, nothing extra
+    (the API requires additionalProperties: false on every object)."""
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+
+
+#: Enforced JSON shapes for the calls that return JSON. The API decodes to the
+#: schema, so a reply can no longer carry trailing prose ("Extra data") or a
+#: broken quote — 30 pond drafts failed json.loads in 14 days (2026-09-11..24).
+SKIP_CHECK_SCHEMA = _json_schema({
+    "should_skip": {"type": "boolean"},
+    "intent_category": {"type": "string", "enum": ["A", "B", "C", "D", "none"]},
+    "confidence": {"type": "integer"},
+    "evidence": {"type": "string"},
+    "reason": {"type": "string"},
+})
+EMAIL_DRAFT_SCHEMA = _json_schema({
+    "subject": {"type": "string"},
+    "email_body": {"type": "string"},
+})
+REPLY_INTENT_SCHEMA = _json_schema({
+    "intent": {"type": "string",
+               "enum": ["opt_out", "buying_intent", "future_timeline", "no_longer_looking", "none"]},
+    "confidence": {"type": "integer"},
+    "reason": {"type": "string"},
+    "trigger_snippet": {"type": "string"},
+    "source": {"type": "string", "enum": ["Inbound SMS", "Inbound Email", "Sync Note", "none"]},
+})
+EMAIL_CHANGE_SCHEMA = _json_schema({
+    "changed": {"type": "boolean"},
+    "new_email": {"type": "string"},
+    "confidence": {"type": "integer"},
+    "reason": {"type": "string"},
+    "trigger_snippet": {"type": "string"},
+})
+
 
 @dataclass
 class Settings:
@@ -103,7 +160,7 @@ class Settings:
             fub_api_key=os.environ.get("FUB_API_KEY", ""),
             fub_system_name=os.environ.get("FUB_SYSTEM_NAME"),
             fub_system_key=os.environ.get("FUB_SYSTEM_KEY"),
-            openai_model=os.environ.get("LLM_MODEL") or os.environ.get("OPENAI_MODEL", "claude-haiku-4-5-20251001"),
+            openai_model=LLM_MODEL_ID,  # pinned in code; LLM_MODEL/OPENAI_MODEL are no longer read
             database_path=os.environ.get("DATABASE_PATH", "data/fub_automation.sqlite3"),
             rules_path=os.environ.get("RULES_PATH", "config/rules.yaml"),
             base_url=os.environ.get("BASE_URL", "http://localhost:8080"),
@@ -1536,11 +1593,46 @@ class ContentGenerator:
     def __init__(self, settings: Settings, rules: Rules):
         api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
         self.client = Anthropic(api_key=api_key, timeout=120.0)
-        self.model = os.getenv("LLM_MODEL") or settings.openai_model or "claude-haiku-4-5-20251001"
+        # Pinned in code. No env var or secret can change it (see LLM_MODEL_ID).
+        self.model = LLM_MODEL_ID
         self.rules = rules
+        # Per-run token tally by call type ("skip_check", "pond_draft", …),
+        # summarised at the end of a run by usage_summary().
+        self.usage: Dict[str, Dict[str, int]] = {}
 
-    def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True) -> str:
-        """Unified LLM call via Anthropic SDK. Returns raw content string."""
+    def _record_usage(self, purpose: str, usage: Any) -> None:
+        tally = self.usage.setdefault(purpose, {
+            "calls": 0, "input_tokens": 0, "output_tokens": 0,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+        })
+        tally["calls"] += 1
+        for field_name in ("input_tokens", "output_tokens",
+                           "cache_read_input_tokens", "cache_creation_input_tokens"):
+            tally[field_name] += int(getattr(usage, field_name, 0) or 0)
+
+    def usage_summary(self) -> Dict[str, Any]:
+        """Calls, tokens and list-price cost per call type for this run."""
+        price = LLM_PRICE_PER_TOKEN
+        by_type: Dict[str, Any] = {}
+        totals = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "est_usd": 0.0}
+        for purpose, t in sorted(self.usage.items()):
+            est = (t["input_tokens"] * price["input"] + t["output_tokens"] * price["output"]
+                   + t["cache_creation_input_tokens"] * price["cache_write"]
+                   + t["cache_read_input_tokens"] * price["cache_read"])
+            by_type[purpose] = dict(t, est_usd=round(est, 4))
+            totals["calls"] += t["calls"]
+            totals["input_tokens"] += t["input_tokens"]
+            totals["output_tokens"] += t["output_tokens"]
+            totals["est_usd"] += est
+        totals["est_usd"] = round(totals["est_usd"], 4)
+        return {"model": self.model, "by_type": by_type, "totals": totals}
+
+    def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True,
+                  schema: Optional[dict] = None, purpose: str = "other") -> str:
+        """Unified LLM call via Anthropic SDK. Returns raw content string.
+
+        schema: a structured-output JSON schema; the reply is decoded to it.
+        purpose: the call type the per-run usage tally files this call under."""
         # Separate system message from user messages
         system_text = ""
         user_messages = []
@@ -1560,8 +1652,11 @@ class ContentGenerator:
         }
         if system_text:
             kwargs["system"] = system_text
+        if schema is not None:
+            kwargs["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
 
         response = self.client.messages.create(**kwargs)
+        self._record_usage(purpose, getattr(response, "usage", None))
         content = response.content[0].text if response.content else ""
         # Strip markdown code fences if present (common with Claude JSON output)
         if content.startswith("```"):
@@ -1699,7 +1794,7 @@ class ContentGenerator:
         {chr(10).join(rendered_notes)}
         """
         try:
-            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.1)
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.1, schema=SKIP_CHECK_SCHEMA, purpose="skip_check")
             if not content:
                 return False, ""
             parsed = json.loads(self.extract_json_object(content))
@@ -1790,6 +1885,7 @@ NO_WINDOW"""
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 json_mode=False,
+                purpose="timeline",
             )
             if not content or content.strip().startswith("NO_WINDOW"):
                 return None
@@ -1946,7 +2042,7 @@ NO_WINDOW"""
         - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86, schema=EMAIL_DRAFT_SCHEMA, purpose="pond_draft")
         LOGGER.debug("LLM Response content: %s", content[:200])
         if not content:
             LOGGER.error("LLM returned empty content")
@@ -2021,7 +2117,7 @@ NO_WINDOW"""
         - Keep it concise: 130 to 200 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86, schema=EMAIL_DRAFT_SCHEMA, purpose="closed_drip_draft")
         if not content:
             raise ValueError("LLM returned empty closed drip email choices")
         return json.loads(content)
@@ -2061,7 +2157,7 @@ NO_WINDOW"""
         - Keep it concise: 100 to 160 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.88)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.88, schema=EMAIL_DRAFT_SCHEMA, purpose="congrats_draft")
         if not content:
             raise ValueError("LLM returned empty congrats email choices")
         return json.loads(content)
@@ -2095,7 +2191,7 @@ NO_WINDOW"""
         - Email must include a subject and body.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86, schema=EMAIL_DRAFT_SCHEMA, purpose="welcome_draft")
         if not content:
             raise ValueError("LLM returned empty welcome email choices")
         generated = json.loads(content)
@@ -2200,7 +2296,7 @@ NO_WINDOW"""
         - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
+        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86, schema=EMAIL_DRAFT_SCHEMA, purpose="long_term_draft")
         if not content:
             raise ValueError("LLM returned empty long-term nurture email choices")
         return json.loads(content)
@@ -2314,7 +2410,7 @@ NO_WINDOW"""
         - source: the channel of the trigger communication: "Inbound SMS", "Inbound Email", "Sync Note", or "none"
         """
         try:
-            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.05)
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.05, schema=REPLY_INTENT_SCHEMA, purpose="reply_intent")
             if not content:
                 return {"intent": "none", "confidence": 0, "reason": "Empty AI response", "trigger_snippet": "", "source": "none"}
             parsed = json.loads(content)
@@ -2413,7 +2509,7 @@ NO_WINDOW"""
             }}
         """
         try:
-            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.0)
+            content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.0, schema=EMAIL_CHANGE_SCHEMA, purpose="email_change")
             if not content:
                 return {"changed": False, "new_email": "", "confidence": 0, "reason": "Empty AI response", "trigger_snippet": ""}
             parsed = json.loads(content)
@@ -2599,6 +2695,15 @@ class RuleEngine:
     def _count_review(self, track: str, key: str) -> None:
         stats = self.review_stats.setdefault(track, {})
         stats[key] = stats.get(key, 0) + 1
+
+    def log_llm_usage(self) -> Dict[str, Any]:
+        """One log line and one audit row per run: calls, tokens and list-price
+        cost by call type — the measurement channel for every cost change."""
+        summary = self.content.usage_summary()
+        LOGGER.info("LLM usage: %s", json.dumps(summary, sort_keys=True))
+        if summary["totals"]["calls"]:
+            self.db.log("llm_usage", "run_summary", None, summary)
+        return summary
 
     def _suppress_pond_skip(self, person_id: int, fingerprint: str, reason: str) -> str:
         """Suppress a lead the skip check said to skip. The FUB note is written
@@ -3366,8 +3471,11 @@ class RuleEngine:
             return "skipped"
 
         # ── Generate the AI email ──
+        # Bound here so seller_nurture.py keeps its plain llm_call_fn contract.
+        seller_llm_call = functools.partial(
+            self.content._llm_call, schema=EMAIL_DRAFT_SCHEMA, purpose="seller_draft")
         generated = generate_seller_email(
-            llm_call_fn=self.content._llm_call,
+            llm_call_fn=seller_llm_call,
             person=person,
             email_number=emails_sent,
             property_address=prop_addr,
@@ -3561,6 +3669,7 @@ class RuleEngine:
         self.scan_agent_followup()
         self.scan_email_address_updates()
         self.send_phase2_daily_summary()
+        self.log_llm_usage()
         if self.mailbox.stats["lookups"] or self.mailbox.disabled_reason:
             LOGGER.info("Mailbox reply reader: %s — %s",
                         self.mailbox.describe(), json.dumps(self.mailbox.stats, sort_keys=True))

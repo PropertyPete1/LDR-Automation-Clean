@@ -54,8 +54,7 @@ The protocol is `pond-nurture-bot/src/fub_automation/state_sync.py`, the reconci
 | Secret | Purpose |
 | --- | --- |
 | `FUB_API_KEY` | Follow Up Boss API key |
-| `ANTHROPIC_API_KEY` | Anthropic API key for LLM email generation |
-| `LLM_MODEL` | Model ID (currently `claude-sonnet-4-6`) |
+| `ANTHROPIC_API_KEY` | Anthropic API key for LLM email generation. The model is pinned in code (`LLM_MODEL_ID` in `main.py`, `claude-haiku-4-5-20251001`); the old `LLM_MODEL` secret is no longer read and can be deleted |
 | `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_PORT` | Email sending credentials |
 | `STATE_ENCRYPTION_KEY` | AES-256 key for encrypting the SQLite state DB |
 | `DASHBOARD_URL` | Lifestyle Bot Dashboard URL |

@@ -16,7 +16,6 @@ env:
   DRY_RUN: "false"
   FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-  LLM_MODEL: ${{ secrets.LLM_MODEL }}
   SMTP_HOST: ${{ secrets.SMTP_HOST }}
   SMTP_PORT: ${{ secrets.SMTP_PORT }}
   SMTP_USER: ${{ secrets.SMTP_USER }}
