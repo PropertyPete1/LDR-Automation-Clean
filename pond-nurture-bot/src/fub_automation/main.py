@@ -85,6 +85,8 @@ UTC = dt.timezone.utc
 #: snapshot, not an alias, so the model cannot change without a commit here.
 LLM_MODEL_ID = "claude-haiku-4-5-20251001"
 #: Haiku 4.5 list prices, USD per token — only for the per-run usage summary.
+#: The pond draft's sampling temperature, shared by the sync and batch paths.
+POND_DRAFT_TEMPERATURE = 0.86
 LLM_PRICE_PER_TOKEN = {
     "input": 1.00e-6,
     "output": 5.00e-6,
@@ -1619,6 +1621,8 @@ class ContentGenerator:
             est = (t["input_tokens"] * price["input"] + t["output_tokens"] * price["output"]
                    + t["cache_creation_input_tokens"] * price["cache_write"]
                    + t["cache_read_input_tokens"] * price["cache_read"])
+            if purpose.endswith("_batch"):
+                est *= 0.5  # Message Batches bill every token at half price
             by_type[purpose] = dict(t, est_usd=round(est, 4))
             totals["calls"] += t["calls"]
             totals["input_tokens"] += t["input_tokens"]
@@ -1627,12 +1631,10 @@ class ContentGenerator:
         totals["est_usd"] = round(totals["est_usd"], 4)
         return {"model": self.model, "by_type": by_type, "totals": totals}
 
-    def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True,
-                  schema: Optional[dict] = None, purpose: str = "other") -> str:
-        """Unified LLM call via Anthropic SDK. Returns raw content string.
-
-        schema: a structured-output JSON schema; the reply is decoded to it.
-        purpose: the call type the per-run usage tally files this call under."""
+    def _message_params(self, messages: list, temperature: float = 0.7,
+                        schema: Optional[dict] = None) -> Dict[str, Any]:
+        """The Messages API request body. The batch path sends exactly this, so
+        a batched draft and a synchronous one are the same request."""
         # Separate system message from user messages
         system_text = ""
         user_messages = []
@@ -1644,20 +1646,21 @@ class ContentGenerator:
         if not user_messages:
             user_messages = [{"role": "user", "content": "Please respond."}]
 
-        kwargs = {
+        params: Dict[str, Any] = {
             "model": self.model,
             "max_tokens": 4096,
             "temperature": temperature,
             "messages": user_messages,
         }
         if system_text:
-            kwargs["system"] = system_text
+            params["system"] = system_text
         if schema is not None:
-            kwargs["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+            params["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+        return params
 
-        response = self.client.messages.create(**kwargs)
-        self._record_usage(purpose, getattr(response, "usage", None))
-        content = response.content[0].text if response.content else ""
+    @staticmethod
+    def _reply_text(message: Any) -> str:
+        content = message.content[0].text if getattr(message, "content", None) else ""
         # Strip markdown code fences if present (common with Claude JSON output)
         if content.startswith("```"):
             lines = content.split("\n")
@@ -1665,6 +1668,60 @@ class ContentGenerator:
             lines = [l for l in lines[1:] if l.strip() != "```"]
             content = "\n".join(lines)
         return content
+
+    def _llm_call(self, messages: list, temperature: float = 0.7, json_mode: bool = True,
+                  schema: Optional[dict] = None, purpose: str = "other") -> str:
+        """Unified LLM call via Anthropic SDK. Returns raw content string.
+
+        schema: a structured-output JSON schema; the reply is decoded to it.
+        purpose: the call type the per-run usage tally files this call under."""
+        response = self.client.messages.create(**self._message_params(messages, temperature, schema))
+        self._record_usage(purpose, getattr(response, "usage", None))
+        return self._reply_text(response)
+
+    def draft_pond_batch(self, requests: Dict[str, Tuple[Dict[str, Any], dict]],
+                         max_wait_s: float, poll_s: float = 30.0) -> Dict[str, dict]:
+        """Draft many pond emails in one Message Batch (half price).
+
+        requests: custom_id -> (Messages API params, draft meta).
+        Returns custom_id -> parsed draft for every request the batch finished
+        within max_wait_s. A missing id — not finished in time, errored,
+        expired, unparseable, or the Batches API itself failing — is the
+        caller's cue to draft that lead synchronously. Never raises."""
+        if not requests or max_wait_s <= 0:
+            return {}
+        try:
+            batch = self.client.messages.batches.create(requests=[
+                {"custom_id": custom_id, "params": params}
+                for custom_id, (params, _meta) in requests.items()
+            ])
+            deadline = time.monotonic() + max_wait_s
+            while batch.processing_status != "ended":
+                if time.monotonic() >= deadline:
+                    LOGGER.warning("Pond draft batch %s not done after %.0fs — cancelling; drafting the rest synchronously",
+                                   batch.id, max_wait_s)
+                    try:
+                        self.client.messages.batches.cancel(batch.id)
+                    except Exception as cancel_exc:  # noqa: BLE001
+                        LOGGER.warning("Pond draft batch %s cancel failed: %s", batch.id, cancel_exc)
+                    return {}
+                time.sleep(poll_s)
+                batch = self.client.messages.batches.retrieve(batch.id)
+            drafts: Dict[str, dict] = {}
+            for item in self.client.messages.batches.results(batch.id):
+                if item.custom_id not in requests or item.result.type != "succeeded":
+                    continue
+                self._record_usage("pond_draft_batch", getattr(item.result.message, "usage", None))
+                try:
+                    drafts[item.custom_id] = self.parse_pond_draft(
+                        self._reply_text(item.result.message), requests[item.custom_id][1])
+                except (ValueError, TypeError) as parse_exc:
+                    LOGGER.warning("Pond draft batch: unusable draft for %s (%s) — drafting synchronously",
+                                   item.custom_id, parse_exc)
+            return drafts
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Pond draft batch failed (%s) — drafting synchronously", exc)
+            return {}
 
     @staticmethod
     def extract_json_object(content: str) -> str:
@@ -1906,6 +1963,29 @@ NO_WINDOW"""
             return None
 
     def generate(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "", is_value_led: bool = False) -> dict:
+        """Draft one pond email now (the synchronous path)."""
+        prompt, meta = self.pond_draft_prompt(
+            person, city, market_context, lead_context,
+            recent_note_text=recent_note_text, recent_email_thread=recent_email_thread,
+            holiday=holiday, engagement_tier=engagement_tier, full_note_history=full_note_history,
+            last_angle_used=last_angle_used, is_value_led=is_value_led,
+        )
+        content = self._llm_call(messages=[{"role": "user", "content": prompt}], temperature=POND_DRAFT_TEMPERATURE, schema=EMAIL_DRAFT_SCHEMA, purpose="pond_draft")
+        return self.parse_pond_draft(content, meta)
+
+    @staticmethod
+    def parse_pond_draft(content: str, meta: dict) -> dict:
+        LOGGER.debug("LLM Response content: %s", (content or "")[:200])
+        if not content:
+            LOGGER.error("LLM returned empty content")
+            raise ValueError("LLM returned empty content")
+        generated = json.loads(content)
+        generated.update(meta)
+        return generated
+
+    def pond_draft_prompt(self, person: dict, city: str, market_context: str, lead_context: str = "", recent_note_text: str = "", recent_email_thread: str = "", holiday: str = "", engagement_tier: str = "standard", full_note_history: str = "", last_angle_used: str = "", is_value_led: bool = False) -> Tuple[str, dict]:
+        """The pond draft prompt and the draft meta (angle, referral ask) —
+        shared by the synchronous draft and the batched one."""
         first_name = greeting_first_name(person)
         person_id = int(person.get("id") or 0)
         cycle_seed = f"{person_id}-{dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
@@ -2042,15 +2122,7 @@ NO_WINDOW"""
         - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86, schema=EMAIL_DRAFT_SCHEMA, purpose="pond_draft")
-        LOGGER.debug("LLM Response content: %s", content[:200])
-        if not content:
-            LOGGER.error("LLM returned empty content")
-            raise ValueError("LLM returned empty content")
-        generated = json.loads(content)
-        generated["freshness_angle"] = angle
-        generated["asked_referral"] = ask_referral
-        return generated
+        return textwrap.dedent(prompt).strip(), {"freshness_angle": angle, "asked_referral": ask_referral}
 
     def generate_closed_drip_email(
         self,
@@ -2672,6 +2744,18 @@ _DEAL_RETRY_BACKOFF_SECONDS = 1.5
 _DEAL_FETCH_FAILED = object()     # cache sentinel — never confuse with []
 
 
+@dataclass
+class PondDraftJob:
+    """A pond lead that passed every check and is waiting for its draft."""
+
+    person: dict
+    person_id: int
+    draft_kwargs: Dict[str, Any]  # ContentGenerator.generate(**draft_kwargs)
+    city: str
+    city_source: str
+    tier: str
+
+
 class RuleEngine:
     def __init__(self, settings: Settings, rules: Rules, fub: FollowUpBossClient, db: AuditDB):
         self.settings = settings
@@ -2691,6 +2775,13 @@ class RuleEngine:
         # Per-run tally of note checks run fresh vs remembered (note_review),
         # logged at the end of each scan so the saving is visible in the log.
         self.review_stats: Dict[str, Dict[str, int]] = {"pond": {}, "seller": {}}
+        # Batch mode (scan_stale_leads): leads that pass every check queue here
+        # instead of drafting one by one; None means draft-and-send inline.
+        self._pond_draft_queue: Optional[List[PondDraftJob]] = None
+        # When this run began — the batch wait is bounded by what is left of
+        # the run's time budget, so batching can never push the job into its
+        # workflow timeout.
+        self._run_started = time.monotonic()
 
     def _count_review(self, track: str, key: str) -> None:
         stats = self.review_stats.setdefault(track, {})
@@ -3754,25 +3845,39 @@ class RuleEngine:
             )
         except Exception as _controls_exc:  # noqa: BLE001
             LOGGER.warning("controls.json could not be applied (%s) — the daily cap stands", _controls_exc)
-        for person in candidates:
-            # Skip leads not in the configured pond immediately to avoid clogging database with logs
-            if self.rules.pond_nurture_only and self.rules.pond_ids:
-                assigned_pond_id = person.get("assignedPondId")
-                if not assigned_pond_id or int(assigned_pond_id) not in [int(pid) for pid in self.rules.pond_ids]:
-                    continue
+        # Batch mode: leads that pass every check queue for one half-price
+        # draft batch, then are re-checked and sent after the walk. A queued
+        # draft counts against the cap like a send, so the batch never drafts
+        # more emails than today may send.
+        self._pond_draft_queue = [] if self._pond_batch_enabled() else None
+        try:
+            for person in candidates:
+                # Skip leads not in the configured pond immediately to avoid clogging database with logs
+                if self.rules.pond_nurture_only and self.rules.pond_ids:
+                    assigned_pond_id = person.get("assignedPondId")
+                    if not assigned_pond_id or int(assigned_pond_id) not in [int(pid) for pid in self.rules.pond_ids]:
+                        continue
                     
-            if cap and sent_count >= cap:
-                self.db.log("pond_nurture", "launch_cap_reached", None, {"cap": cap, "governed_by": _governed_by})
-                if _governed_by == "controls":
-                    LOGGER.info("[controls] send blocked: daily cap %s reached (daily_email_target from controls.json@%s)", cap, (_controls_sha or "unknown")[:7])
-                break
-            try:
-                status = self.process_reengagement_candidate(person)
-                if status in ("sent", "dry_run_sent"):
-                    sent_count += 1
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.exception("pond nurture failed for person %s", person.get("id"))
-                self.db.log("pond_nurture", "error", person.get("id"), {"error": str(exc)})
+                if cap and sent_count >= cap:
+                    self.db.log("pond_nurture", "launch_cap_reached", None, {"cap": cap, "governed_by": _governed_by})
+                    if _governed_by == "controls":
+                        LOGGER.info("[controls] send blocked: daily cap %s reached (daily_email_target from controls.json@%s)", cap, (_controls_sha or "unknown")[:7])
+                    break
+                try:
+                    status = self.process_reengagement_candidate(person)
+                    if status in ("sent", "dry_run_sent"):
+                        sent_count += 1
+                    elif status == "queued":
+                        sent_count += 1  # a queued draft holds a send slot until the flush
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.exception("pond nurture failed for person %s", person.get("id"))
+                    self.db.log("pond_nurture", "error", person.get("id"), {"error": str(exc)})
+        finally:
+            # Always leave batch mode, and send whatever already qualified —
+            # even if the walk itself broke off.
+            queued, self._pond_draft_queue = self._pond_draft_queue or [], None
+            if queued:
+                self._flush_pond_drafts(queued)
         LOGGER.info("Note reviews (pond): %s", json.dumps(self.review_stats.get("pond", {}), sort_keys=True))
 
     def scan_stale_agent_no_note_reassignment(self) -> None:
@@ -5079,16 +5184,28 @@ class RuleEngine:
                 if n_body:
                     note_snippets.append(f"[{n_date[:10]}] {n_body[:300]}")
             full_note_history = "\n".join(note_snippets)
-        generated = self.content.generate(
-            person, city or "Texas", market_context, lead_context,
-            recent_note_text=recent_note_text,
-            recent_email_thread=recent_email_thread,
-            holiday=_today_holiday,
-            engagement_tier=tier,
-            full_note_history=full_note_history,
-            last_angle_used=last_angle_used,
-            is_value_led=is_value_led,
+        job = PondDraftJob(
+            person=person, person_id=person_id, city=city, city_source=city_source, tier=tier,
+            draft_kwargs=dict(
+                person=person, city=city or "Texas", market_context=market_context,
+                lead_context=lead_context, recent_note_text=recent_note_text,
+                recent_email_thread=recent_email_thread, holiday=_today_holiday,
+                engagement_tier=tier, full_note_history=full_note_history,
+                last_angle_used=last_angle_used, is_value_led=is_value_led,
+            ),
         )
+        if self._pond_draft_queue is not None:
+            # Batch mode: drafted with the rest of today's pond at half price,
+            # then re-checked lead by lead right before it is sent.
+            self._pond_draft_queue.append(job)
+            return "queued"
+        return self._send_pond_email(job, self.content.generate(**job.draft_kwargs))
+
+    def _send_pond_email(self, job: PondDraftJob, generated: dict) -> str:
+        """Send one drafted pond email, log the FUB note and the audit row."""
+        person, person_id = job.person, job.person_id
+        city, city_source, tier = job.city, job.city_source, job.tier
+        emails = person.get("emails") or []
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
             from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
@@ -5157,6 +5274,129 @@ class RuleEngine:
             return _send_status
         self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
         return "suppressed"
+
+    # ── Batched pond drafts (Message Batches API, 2026-09 cost audit) ──────────
+    #
+    # The pond is walked exactly as before — every check, same order — but a
+    # lead that passes them all is queued instead of drafted on the spot. The
+    # queue is drafted in ONE batch at half price. Time passes between the
+    # checks and the send (the batch's minutes), so every send-time check runs
+    # again, on a freshly fetched FUB record, right before each email goes out.
+    # Whatever the batch did not return in time is drafted synchronously —
+    # after the re-check, so a lead that no longer qualifies costs nothing more.
+
+    #: Room left after the pond phase for the rest of the daily run (seller,
+    #: recruiting, reply detection, wide sweep ~25 min on 2026-09-24) inside the
+    #: ramp's runtime guardrail (80% of the 120-minute workflow timeout).
+    POND_PHASE_BUDGET_S = 70 * 60
+    #: What one lead costs AFTER the batch if its draft must be made inline:
+    #: the send-time re-check, a synchronous draft and the send itself.
+    POND_FALLBACK_S_PER_LEAD = 6.5
+
+    @staticmethod
+    def _pond_batch_enabled() -> bool:
+        """POND_DRAFT_BATCH=off drafts inline again — no code change needed."""
+        return os.environ.get("POND_DRAFT_BATCH", "on").strip().lower() not in {"off", "0", "false", "no"}
+
+    def _pond_batch_wait_s(self, queued: int) -> float:
+        """How long the batch may run: POND_BATCH_MAX_WAIT_S (default 15 min),
+        cut to what the run's budget still allows after an all-inline fallback."""
+        try:
+            ceiling = float(os.environ.get("POND_BATCH_MAX_WAIT_S", "900"))
+        except ValueError:
+            ceiling = 900.0
+        elapsed = time.monotonic() - self._run_started
+        room = self.POND_PHASE_BUDGET_S - elapsed - queued * self.POND_FALLBACK_S_PER_LEAD
+        return max(0.0, min(ceiling, room))
+
+    def _flush_pond_drafts(self, jobs: List[PondDraftJob]) -> int:
+        """Draft the queued pond emails in one batch, then re-check and send
+        each. Returns how many went out."""
+        started = time.monotonic()
+        wait_s = self._pond_batch_wait_s(len(jobs))
+        requests: Dict[str, Tuple[Dict[str, Any], dict]] = {}
+        if wait_s >= 60:
+            for job in jobs:
+                prompt, meta = self.content.pond_draft_prompt(**job.draft_kwargs)
+                params = self.content._message_params(
+                    [{"role": "user", "content": prompt}], POND_DRAFT_TEMPERATURE, EMAIL_DRAFT_SCHEMA)
+                requests[f"pond-{job.person_id}"] = (params, meta)
+        drafts = self.content.draft_pond_batch(requests, wait_s) if requests else {}
+        LOGGER.info(
+            "Pond draft batch: %d queued, %d drafted by the batch in %.0fs (wait allowed %.0fs); "
+            "the rest are drafted inline if they pass the send-time re-check",
+            len(jobs), len(drafts), time.monotonic() - started, wait_s,
+        )
+        self._opted_out_cache = None  # an opt-out recorded meanwhile must count
+        sent = 0
+        for job in jobs:
+            try:
+                status = self._send_pond_draft_after_recheck(job, drafts.get(f"pond-{job.person_id}"))
+                if status in ("sent", "dry_run_sent"):
+                    sent += 1
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception("pond nurture failed for person %s", job.person_id)
+                self.db.log("pond_nurture", "error", job.person_id, {"error": str(exc)})
+        return sent
+
+    def _send_pond_draft_after_recheck(self, job: PondDraftJob, generated: Optional[dict]) -> str:
+        blocked = self._pond_send_time_recheck(job)
+        if blocked:
+            return blocked
+        if generated is None:
+            # Not returned by the batch in time (or the batch failed): draft
+            # now, at full price — only for leads that still qualify.
+            LOGGER.info("Pond draft for person %s not returned by the batch — drafting inline", job.person_id)
+            generated = self.content.generate(**job.draft_kwargs)
+        return self._send_pond_email(job, generated)
+
+    def _pond_send_time_recheck(self, job: PondDraftJob) -> Optional[str]:
+        """Every send-time check again, on a fresh FUB record. Returns the
+        status that blocks the send (already logged), or None to send.
+        Nothing here is cached from the walk: the record, the deals, the
+        opt-out ledger, the inbound messages and the contact gap are re-read."""
+        person_id = job.person_id
+        try:
+            fresh = self.fub.get_person(person_id)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Send-time re-check: could not re-fetch person %s: %s", person_id, exc)
+            fresh = None
+        if not fresh:
+            self.db.log("pond_nurture", "skipped", person_id,
+                        {"reason": "send-time re-check: FUB record unavailable — retry next run", "drafted": True})
+            return "skipped"
+
+        def block(status: str, reason: str) -> str:
+            self.db.log("pond_nurture", status, person_id,
+                        {"reason": f"send-time re-check: {reason}", "drafted": True})
+            return status
+
+        if self.is_excluded(fresh) or self.has_any_tag(fresh, self.rules.phase2_manual_suppression_tags):
+            return block("suppressed", "excluded stage/tag, opt-out ledger or manual suppression tag")
+        if not self.qualifies_for_reengagement(fresh):
+            return block("suppressed", "no longer in the configured pond")
+        excluded_src = self._is_excluded_source(fresh)
+        if excluded_src:
+            return block("suppressed", f"excluded source: {excluded_src}")
+        soi_rule = self._is_soi_silenced(fresh)
+        if soi_rule:
+            return block("suppressed", f"soi_silenced (rule matched: {soi_rule})")
+        if not self.rules.email_outreach_enabled or not (fresh.get("emails") or []):
+            return block("suppressed", "no eligible email channel or email outreach disabled")
+        if self.has_any_tag(fresh, self.rules.email_opt_out_tags):
+            return block("suppressed", "email opt-out tag")
+        getattr(self, "_deal_cache", {}).pop(person_id, None)  # ask FUB again, not this run's cache
+        if self._has_any_deal(person_id):
+            return block("suppressed", "has deal in FUB deal room — protected from all automation")
+        if self._is_lease_listing_silenced(person_id):
+            return block("suppressed", "lease listing silenced")
+        if self.was_contacted_recently(fresh, days=3):
+            return block("skipped", "contacted within last 3 days")
+        opt_out_result = self._check_incoming_opt_out(person_id, fresh)
+        if opt_out_result:
+            return opt_out_result  # logged (and acted on) by the check itself
+        job.person = fresh
+        return None
 
 
     def _check_mysql_sms_today(self, person_id: int) -> bool:
