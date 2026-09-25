@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-PIDS = [2179, 1955, 2145, 3022, 1258, 1782, 415, 3400, 1708, 1803, 1868]
+PIDS = [3725, 3883, 4017, 4461, 4504, 4556, 4804, 5019, 5103]
 
 # Notes this bot (and Cowork) write. Summarised, not printed: the question is
 # what HUMANS wrote about the lead.
@@ -33,6 +33,20 @@ BOT_SUBJECT_MARKERS = (
     "long-term nurture email sent", "instant welcome email sent",
     "seller nurture", "[cowork reengage]",
 )
+# Exactly fix 1's filter (fix/remember-note-checks), to show what it would hide.
+FIX1_MARKERS = ("pond nurture", "check-in email sent", "long-term nurture email sent",
+    "welcome email sent", "seller nurture email sent", "reassigned to lead pond",
+    "pond lead reassigned", "moved to lead pond", "speed-to-lead warning",
+    "untouched assignment warning")
+FIX1_LIFESTYLE = re.compile(r"^\s*\[[^\]]{1,60}\]\s*(?:skipped automated follow-up|follow-up email sent)", re.I)
+
+
+def fix1_hides(note):
+    subject = str(note.get("subject") or "").lower()
+    body = re.sub(r"<[^>]+>", " ", str(note.get("body") or ""))
+    if any(m in subject for m in FIX1_MARKERS) or FIX1_LIFESTYLE.match(body):
+        return True
+    return "[cowork reengage]" in subject or "[cowork reengage]" in body.lower()
 
 
 def _p(line: str = "") -> None:
@@ -98,12 +112,16 @@ def main(argv=None) -> int:
         by_subject = collections.Counter(str(n.get("subject") or "")[:60] for n in bot)
         _p(f"  notes: {len(notes)} total, {len(human)} human/other, {len(bot)} bot-authored")
         _p(f"  bot notes by subject: {dict(by_subject)}")
-        _p("  HUMAN/OTHER NOTES (newest first):")
-        for n in human[:40]:
-            _p(f"   - [{str(n.get('created') or '')[:10]}] by={n.get('createdBy')!r} "
-               f"subject={_clean(n.get('subject'), 80)!r}")
-            _p(f"     {_clean(n.get('body'), 900)}")
-
+        _p("  NOTES MENTIONING tiffany/automation/remove (newest first):")
+        for n in notes:
+            text = f"{n.get('subject') or ''} {n.get('body') or ''}".lower()
+            if not re.search(r"tiffany|automation|remov|do not|don't", text):
+                continue
+            tag = "HIDDEN-BY-FIX1" if fix1_hides(n) else "KEPT"
+            _p(f"   - [{tag}] [{str(n.get('created') or '')[:10]}] by={n.get('createdBy')!r} subject={_clean(n.get('subject'), 80)!r}")
+            _p(f"     {_clean(n.get('body'), 500)}")
+        kept = [n for n in notes if not fix1_hides(n)]
+        _p(f"  fix1 keeps {len(kept)} of {len(notes)} notes as evidence")
         try:
             texts = fub.get_text_messages(pid, limit=20)
         except Exception as exc:  # noqa: BLE001
