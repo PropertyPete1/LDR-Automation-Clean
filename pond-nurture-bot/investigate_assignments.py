@@ -1,224 +1,118 @@
 #!/usr/bin/env python3
-"""Read-only investigation: today's assignments vs what the automation did.
+"""DIAG BRANCH ONLY (diag/skip-recheck) — never merge.
 
-Built for the 2026-08-25 incident report: several leads distributed in the
-morning, one speed-to-lead alert fired (Jose Brito → Laila, 13:57 UTC),
-nothing else. For every lead created in the window and every lead whose
-record changed in the window, this prints what FUB says, what the state DB
-says (timers, watch rows, audit trail), and — for created leads — which
-poll_new_leads gate would exclude them, evaluated with the REAL gate code.
+Read-only recheck for the 2026-09-24 cost audit: 11 pond leads the LLM skip
+check said to skip (2026-09-11..23) that were drafted a day or three later.
+For each one this prints the lead's HUMAN notes verbatim (bot-authored notes
+are summarised by subject only), inbound texts, the pond_nurture audit trail
+and any opt-out ledger row, so each skip can be judged against the original
+notes rather than the bot's own skip reasons.
 
-READ-ONLY: every FUB call is a GET, the state DB is opened after a pull and
-never pushed. DRY_RUN is pinned so even a mistake cannot write.
-
-USAGE
-    python3 investigate_assignments.py --hours 48 --focus 6327
+READ-ONLY: every FUB call is a GET, DRY_RUN is pinned, the state DB is pulled
+and never pushed (the workflow has contents: read). Runs under the registered
+investigate-assignments workflow, which passes --hours/--focus; both ignored.
 """
 from __future__ import annotations
 
 import argparse
-import datetime as dt
+import collections
 import os
+import re
+import sqlite3
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-UTC = dt.timezone.utc
+PIDS = [2179, 1955, 2145, 3022, 1258, 1782, 415, 3400, 1708, 1803, 1868]
+
+# Notes this bot (and Cowork) write. Summarised, not printed: the question is
+# what HUMANS wrote about the lead.
+BOT_SUBJECT_MARKERS = (
+    "pond nurture", "automation:", "quarterly check-in email sent",
+    "long-term nurture email sent", "instant welcome email sent",
+    "seller nurture", "[cowork reengage]",
+)
 
 
-def _p(line: str) -> None:
+def _p(line: str = "") -> None:
     print(line, flush=True)
 
 
-def poll_gate_verdict(engine, person: dict, created_cutoff: dt.datetime) -> str:
-    """Which poll_new_leads gate stops this lead, evaluated with the real
-    predicates — 'timer' means nothing stops it."""
-    from fub_automation.main import parse_fub_datetime
-
-    created = parse_fub_datetime(person.get("created"))
-    if not created or created < created_cutoff:
-        return "GATE createdAfter-24h: not a recently created lead — invisible to polling"
-    if engine.is_excluded(person):
-        return "GATE is_excluded: stage/tag exclusion"
-    if engine._is_excluded_source(person):
-        return f"GATE excluded source: {engine._is_excluded_source(person)}"
-    if engine._is_soi_silenced(person):
-        return "GATE SOI silenced"
-    assigned = person.get("assignedUserId")
-    if not assigned:
-        return "GATE unassigned: no assignedUserId — no timer until an agent gets it"
-    if int(assigned) == int(engine.rules.peter_user_id or -1):
-        return "GATE assigned to Peter: timers only guard agent assignments"
-    return "timer"
+def _clean(text: str, limit: int) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(text or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[:limit] + " …[truncated]"
 
 
-def describe_lead(engine, db, person: dict, users: Dict[int, dict],
-                  created_cutoff: dt.datetime, window_start: dt.datetime) -> None:
-    pid = int(person["id"])
-    name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip() or f"#{pid}"
-    assigned = person.get("assignedUserId")
-    agent = (users.get(int(assigned), {}).get("name") if assigned else None) or assigned
-    _p(f"  lead {pid} {name!r} created={person.get('created')} "
-       f"updated={person.get('updated')} stage={person.get('stage')} "
-       f"agent={agent!r} pond={person.get('assignedPondId')} "
-       f"lastActivity={person.get('lastActivity')}")
-
-    watch = db.get_assignment_watch(pid)
-    if watch:
-        _p(f"    watch: assigned_user_id={watch['assigned_user_id']} "
-           f"first_seen={watch['first_seen_at']} last_alert={watch['last_alert_at']}"
-           + ("  ← ASSIGNEE CHANGED since watch" if assigned and watch["assigned_user_id"] != int(assigned) else ""))
-    else:
-        _p("    watch: NO ROW — never observed by the daily safety net")
-
-    import sqlite3 as _sq
-    con = _sq.connect(db.path)
-    con.row_factory = _sq.Row
-    timers = [dict(r) for r in con.execute(
-        "SELECT * FROM new_lead_timers WHERE person_id=?", (pid,))]
-    con.close()
-    if timers:
-        for t in timers:
-            _p(f"    timer: started={t['created_at']} agent={t['assigned_user_id']} "
-               f"warned={t['warned_at']} reassigned={t['reassigned_at']} "
-               f"canceled={t['canceled_at']}")
-    else:
-        _p("    timer: NONE")
-    for row in db.recent_audit_rows(
-            ["new_lead_timer", "speed_to_lead_alert", "new_lead_warning",
-             "new_lead_reassigned", "untouched_assignment_alert"], window_start):
-        if int(row.get("person_id") or 0) == pid:
-            _p(f"    audit: {row['created_at']} {row['action']}/{row['status']}")
-    _p(f"    verdict: {poll_gate_verdict(engine, person, created_cutoff)}")
+def _is_bot_note(note: dict) -> bool:
+    subject = str(note.get("subject") or note.get("title") or "").lower()
+    body = str(note.get("body") or "").lower()
+    return any(m in subject for m in BOT_SUBJECT_MARKERS) or "[cowork reengage]" in body[:200]
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Assignment investigation, read-only.")
-    parser.add_argument("--hours", type=int, default=48)
-    parser.add_argument("--focus", type=int, default=None,
-                        help="Person id to detail (notes included).")
-    args = parser.parse_args(argv)
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--hours", default=None)
+    parser.add_argument("--focus", default=None)
+    parser.parse_args(argv)
 
     os.environ["DRY_RUN"] = "true"
     os.environ.setdefault("FUB_DISABLE_SCHEDULER", "true")
 
-    from fub_automation.main import (
-        AuditDB,
-        FollowUpBossClient,
-        RuleEngine,
-        Rules,
-        Settings,
-        parse_fub_datetime,
-    )
+    from fub_automation.main import FollowUpBossClient, Settings, is_inbound_message
 
     settings = Settings.from_env()
     if not settings.fub_api_key:
-        _p("FUB_API_KEY missing — nothing to investigate.")
+        _p("FUB_API_KEY missing — nothing to check.")
         return 2
-    rules = Rules.load(settings.rules_path)
-    db = AuditDB(settings.database_path)
-    engine = RuleEngine(settings, rules, FollowUpBossClient(settings), db)
-    fub = engine.fub
+    fub = FollowUpBossClient(settings)
+    con = sqlite3.connect(settings.database_path)
+    con.row_factory = sqlite3.Row
 
-    now = dt.datetime.now(UTC)
-    window_start = now - dt.timedelta(hours=args.hours)
-    created_cutoff = now - dt.timedelta(hours=24)  # poll_new_leads' own window
-    users = fub.users_cache() if hasattr(fub, "users_cache") else {}
-    if not users:
-        users = engine.user_cache_by_id()
+    for pid in PIDS:
+        _p("=" * 100)
+        person = fub.get_person(pid) or {}
+        name = f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
+        tags = [t.get("name") if isinstance(t, dict) else t for t in (person.get("tags") or [])]
+        _p(f"LEAD {pid} {name!r} stage={person.get('stage')!r} source={person.get('source')!r} "
+           f"assignedTo={person.get('assignedTo')!r} pond={person.get('assignedPondId')} "
+           f"created={person.get('created')}")
+        _p(f"  tags={tags}")
+        _p(f"  emails_on_record={len(person.get('emails') or [])} "
+           f"unsubscribed_flags={[k for k in ('unsubscribed', 'emailOptOut', 'unsubscribedEmail', 'isUnsubscribed') if person.get(k)]}")
 
-    _p(f"=== A. Leads CREATED in the last {args.hours}h ===")
-    created_ids = set()
-    created_leads = fub.get_people(
-        createdAfter=window_start.strftime("%Y-%m-%d %H:%M:%S"), fields="allFields")
-    for person in created_leads:
-        created_ids.add(int(person["id"]))
-        describe_lead(engine, db, person, users, created_cutoff, window_start)
+        ledger = con.execute("SELECT * FROM opt_outs WHERE person_id=?", (pid,)).fetchall()
+        _p(f"  opt-out ledger: {[dict(r) for r in ledger] or 'none'}")
+        rows = con.execute(
+            "SELECT created_at, action, status, details FROM audit_log WHERE person_id=? "
+            "AND created_at >= '2026-09-08' AND action IN ('pond_nurture','seller_nurture') "
+            "ORDER BY created_at", (pid,)).fetchall()
+        _p("  pond/seller audit since 09-08:")
+        for r in rows:
+            _p(f"    {r['created_at'][:16]} {r['action']} {r['status']} {_clean(r['details'], 180)}")
 
-    _p(f"\n=== B. Leads whose record CHANGED in the last {args.hours}h "
-       "(assignment-change candidates; FUB keeps no assignment history, so the "
-       "watch-table diff and timer absence are the evidence) ===")
-    params: Dict[str, object] = {"sort": "-updated", "limit": 100}
-    pages = 0
-    stop = False
-    while pages < 10 and not stop:
-        data = fub._request("GET", "/people", params=dict(params))
-        people = data.get("people", data.get("data", []))
-        if not people:
-            break
-        for person in people:
-            updated = parse_fub_datetime(person.get("updated"))
-            if updated and updated < window_start:
-                stop = True
-                break
-            if int(person["id"]) in created_ids:
-                continue
-            detail = fub.get_person(int(person["id"])) or person
-            describe_lead(engine, db, detail, users, created_cutoff, window_start)
-        pages += 1
-        cursor = data.get("_metadata", {}).get("next")
-        if not cursor or stop:
-            break
-        params["next"] = cursor
+        notes = fub.get_notes(pid, limit=100)
+        human = [n for n in notes if not _is_bot_note(n)]
+        bot = [n for n in notes if _is_bot_note(n)]
+        by_subject = collections.Counter(str(n.get("subject") or "")[:60] for n in bot)
+        _p(f"  notes: {len(notes)} total, {len(human)} human/other, {len(bot)} bot-authored")
+        _p(f"  bot notes by subject: {dict(by_subject)}")
+        _p("  HUMAN/OTHER NOTES (newest first):")
+        for n in human[:40]:
+            _p(f"   - [{str(n.get('created') or '')[:10]}] by={n.get('createdBy')!r} "
+               f"subject={_clean(n.get('subject'), 80)!r}")
+            _p(f"     {_clean(n.get('body'), 900)}")
 
-    _p(f"\n=== C. State DB: timers + related audit in the last {args.hours}h ===")
-    import sqlite3 as _sq
-    con = _sq.connect(db.path)
-    con.row_factory = _sq.Row
-    for t in con.execute("SELECT * FROM new_lead_timers WHERE created_at >= ?",
-                         (window_start.isoformat(),)):
-        _p(f"  timer person={t['person_id']} started={t['created_at']} "
-           f"agent={t['assigned_user_id']} warned={t['warned_at']} "
-           f"reassigned={t['reassigned_at']} canceled={t['canceled_at']}")
-    con.close()
-    for row in db.recent_audit_rows(
-            ["new_lead_timer", "speed_to_lead_alert", "new_lead_warning",
-             "new_lead_reassigned", "untouched_assignment_alert"], window_start):
-        _p(f"  audit {row['created_at']} person={row['person_id']} "
-           f"{row['action']}/{row['status']}")
-
-    if args.focus:
-        _p(f"\n=== D. Focus lead {args.focus} ===")
-        person = fub.get_person(args.focus)
-        if not person:
-            _p("  NOT FOUND in FUB")
-        else:
-            describe_lead(engine, db, person, users, created_cutoff, window_start)
-            for key in ("lastSentEmail", "lastReceivedEmail", "lastReceivedText",
-                        "lastIncomingCall", "lastCall", "lastCommunication"):
-                _p(f"    {key} = {person.get(key)!r}")
-            notes = fub.get_notes(args.focus, limit=10)
-            _p(f"    notes: {len(notes)}")
-            for note in notes[:10]:
-                _p(f"      {note.get('created') or note.get('createdAt')} "
-                   f"createdById={note.get('createdById')} "
-                   f"subj={str(note.get('subject'))[:60]!r}")
-            # Channel rows WITH their author ids — the touch check attributes
-            # every channel this way, so a diagnosis has to see the same fields.
-            for label, rows_ in (("calls", fub.get_calls(args.focus, limit=20)),
-                                 ("texts", fub.get_text_messages(args.focus, limit=20)),
-                                 ("emails", fub.get_emails(args.focus, limit=20))):
-                _p(f"    {label}: {len(rows_)}")
-                for row in rows_[:20]:
-                    _p(f"      {row.get('created') or row.get('createdAt')} "
-                       f"userId={row.get('userId')} "
-                       f"isIncoming={row.get('isIncoming')!r} "
-                       f"outcome/subj={str(row.get('outcome') or row.get('subject') or '')[:40]!r}")
-            # The full timer + assignment audit trail for this person, however
-            # old — section C is window-capped, and a bounced lead's history is
-            # exactly what an incident review needs.
-            import sqlite3 as _sq2
-            con2 = _sq2.connect(db.path)
-            con2.row_factory = _sq2.Row
-            for row in con2.execute(
-                    "SELECT created_at, action, status, details FROM audit_log "
-                    "WHERE person_id=? ORDER BY created_at", (args.focus,)):
-                _p(f"    audit(all): {row['created_at']} {row['action']}/{row['status']} "
-                   f"{str(row['details'])[:120]}")
-            con2.close()
-    _p("\nDone. Every FUB call above was a GET; the state DB was never pushed.")
+        try:
+            texts = fub.get_text_messages(pid, limit=20)
+        except Exception as exc:  # noqa: BLE001
+            texts = []
+            _p(f"  texts: fetch failed ({exc})")
+        inbound = [t for t in texts if is_inbound_message(t)]
+        _p(f"  texts: {len(texts)} fetched, {len(inbound)} inbound")
+        for t in inbound[:10]:
+            _p(f"   < [{str(t.get('created') or '')[:10]}] {_clean(t.get('message') or t.get('body'), 200)}")
     return 0
 
 
