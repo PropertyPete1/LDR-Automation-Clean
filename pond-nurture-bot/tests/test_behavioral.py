@@ -293,7 +293,8 @@ class TestPromptParity:
 
     def test_pond_prompt_has_temporal_rules_and_dated_notes(self, m):
         import inspect
-        src = inspect.getsource(m.ContentGenerator.generate)
+        # The prompt is built by pond_draft_prompt (shared by the sync and batched drafts).
+        src = inspect.getsource(m.ContentGenerator.pond_draft_prompt)
         assert "CRITICAL DATE AWARENESS" in src
         assert "TEMPORAL REASONING" in src
         assert "last_angle_used" in src  # angle rotation persistence feeds the prompt
