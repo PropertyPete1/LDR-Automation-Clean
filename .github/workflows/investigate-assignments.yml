@@ -30,7 +30,7 @@ env:
 jobs:
   investigate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -55,13 +55,10 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      # TEMPORARY on claude/speed-to-lead-peter-gate-nu7gh0 only — reverted
-      # before the PR is ready. Same read-only job (state DB pulled, never
-      # pushed; token contents: read; DRY_RUN pinned), running the new gate
-      # cleanup as a DRY RUN: its own workflow is not dispatchable until it is
-      # on main. No lead PII is printed: the repo is public.
-      - name: Speed-to-lead gate cleanup (dry run)
+      - name: Investigate
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 cleanup_speed_to_lead_gate.py --since "2026-08-25T00:00:00+00:00"
+          python3 investigate_assignments.py \
+            --hours "${{ inputs.hours }}" \
+            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}

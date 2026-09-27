@@ -42,6 +42,7 @@ RUNNER_SCRIPTS = [
     "diagnose_reply_surfaces.py",
     "investigate_assignments.py",
     "repair_speed_to_lead_false_positives.py",
+    "cleanup_speed_to_lead_gate.py",
     "weekly_digest.py",
     "nightly_health.py",
     "export_dashboard_data.py",
