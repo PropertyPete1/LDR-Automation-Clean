@@ -144,7 +144,11 @@ def test_the_welcome_email_never_goes_to_a_recruit(track):
 def test_speed_to_lead_never_arms_a_timer_for_a_recruit(track, tmp_db):
     """The 2026-09-20 import: a recruit assigned to Steven looked like a new buyer lead."""
     track.book[7] = person(7, "Agent Scouting", created_days_ago=0.01)
-    track.book[8] = person(8, "Zillow", created_days_ago=0.01)
+    # The control is a lead Peter added and assigned — the only kind the
+    # speed-to-lead gate (2026-09-27) arms for.
+    track.book[8] = person(8, "Zillow", created_days_ago=0.01,
+                           updated=(NOW - dt.timedelta(days=0.01)).isoformat(),
+                           createdVia="Manually", createdById=2, updatedById=2)
     track.poll_new_leads()
     armed = {int(r["person_id"]) for r in tmp_db.active_new_lead_timers()}
     assert 8 in armed, "control: the buyer created beside him IS timed"

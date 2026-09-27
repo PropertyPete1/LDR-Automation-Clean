@@ -58,6 +58,16 @@ from .seller_nurture import (
     ramp_daily_cap,
     select_send_address,
 )
+from .assigner import (
+    AUTOMATION_EDIT_WINDOW,
+    AUTOMATION_PERSON_WRITE_ACTIONS,
+    REASON_NOT_PETER,
+    REASON_UNKNOWN,
+    UNKNOWN as ASSIGNER_UNKNOWN,
+    AssignerVerdict,
+    automation_write_times,
+    resolve_assigner,
+)
 from .mailbox import MailboxReplyReader, strip_quoted_reply
 from .names import greeting_first_name
 from .recruiting import (
@@ -5383,6 +5393,67 @@ class RuleEngine:
         needs.sort(key=lambda e: e["reply_at"])
         return needs
 
+    #: Plain-words for the gate's `why` codes in the daily summary.
+    GATE_WHY_TEXT = {
+        "last_edit_by_non_peter": "last edited by someone other than Peter",
+        "last_edit_may_be_automation": "last edit may be the automation's own",
+        "last_edit_by_system": "last edited by FUB itself",
+        "last_edit_predates_assignment": "record stamps contradict the change",
+        "actor_fields_missing": "record came back without its creator/editor fields",
+        "person_unreadable": "record could not be read",
+        "creator_not_recorded": "creator not recorded",
+        "created_via_missing": "creation channel not recorded",
+        "no_assignee": "no assignee",
+    }
+
+    def _speed_to_lead_gate_counts(self, since: dt.datetime) -> Dict[str, Any]:
+        """Distinct leads since `since`: timers armed, skipped as not Peter's
+        assignment, and skipped because the assigner is unknown (id → why)."""
+        armed: set = set()
+        not_peter: set = set()
+        unknown: Dict[int, str] = {}
+        for row in self.db.recent_audit_rows(["new_lead_timer", "assignment_change"], since):
+            pid = row.get("person_id")
+            if not pid:
+                continue
+            if row.get("action") == "new_lead_timer" and row.get("status") in (
+                    "started_polling", "started_assignment_change", "started"):
+                armed.add(int(pid))
+                continue
+            try:
+                details = json.loads(row.get("details") or "{}")
+            except ValueError:
+                continue
+            if details.get("reason") == REASON_UNKNOWN:
+                unknown.setdefault(int(pid), str(details.get("why") or "?"))
+            elif details.get("reason") == REASON_NOT_PETER:
+                not_peter.add(int(pid))
+        return {"armed": len(armed), "not_peter": len(not_peter), "unknown": unknown}
+
+    def _render_speed_to_lead_gate(self, counts: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+        """(plain lines, html lines) for the daily summary's gate section."""
+        unknown: Dict[int, str] = counts["unknown"]
+        head = (f"⏱️ SPEED-TO-LEAD — last 24h (timers arm only when Peter assigns): "
+                f"{counts['armed']} armed · {counts['not_peter']} not Peter's assignment · "
+                f"{len(unknown)} assigner unknown")
+        plain = [head]
+        html_out = [f"<p><strong>{html.escape(head)}</strong></p>"]
+        if unknown:
+            plain.append("   Assigner unknown — no timer armed; check who routed these:")
+            items = []
+            for pid, why in list(unknown.items())[:15]:
+                reason = self.GATE_WHY_TEXT.get(why, why)
+                url = f"https://www.followupboss.com/2/people/view/{pid}"
+                plain.append(f"   • FUB ID {pid} — {reason} → {url}")
+                items.append(f"<li><a href='{url}'>FUB ID {pid}</a> — {html.escape(reason)}</li>")
+            if len(unknown) > 15:
+                plain.append(f"   …and {len(unknown) - 15} more.")
+                items.append(f"<li>…and {len(unknown) - 15} more.</li>")
+            html_out.append("<p style='color:#b45309;'>Assigner unknown — no timer armed; "
+                            "check who routed these:</p><ul>" + "".join(items) + "</ul>")
+        plain.append("")
+        return plain, html_out
+
     def send_phase2_daily_summary(self) -> None:
         if not self.rules.phase2_daily_summary_enabled:
             return
@@ -5410,6 +5481,12 @@ class RuleEngine:
                     _ua_details = {}
                 _ua_details["person_id"] = _ua_row.get("person_id")
                 untouched_alerts.append(_ua_details)
+
+        # Speed-to-lead gate (Peter's rule, 2026-09-27) over the trailing 24h —
+        # this summary goes out at 7am, before any business-hours tick, so a
+        # since-midnight window would always read zero. An unknown assigner
+        # never arms a timer; it is counted here so it is never silent.
+        gate_counts = self._speed_to_lead_gate_counts(dt.datetime.now(UTC) - dt.timedelta(hours=24))
 
         # NEEDS A REPLY — collected before the quiet-day gate below, because an
         # unanswered lead makes the day worth an email even when nothing sent.
@@ -5467,7 +5544,7 @@ class RuleEngine:
 
         if not rows and not deal_failed_closed_today and not untouched_alerts \
                 and not needs_reply and not needs_reply_error \
-                and not unverified_inbound:
+                and not unverified_inbound and not gate_counts["unknown"]:
             return
 
         # Warm leads today — the one funnel number worth seeing daily rather than
@@ -5669,6 +5746,8 @@ class RuleEngine:
                 "(deal check failed CLOSED, so nothing was sent).",
                 "",
             ]
+        gate_plain, gate_html = self._render_speed_to_lead_gate(gate_counts)
+        lines += gate_plain
 
         # HTML lines
         html_lines = [
@@ -5697,6 +5776,7 @@ class RuleEngine:
             html_lines.append(
                 f'<p style="color:#b45309;"><strong>⚠️ {deal_failed_closed_today} lead(s) skipped</strong> — '
                 "FUB deals API unavailable (deal check failed CLOSED, so nothing was sent).</p>")
+        html_lines.extend(gate_html)
 
         # Add Peter's direct Tap-to-Text section if we have reassigned leads
         if reassigned_leads_for_peter:
@@ -5937,13 +6017,14 @@ class RuleEngine:
 
     def process_new_lead_timers(self) -> None:
         now = dt.datetime.now(UTC)
-        # A lead the false-positive repair just touched must hold NO timer for
-        # a day: the scan's repair_suppressed guard stops re-ARMING, but a
-        # racing tick that pulled state before the repair pushed can already
-        # have armed one — this cancels it before any warning can fire.
+        # A lead the false-positive repair or the gate cleanup just touched
+        # must hold NO timer for a day: the scan's repair_suppressed guard
+        # stops re-ARMING, but a racing tick that pulled state before the
+        # repair pushed can already have armed one — this cancels it before
+        # any warning can fire.
         recently_repaired: set = set()
         for row in self.db.recent_audit_rows(
-                ["speed_to_lead_repair"], now - dt.timedelta(hours=24)):
+                list(self.SPEED_TO_LEAD_REPAIR_ACTIONS), now - dt.timedelta(hours=24)):
             if row.get("person_id"):
                 recently_repaired.add(int(row["person_id"]))
         # A person can hold duplicate ACTIVE generations when two overlapping
@@ -6240,8 +6321,15 @@ class RuleEngine:
         "pond_keyword_reassignment",
         "new_lead_reassigned",
         "speed_to_lead_repair",
+        "speed_to_lead_gate_cleanup",
     )
     ASSIGNMENT_AUTOMATION_WINDOW_MIN = 30
+    #: Audit actions whose rows mean "the automation just put this lead back
+    #: with an agent" — re-arming is suppressed for a day after either.
+    SPEED_TO_LEAD_REPAIR_ACTIONS = ("speed_to_lead_repair", "speed_to_lead_gate_cleanup")
+    #: new_lead_timer statuses the Peter-only gate writes when it declines to arm.
+    GATE_SKIP_STATUSES = {REASON_NOT_PETER: "skipped_not_peter",
+                          REASON_UNKNOWN: "skipped_assigner_unknown"}
     #: More than this many detected moves in one run reads as a manual bulk
     #: distribution: one digest to Peter instead of paging every agent.
     ASSIGNMENT_BULK_THRESHOLD = 5
@@ -6306,6 +6394,25 @@ class RuleEngine:
         LOGGER.info("Deleted-lead sweep complete: %s checked, %s ghosts cleared.",
                     checked, ghosts)
 
+    def speed_to_lead_own_writes(self, since: dt.datetime) -> List[dict]:
+        """Audit rows of the automation's own FUB person writes since `since`.
+        Those edits go out on Peter's key, so FUB stamps them updatedById=2 —
+        the gate must not read them as Peter routing a lead."""
+        return self.db.recent_audit_rows(list(AUTOMATION_PERSON_WRITE_ACTIONS),
+                                         since - AUTOMATION_EDIT_WINDOW)
+
+    def speed_to_lead_gate(self, person: Optional[dict], since: Optional[dt.datetime],
+                           own_writes: List[dict]) -> AssignerVerdict:
+        """Peter's rule (2026-09-27): may this assignment arm a speed-to-lead
+        timer? Only when Peter made it — assigner.resolve_assigner has the
+        evidence and why. `person` must be the FULL record (the list payload
+        lacks createdById/updatedById); an unreadable lead is unknown."""
+        if not person:
+            return AssignerVerdict(ASSIGNER_UNKNOWN, "person_unreadable", None, {})
+        return resolve_assigner(
+            person, int(self.rules.peter_user_id or 2), since=since,
+            automation_edits=automation_write_times(own_writes, int(person.get("id") or 0)))
+
     def scan_assignment_changes(self) -> None:
         """Option A from the Aug 9 investigation: timers for REASSIGNED leads.
 
@@ -6329,7 +6436,11 @@ class RuleEngine:
             bulk distribution: timers still start, but Peter gets ONE digest
             instead of every agent getting paged;
           - the bot's own nurture sends never count as first touch
-            (lead_touched_after_creation ignores them).
+            (lead_touched_after_creation ignores them);
+          - Peter's rule (2026-09-27): a change arms ONLY when Peter made it.
+            Each change is judged on the full record by speed_to_lead_gate();
+            a non-Peter or undeterminable assigner never arms and leaves an
+            assignment_change/skipped row with the reason.
 
         First sight of a pair is a BASELINE, not a change: with no stored row
         there is nothing to diff against, so the pair is recorded silently and
@@ -6362,12 +6473,13 @@ class RuleEngine:
             if pid:
                 recently_moved_by_us.add(int(pid))
 
-        # A lead the false-positive repair just restored must not be re-armed
-        # for a day: the repair window is wider than the 30-minute automation
-        # window because the restore itself is an assignment change.
+        # A lead the false-positive repair or the gate cleanup just restored
+        # must not be re-armed for a day: the window is wider than the
+        # 30-minute automation window because the restore itself is an
+        # assignment change.
         recently_repaired = set()
         for row in self.db.recent_audit_rows(
-                ["speed_to_lead_repair"], now - dt.timedelta(hours=24)):
+                list(self.SPEED_TO_LEAD_REPAIR_ACTIONS), now - dt.timedelta(hours=24)):
             pid = row.get("person_id")
             if pid:
                 recently_repaired.add(int(pid))
@@ -6376,6 +6488,9 @@ class RuleEngine:
         excluded_agent_ids = set(getattr(self.rules, "excluded_user_ids", []))
 
         changes: List[Tuple[dict, int]] = []
+        # The pair each change replaced — put back if the assigner check
+        # cannot read the lead, so the next walk re-detects and re-asks.
+        prev_watch: Dict[int, dict] = {}
         walked = 0
         params: Dict[str, Any] = {"sort": "-updated", "limit": 100}
         pages = 0
@@ -6429,6 +6544,7 @@ class RuleEngine:
                     self.db.log("assignment_change", "skipped", person_id, {
                         "reason": reason, "new_assigned_user_id": assigned})
                     continue
+                prev_watch[person_id] = watch
                 changes.append((stub, assigned))
             pages += 1
             cursor = data.get("_metadata", {}).get("next")
@@ -6455,23 +6571,39 @@ class RuleEngine:
                                "observed_at": now.isoformat()})
             return
 
-        bulk = len(changes) > self.ASSIGNMENT_BULK_THRESHOLD
-        users = self.user_cache_by_id()
-        armed = 0
+        # Judge every change BEFORE arming any, so the bulk decision and the
+        # digest count only leads that really get a timer. The list stub
+        # lacks createdById/updatedById (the assigner evidence) and the lastX
+        # stamps the touch check gates on, so both read the full record.
+        own_writes = self.speed_to_lead_own_writes(
+            min(prev_observation, window_start))
+        to_arm: List[Tuple[dict, int]] = []
+        gated = 0
         for stub, assigned in changes:
             person_id = int(stub["id"])
-            # If the agent already touched the lead inside the detection gap,
-            # there is nothing to warn about — don't arm, don't page. The list
-            # stub lacks the lastX stamps the touch check gates on, so check
-            # the full record; a fetch failure falls back to the stub, which
-            # can only miss touches (fail closed: the timer still arms and the
-            # stored anchor lets a later tick see the same touch).
             try:
-                full = self.fub.get_person(person_id) or stub
+                full = self.fub.get_person(person_id)
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Assignment change: could not fetch person %s for the "
-                               "at-arm touch check: %s", person_id, exc)
-                full = stub
+                               "assigner check: %s", person_id, exc)
+                full = None
+            verdict = self.speed_to_lead_gate(full, prev_observation, own_writes)
+            if not verdict.arms:
+                gated += 1
+                self.db.log("assignment_change", "skipped", person_id, {
+                    **verdict.details(), "new_assigned_user_id": assigned})
+                if full is None and person_id in prev_watch:
+                    # An unreadable lead proves nothing either way: restore the
+                    # old pair so the next walk re-detects this change.
+                    old = prev_watch[person_id]
+                    self.db.upsert_assignment_watch(
+                        person_id, int(old["assigned_user_id"]),
+                        first_seen_at=old.get("first_seen_at"))
+                LOGGER.info("Assignment change: lead %s → agent %s not armed — %s (%s).",
+                            person_id, assigned, verdict.reason, verdict.why)
+                continue
+            # If the agent already touched the lead inside the detection gap,
+            # there is nothing to warn about — don't arm, don't page.
             if self.lead_touched_after_creation(
                     full, prev_observation, assigned_user_id=int(assigned)):
                 self.db.log("new_lead_timer", "skipped_already_touched", person_id, {
@@ -6482,25 +6614,32 @@ class RuleEngine:
                             "since the previous observation — no timer.",
                             person_id, assigned)
                 continue
+            to_arm.append((stub, assigned))
+
+        bulk = len(to_arm) > self.ASSIGNMENT_BULK_THRESHOLD
+        users = self.user_cache_by_id()
+        for stub, assigned in to_arm:
+            person_id = int(stub["id"])
             self.db.add_new_lead_timer(person_id, assigned,
                                        touch_anchor_at=prev_observation.isoformat())
             self.db.log("new_lead_timer", "started_assignment_change", person_id, {
                 "assignedUserId": assigned,
                 "bulk": bulk,
             })
-            armed += 1
             LOGGER.info("Assignment change: timer armed for lead %s (agent %s)%s",
                         person_id, assigned, " [bulk]" if bulk else "")
             if not bulk:
                 self._send_speed_to_lead_agent_alert(stub, assigned)
 
         if bulk:
-            self._send_bulk_assignment_digest(changes, users)
+            self._send_bulk_assignment_digest(to_arm, users)
         self.db.log("assignment_scan", "truncated" if truncated else "completed",
-                    None, {"walked": walked, "armed": armed,
+                    None, {"walked": walked, "armed": len(to_arm), "gated": gated,
                            "changes": len(changes), "observed_at": now.isoformat()})
-        LOGGER.info("Assignment-change scan complete: walked %s, armed %s of %s%s%s.",
-                    walked, armed, len(changes), " (bulk digest)" if bulk else "",
+        LOGGER.info("Assignment-change scan complete: walked %s, armed %s of %s "
+                    "(%s not Peter's)%s%s.",
+                    walked, len(to_arm), len(changes), gated,
+                    " (bulk digest)" if bulk else "",
                     " [TRUNCATED at page cap]" if truncated else "")
 
     def _send_bulk_assignment_digest(self, changes: List[Tuple[dict, int]],
@@ -6556,11 +6695,26 @@ class RuleEngine:
             processed_timers = {int(r["person_id"]) for r in past_rows}
         # A lead skipped because the agent had already touched it leaves no
         # timer row — remember the skip so every later tick doesn't re-spend
-        # the API calls re-proving the same touch.
+        # the API calls re-proving the same touch. Gate skips (not Peter's
+        # assignment) are remembered per (lead, assignee): a later routing to
+        # someone else is a new question, and an unreadable lead is re-asked.
+        gate_skipped: Dict[int, set] = {}
         for row in self.db.recent_audit_rows(
                 ["new_lead_timer"], dt.datetime.now(UTC) - dt.timedelta(hours=24)):
-            if row.get("status") == "skipped_already_touched" and row.get("person_id"):
+            if not row.get("person_id"):
+                continue
+            if row.get("status") == "skipped_already_touched":
                 processed_timers.add(int(row["person_id"]))
+            elif row.get("status") in self.GATE_SKIP_STATUSES.values():
+                try:
+                    skip = json.loads(row.get("details") or "{}")
+                except ValueError:
+                    skip = {}
+                if skip.get("why") != "person_unreadable":
+                    gate_skipped.setdefault(int(row["person_id"]), set()).add(
+                        int(skip.get("assignedUserId") or 0))
+        own_writes = self.speed_to_lead_own_writes(
+            dt.datetime.now(UTC) - dt.timedelta(hours=25))
 
         for person in recent_leads:
             person_id = int(person["id"])
@@ -6580,9 +6734,12 @@ class RuleEngine:
                 continue
                 
             assigned_user_id = person.get("assignedUserId")
-            # If the lead is assigned to an agent (and NOT Peter Allen himself), start the speed-to-lead timer!
+            # A lead assigned to an agent (not Peter himself) is a candidate —
+            # and arms only if PETER made that assignment (rule of 2026-09-27).
             if assigned_user_id and int(assigned_user_id) != self.rules.peter_user_id:
                 assigned_int = int(assigned_user_id)
+                if assigned_int in gate_skipped.get(person_id, ()):
+                    continue
                 # The 30/60-minute BUDGET anchors at DETECTION time (now) —
                 # polling can lag, and a lead created yesterday afternoon must
                 # not start its timer already past the 60-minute line. The
@@ -6594,14 +6751,24 @@ class RuleEngine:
                 fub_created = parse_fub_datetime(person.get("created")) or dt.datetime.now(UTC)
                 full = None
                 try:
-                    # The list stub lacks the lastX stamps the touch check
-                    # gates its channel queries on — check the full record.
+                    # The list stub lacks the assigner evidence (createdById,
+                    # updatedById) and the lastX stamps the touch check gates
+                    # its channel queries on — both read the full record.
                     full = self.fub.get_person(person_id)
                 except Exception as exc:  # noqa: BLE001
                     LOGGER.warning("API Polling: could not fetch person %s for the "
-                                   "at-arm touch check: %s", person_id, exc)
+                                   "assigner and touch checks: %s", person_id, exc)
+                verdict = self.speed_to_lead_gate(full, fub_created, own_writes)
+                if not verdict.arms:
+                    self.db.log("new_lead_timer", self.GATE_SKIP_STATUSES[verdict.reason],
+                                person_id, {"assignedUserId": assigned_int,
+                                            "fub_created_at": person.get("created"),
+                                            **verdict.details()})
+                    LOGGER.info("API Polling: Lead %s → agent %s not armed — %s (%s).",
+                                person_id, assigned_int, verdict.reason, verdict.why)
+                    continue
                 if self.lead_touched_after_creation(
-                        full or person, fub_created, assigned_user_id=assigned_int):
+                        full, fub_created, assigned_user_id=assigned_int):
                     self.db.log("new_lead_timer", "skipped_already_touched", person_id, {
                         "assignedUserId": assigned_int,
                         "touch_anchor": fub_created.isoformat(),
@@ -8619,9 +8786,21 @@ def create_app() -> FastAPI:
         if payload.event == "peopleCreated":
             for person_id in payload.resourceIds:
                 person = fub.get_person(int(person_id))
-                db.add_new_lead_timer(int(person_id), person.get("assignedUserId") if person else None)
-                db.log("new_lead_timer", "started", int(person_id))
-                
+                assigned = (person or {}).get("assignedUserId")
+                # Same rule as the polling triggers: a timer only for a lead an
+                # agent holds, and only when Peter made that assignment.
+                if person and assigned and int(assigned) != int(rules.peter_user_id or 2):
+                    verdict = engine.speed_to_lead_gate(
+                        person, parse_fub_datetime(person.get("created")),
+                        engine.speed_to_lead_own_writes(dt.datetime.now(UTC) - dt.timedelta(hours=25)))
+                    if verdict.arms:
+                        db.add_new_lead_timer(int(person_id), int(assigned))
+                        db.log("new_lead_timer", "started", int(person_id))
+                    else:
+                        db.log("new_lead_timer", engine.GATE_SKIP_STATUSES[verdict.reason],
+                               int(person_id), {"assignedUserId": int(assigned),
+                                                **verdict.details()})
+
                 # Queue immediate welcome email background task
                 background_tasks.add_task(engine.send_instant_welcome_email, int(person_id))
         elif payload.event in {"callsCreated", "emailsCreated", "textMessagesCreated", "notesCreated", "tasksCreated", "peopleUpdated"}:

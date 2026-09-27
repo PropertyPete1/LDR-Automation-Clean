@@ -53,6 +53,12 @@ def _person(pid, agent_id=35, created_hours_ago=20, **extra):
         "stage": "Lead",
         "assignedUserId": agent_id,
         "created": _iso(created_hours_ago),
+        # Assigner evidence (Peter's rule, 2026-09-27): Peter added the lead
+        # and assigned it in one go, so the edit stamp is the creation's.
+        "updated": _iso(created_hours_ago),
+        "createdVia": "Manually",
+        "createdById": 2,
+        "updatedById": 2,
         "lastActivity": _iso(created_hours_ago),
         "phones": [{"value": "512-555-0142"}],
         "emails": [{"value": f"lead{pid}@example.com"}],
