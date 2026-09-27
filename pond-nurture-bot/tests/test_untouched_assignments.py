@@ -243,9 +243,13 @@ class TestNewLeadTimerAnchor:
     def test_poll_anchors_timer_at_detection_time(self, engine, fake_http, monkeypatch):
         monkeypatch.setattr(engine.email, "send", lambda *a, **k: None)
         lead_created = _iso(20)  # created 20h before the poll sees it
-        person = _person(6270, agent_id=35, created=lead_created)
+        # Peter added it and assigned it (the gate of 2026-09-27 arms only then).
+        person = _person(6270, agent_id=35, created=lead_created, updated=lead_created,
+                         createdVia="Manually", createdById=2, updatedById=2)
         fake_http.responses = [
-            (200, {"people": [person]}),
+            (200, {"people": [person]}),  # the createdAfter poll page
+            (200, {"people": [person]}),  # the full record: assigner + touch checks
+            (200, {"notes": []}),         # untouched
             (200, USERS),  # user cache for the agent alert email
         ]
         engine.poll_new_leads()

@@ -1,0 +1,136 @@
+# One-shot cleanup, run by hand. Not scheduled, and it should stay that way.
+#
+# Peter's rule (2026-09-27): a speed-to-lead timer arms ONLY when Peter
+# assigned the lead to an agent. This lists — and on commit undoes — what the
+# old, ungated triggers did against that rule:
+#   A. active timers whose lead fails the gate now → cancelled, audit row each;
+#   B. warnings / auto-reassignments since `since` whose assignment was not
+#      Peter's → the original agent restored (unless the lead was re-routed or
+#      edited by hand since the bounce), the auto-reassigned tag stripped, an
+#      explaining note left, a speed_to_lead_gate_cleanup audit row written.
+# Leads whose router FUB can no longer show are listed as UNDETERMINED and are
+# restored only when Peter names them in `also_restore`.
+# See pond-nurture-bot/cleanup_speed_to_lead_gate.py.
+#
+# Dry run by default. `commit: true` is the only thing that writes.
+#
+# Run the COMMIT outside business hours (before 10am / after 6pm CT): the
+# 5-minute speed-to-lead tick does not share this concurrency group, and a tick
+# that pulled state before this run pushes could see a restore as a fresh
+# assignment change. The gate reads the restore as the automation's own write
+# once the rows merge, but off-hours there is no race at all.
+name: Speed-to-lead gate cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "Judge warnings/reassignments at/after this ISO instant"
+        required: true
+        default: "2026-08-25T00:00:00+00:00"
+      commit:
+        description: "Actually write (FUB assignment/tags/notes + state DB). Leave false for a dry run first."
+        type: boolean
+        required: true
+        default: false
+      also_restore:
+        description: "Comma-separated FUB ids from the UNDETERMINED list that Peter approves restoring"
+        required: false
+        default: ""
+
+concurrency:
+  group: ldr-state-write
+  cancel-in-progress: false
+
+env:
+  PYTHONUNBUFFERED: "1"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+  # The script refuses --commit under DRY_RUN=true and pins DRY_RUN=true
+  # itself when --commit is absent; this env only unlocks a commit run.
+  DRY_RUN: ${{ inputs.commit && 'false' || 'true' }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Judge and clean up
+        working-directory: pond-nurture-bot
+        env:
+          # Through env, not ${{ }} interpolation into the script — a
+          # workflow_dispatch string must never be substituted into sh text.
+          SINCE: ${{ inputs.since }}
+          ALSO_RESTORE: ${{ inputs.also_restore }}
+        run: |
+          set -euo pipefail
+          python3 cleanup_speed_to_lead_gate.py \
+            --since "$SINCE" \
+            --also-restore "$ALSO_RESTORE" \
+            ${{ inputs.commit && '--commit' || '' }}
+
+      # Only when something may have been written — INCLUDING a partially
+      # failed commit run: the cleanup rows for the leads that WERE restored
+      # must reach the state branch or the next tick could re-arm them. A dry
+      # run must never touch the state branch.
+      - name: Push state DB
+        if: ${{ always() && inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: push
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Re-pull and verify the cleanup survived
+        if: ${{ always() && inputs.commit }}
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: Confirm the cleanup rows are on the state branch
+        if: ${{ always() && inputs.commit }}
+        working-directory: pond-nurture-bot
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, sqlite3, sys
+          summary = json.load(open('speed_to_lead_gate_cleanup_summary.json'))
+          expected = summary['restored'] + summary['canceled']
+          c = sqlite3.connect('data/fub_automation.sqlite3')
+          on_branch = c.execute(
+              \"SELECT COUNT(*) FROM audit_log WHERE action='speed_to_lead_gate_cleanup'\"
+              \" AND status IN ('restored', 'timer_canceled') AND created_at >= ?\",
+              (summary['started_at'],)).fetchone()[0]
+          print(f'this run wrote {expected}; state branch holds {on_branch} '
+                f'cleanup row(s) since {summary[\"started_at\"]}')
+          if expected > 0 and on_branch == 0:
+              print('commit run wrote rows that did not survive the push — investigate')
+              sys.exit(1)
+          "

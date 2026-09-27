@@ -17,7 +17,8 @@ UTC = dt.timezone.utc
 NOW = dt.datetime.now(UTC)
 
 
-def _stub(pid, agent, *, pond=None, stage="Lead", updated=None, name=("Jose", "Reyes")):
+def _stub(pid, agent, *, pond=None, stage="Lead", updated=None, name=("Jose", "Reyes"),
+          routed_by=2):
     return {
         "id": pid,
         "firstName": name[0],
@@ -29,6 +30,14 @@ def _stub(pid, agent, *, pond=None, stage="Lead", updated=None, name=("Jose", "R
         "updated": (updated or NOW).isoformat(),
         "phones": [],
         "emails": [],
+        # Assigner evidence (Peter's rule, 2026-09-27): a portal lead — the API
+        # created it, so createdById is the key's user — whose latest edit,
+        # the routing these tests exercise, was made by `routed_by`. Peter by
+        # default, so every pin below keeps arming exactly as before.
+        "createdVia": "API",
+        "createdById": 2,
+        "created": (NOW - dt.timedelta(days=30)).isoformat(),
+        "updatedById": routed_by,
     }
 
 
