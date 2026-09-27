@@ -55,10 +55,13 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      - name: Investigate
+      # TEMPORARY on claude/speed-to-lead-peter-gate-nu7gh0 only — reverted
+      # before the PR is ready. Same read-only job (state DB pulled, never
+      # pushed; token contents: read), running the assigner-evidence probe
+      # instead. No lead PII is printed: the repo is public.
+      - name: Probe assigner evidence
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 investigate_assignments.py \
-            --hours "${{ inputs.hours }}" \
+          python3 probe_assigner_evidence.py \
             ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
