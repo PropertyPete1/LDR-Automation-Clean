@@ -30,7 +30,7 @@ env:
 jobs:
   investigate:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -55,11 +55,10 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
 
-      # TEMPORARY (this branch only, reverted before the PR is ready): run the
-      # read-only SOI silence dry run + probe instead of the investigation.
-      - name: SOI silence dry run + probe (read-only)
+      - name: Investigate
         working-directory: pond-nurture-bot
         run: |
           set -euo pipefail
-          python3 soi_silence_dry_run.py --days 30
-          python3 _tmp_probe_soi.py
+          python3 investigate_assignments.py \
+            --hours "${{ inputs.hours }}" \
+            ${{ inputs.focus && format('--focus {0}', inputs.focus) || '' }}
