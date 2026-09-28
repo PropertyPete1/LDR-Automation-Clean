@@ -1,0 +1,79 @@
+# Read-only dry run of the SOI (sphere of influence) silence rule, run by hand.
+#
+# Peter's rule (2026-09-28): a contact an agent adds to Follow Up Boss
+# themselves — by hand (createdVia "Manually", the web UI and the mobile app)
+# or by spreadsheet (createdVia "Import") — is that agent's sphere and gets
+# total silence from all automation, whatever source they typed.
+#
+# This prints, for the whole account:
+#   A. the createdVia census — how every contact was added and by whom;
+#   B. every contact the LIVE rule silences that the legacy Manually-only rule
+#      did not (FUB id, who added it, how, where it sits, recruit or lead);
+#   C. which of those got a bot email in the last N days — the automation's own
+#      audit-logged sends plus the dashboard's "[Bot] Follow-up email sent"
+#      notes in FUB.
+# The repository is public: FUB ids, staff names, lead-source labels, stages,
+# counts and timestamps only — never lead names or contact details.
+#
+# Every FUB call is a GET; the state DB is pulled and never pushed.
+# See pond-nurture-bot/soi_silence_dry_run.py.
+name: SOI silence dry run
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Bot-email lookback, in days"
+        required: true
+        default: "30"
+      max_note_lookups:
+        description: "Cap on per-contact FUB note reads (one GET each)"
+        required: true
+        default: "4000"
+
+env:
+  PYTHONUNBUFFERED: "1"
+  DRY_RUN: "true"
+  FUB_DISABLE_SCHEDULER: "true"
+  FUB_API_KEY: ${{ secrets.FUB_API_KEY }}
+  DATABASE_PATH: "data/fub_automation.sqlite3"
+  RULES_PATH: "config/rules.yaml"
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: pond-nurture-bot/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pond-nurture-bot/requirements.txt
+
+      - name: Pull state DB
+        uses: ./.github/actions/state-sync
+        with:
+          mode: pull
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          encryption_key: ${{ secrets.STATE_ENCRYPTION_KEY }}
+
+      - name: SOI silence dry run (read-only)
+        working-directory: pond-nurture-bot
+        env:
+          # Through env, not ${{ }} interpolation into the script — a
+          # workflow_dispatch string must never be substituted into sh text.
+          DAYS: ${{ inputs.days }}
+          MAX_NOTE_LOOKUPS: ${{ inputs.max_note_lookups }}
+        run: |
+          set -euo pipefail
+          python3 soi_silence_dry_run.py --days "$DAYS" --max-note-lookups "$MAX_NOTE_LOOKUPS"

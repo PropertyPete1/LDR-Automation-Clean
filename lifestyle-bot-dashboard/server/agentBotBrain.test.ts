@@ -24,6 +24,10 @@ import {
   isSOISilenced,
   isExcludedSource,
   clearDealCache,
+  fetchLeadsForAgent,
+  HUMAN_CREATED_VIA,
+  RECRUITING_SOURCES,
+  isRecruitingSource,
   type FubPerson,
 } from "./botHelpers";
 
@@ -336,6 +340,122 @@ describe("SOI + excluded-source total silence (engine protection inheritance)", 
     expect(result.skip).toBe(false);
     expect(fubCalls(mockFetch).length).toBeGreaterThanOrEqual(1); // deals checked
     expect(anthropicCalls(mockFetch).length).toBe(1); // LLM consulted
+  });
+});
+
+describe("SOI rule 1 covers every human channel (Peter's rule of 2026-09-28)", () => {
+  // FUB records the channel in createdVia — "Manually" for the web UI and the
+  // mobile app, "Import" for a spreadsheet — and the person in createdById.
+  // The account carries exactly four values: API, Email Parsing, Import,
+  // Manually (read-only census, Actions run 36367093517, 7,746 contacts).
+  const STEVEN = 1;
+  const PETER = 2;
+  const LAILA = 35;
+
+  it("an agent's manual add is silenced, whatever the source", () => {
+    const why = isSOISilenced({ id: 1, createdVia: "Manually", createdById: STEVEN, source: "<unspecified>" });
+    expect(why).toContain("createdVia=Manually");
+    expect(why).toContain("createdById=1");
+    expect(isSOISilenced({ id: 2, createdVia: "Manually", createdById: LAILA, source: "Zillow" })).toBeTruthy();
+  });
+
+  it("an agent's spreadsheet import with a blank source is silenced (the gap this closes)", () => {
+    expect(isSOISilenced({ id: 3, createdVia: "Import", createdById: STEVEN })).toContain("createdVia=Import");
+    expect(isSOISilenced({ id: 4, createdVia: "Import", createdById: STEVEN, source: "" })).toBeTruthy();
+    // FUB spells a blank source "<unspecified>"
+    expect(isSOISilenced({ id: 5, createdVia: "Import", createdById: STEVEN, source: "<unspecified>" })).toBeTruthy();
+    // ...and a typed (non-recruiting) source changes nothing
+    expect(isSOISilenced({ id: 6, createdVia: "IMPORT", createdById: STEVEN, source: "Open House" })).toBeTruthy();
+  });
+
+  it("a mobile-app add — recorded like a web-UI add: Manually, by the agent, source <unspecified> — is silenced", () => {
+    expect(isSOISilenced({ id: 7, createdVia: "Manually", createdById: LAILA, source: "<unspecified>", tags: [] })).toBeTruthy();
+  });
+
+  it("Peter's own adds and imports are not silenced", () => {
+    expect(isSOISilenced({ id: 8, createdVia: "Manually", createdById: PETER })).toBeNull();
+    expect(isSOISilenced({ id: 9, createdVia: "Import", createdById: PETER, source: "Open House" })).toBeNull();
+  });
+
+  it("API and Email Parsing leads are not silenced — no person added them", () => {
+    expect(isSOISilenced({ id: 10, createdVia: "API", createdById: PETER, source: "Typeform Link" })).toBeNull();
+    expect(isSOISilenced({ id: 11, createdVia: "API", createdById: STEVEN, source: "lifestyledesignrealty.com" })).toBeNull();
+    expect(isSOISilenced({ id: 12, createdVia: "Email Parsing", createdById: -1, source: "Realtor.com - Rental" })).toBeNull();
+    expect(isSOISilenced({ id: 13, createdVia: null, createdById: STEVEN })).toBeNull();
+    // The default /people payload has createdVia but no createdById: no verdict
+    expect(isSOISilenced({ id: 14, createdVia: "Import", createdById: null })).toBeNull();
+    expect(isSOISilenced({ id: 15, createdVia: "Import" })).toBeNull();
+  });
+
+  it("HUMAN_CREATED_VIA names exactly the two human channels", () => {
+    expect([...HUMAN_CREATED_VIA].sort()).toEqual(["import", "manually"]);
+  });
+
+  it("shouldSkipLead refuses an agent's import before any network call", async () => {
+    const mockFetch = mockRoutedFetch({});
+    const person: FubPerson = {
+      id: uid(),
+      createdVia: "Import",
+      createdById: STEVEN,
+      source: "<unspecified>",
+      notes: [{ body: "Call back next week", createdAt: daysAgoIso(4) }],
+    };
+    const result = await shouldSkipLead(person);
+    expect(result.skip).toBe(true);
+    expect(result.reason).toContain("soi_silenced");
+    expect(result.reason).toContain("createdVia=Import");
+    expect(mockFetch.mock.calls.length).toBe(0);
+  });
+
+  it("carve-out: an agent-imported recruiting-source contact is not SOI (keeps the recruiting track) yet the agent bots still refuse it", async () => {
+    const recruit: FubPerson = {
+      id: uid(),
+      createdVia: "Import",
+      createdById: STEVEN,
+      source: "Agent Scouting",
+      notes: [],
+    };
+    expect(isRecruitingSource(recruit)).toBe("Agent Scouting");
+    expect(isSOISilenced(recruit)).toBeNull();
+    // CONTAINS, like excluded sources — and both recruiting sources
+    expect(isSOISilenced({ ...recruit, id: uid(), source: "Agent Scouting - LinkedIn" })).toBeNull();
+    expect(isSOISilenced({ ...recruit, id: uid(), source: "New Agent Inquiry" })).toBeNull();
+    // Every lead path here (the agent bots) still blocks it: excluded source, before any network call
+    const mockFetch = mockRoutedFetch({});
+    const result = await shouldSkipLead(recruit);
+    expect(result.skip).toBe(true);
+    expect(result.reason).toContain("excluded source");
+    expect(mockFetch.mock.calls.length).toBe(0);
+  });
+
+  it("the carve-out stops at the Import channel: a recruit added by hand, an SOI-tagged recruit and a non-recruit import stay silent", () => {
+    expect(isSOISilenced({ id: 1, createdVia: "Manually", createdById: STEVEN, source: "New Agent Inquiry" })).toBeTruthy();
+    expect(isSOISilenced({ id: 2, createdVia: "Import", createdById: STEVEN, source: "Agent Scouting", tags: ["SOI"] })).toBeTruthy();
+    expect(isSOISilenced({ id: 3, createdVia: "Import", createdById: STEVEN, source: "<unspecified>" })).toBeTruthy();
+    expect(isSOISilenced({ id: 4, createdVia: "Import", createdById: PETER, source: "Agent Scouting" })).toBeNull();
+    expect(isRecruitingSource({ id: 5, source: "Zillow" })).toBeNull();
+    expect(isRecruitingSource({ id: 6 })).toBeNull();
+  });
+
+  it("RECRUITING_SOURCES mirrors rules.yaml recruiting_sources", () => {
+    expect([...RECRUITING_SOURCES].sort()).toEqual(["Agent Scouting", "New Agent Inquiry"]);
+  });
+
+  it("fetchLeadsForAgent asks FUB for fields=allFields — the default payload never carries createdById", async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ people: [], _metadata: {} }),
+      text: async () => "",
+    }));
+    vi.stubGlobal("fetch", mockFetch);
+    await fetchLeadsForAgent(STEVEN);
+    expect(mockFetch.mock.calls.length).toBe(1);
+    const url = String(mockFetch.mock.calls[0][0]);
+    expect(url).toContain("https://api.followupboss.com/v1/people?");
+    expect(url).toContain(`assignedUserId=${STEVEN}`);
+    expect(url).toContain("includeNotes=true");
+    expect(url).toContain("fields=allFields");
   });
 });
 

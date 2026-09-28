@@ -43,6 +43,7 @@ RUNNER_SCRIPTS = [
     "investigate_assignments.py",
     "repair_speed_to_lead_false_positives.py",
     "cleanup_speed_to_lead_gate.py",
+    "soi_silence_dry_run.py",
     "weekly_digest.py",
     "nightly_health.py",
     "export_dashboard_data.py",
