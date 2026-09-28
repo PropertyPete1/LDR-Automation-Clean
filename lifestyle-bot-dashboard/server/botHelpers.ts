@@ -89,6 +89,15 @@ export function reloadSharedSuppressionTags(): string[] {
 const PETER_USER_ID = 2;
 
 /**
+ * createdVia values whose createdById is the PERSON who added the contact:
+ * "Manually" (the web UI and the mobile app) and "Import" (a spreadsheet).
+ * API leads carry the API key's user and Email Parsing carries -1 — a lead
+ * source placed those, not a person. These four are the only createdVia values
+ * on the account (measured 2026-09-28, Actions run 36367093517, 7,746 contacts).
+ */
+export const HUMAN_CREATED_VIA: ReadonlySet<string> = new Set(["manually", "import"]);
+
+/**
  * Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
  * Returns the matched source string or null.
  */
@@ -114,9 +123,17 @@ export function isExcludedSource(person: FubPerson): string | null {
 /**
  * Check if a lead is SOI-silenced (total silence from ALL automation).
  * A lead is SOI if ANY of:
- *   1. createdById ≠ Peter (user_id 2) AND createdVia == "Manually"
+ *   1. Added by hand by anyone other than Peter (user_id 2): createdVia
+ *      "Manually" (web UI and mobile app) or "Import" (spreadsheet) —
+ *      HUMAN_CREATED_VIA — with createdById naming that person. Whatever
+ *      source they typed, or left blank, is irrelevant: a contact an agent
+ *      adds themselves is their sphere. (Peter's rule of 2026-09-28; before it
+ *      only "Manually" counted, so an agent's import without "SOI" in the
+ *      source was emailed.)
  *   2. Any tag starting with "SOI" (case-insensitive)
  *   3. Source CONTAINS "SOI" (case-insensitive) — catches "Theo's SOI", "Tiffany SOI", etc.
+ * Rule 1 needs createdById, which FUB's default /people payload omits —
+ * fetchLeadsForAgent asks for fields=allFields so the bots can see it.
  * Returns the matched rule description or null.
  */
 export function isSOISilenced(person: FubPerson): string | null {
@@ -135,11 +152,14 @@ export function isSOISilenced(person: FubPerson): string | null {
     }
   }
 
-  // Rule 1: createdById ≠ Peter AND createdVia == "Manually"
-  const createdVia = (person.createdVia ?? "").toLowerCase();
+  // Rule 1: added by hand by someone other than Peter — that person's sphere.
+  // Both human channels count ("Manually", "Import"). API leads carry the API
+  // key's user (Peter) and Email Parsing carries -1, so neither names a person
+  // who added a contact; they never match.
+  const createdVia = (person.createdVia ?? "").trim().toLowerCase();
   const createdById = person.createdById ?? 0;
-  if (createdVia === "manually" && createdById !== 0 && createdById !== PETER_USER_ID) {
-    return `manually created by non-Peter user (createdById=${createdById}, createdVia=Manually)`;
+  if (HUMAN_CREATED_VIA.has(createdVia) && createdById > 0 && createdById !== PETER_USER_ID) {
+    return `added by non-Peter user (createdById=${createdById}, createdVia=${person.createdVia})`;
   }
 
   return null;
@@ -322,13 +342,17 @@ export interface FubPerson {
  */
 export async function fetchLeadsForAgent(agentFubId: number): Promise<FubPerson[]> {
   const leads: FubPerson[] = [];
-  // Base URL — no offset, sorted by most-recently-active first
-  const baseUrl = `/people?limit=100&assignedUserId=${agentFubId}&includeNotes=true&sort=-lastActivityAt`;
+  // Base URL — no offset, sorted by most-recently-active first.
+  // fields=allFields: FUB's default list payload (44 keys) never carries
+  // createdById, so isSOISilenced rule 1 was blind on every lead this fetched;
+  // allFields (109 keys) carries it. Measured 2026-09-28, Actions run 36367093517.
+  const query = `limit=100&assignedUserId=${agentFubId}&includeNotes=true&sort=-lastActivityAt&fields=allFields`;
+  const baseUrl = `/people?${query}`;
   let nextCursor: string | null = null;
 
   while (true) {
     const url: string = nextCursor
-      ? `/people?limit=100&assignedUserId=${agentFubId}&includeNotes=true&sort=-lastActivityAt&next=${encodeURIComponent(nextCursor)}`
+      ? `/people?${query}&next=${encodeURIComponent(nextCursor)}`
       : baseUrl;
     type FubPeoplePage = { people: FubPerson[]; _metadata: { total?: number; next?: string | null } };
     const data: FubPeoplePage = await fubRequest<FubPeoplePage>(url);

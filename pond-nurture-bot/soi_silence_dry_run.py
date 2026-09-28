@@ -68,6 +68,15 @@ TS_POND_SENT_NOTE = re.compile(
 #: sends are already in the audit log; the note is the FUB-side echo.
 PY_SENT_NOTE_SUBJECT = re.compile(r"^Automation:.*Email Sent", re.IGNORECASE)
 NOTE_KINDS = ("agent-bot email", "ts pond nurture email", "automation email note")
+#: FUB returns the literal "<unspecified>" for a contact whose source was left
+#: blank (measured 2026-09-28: 442 of Peter's own manual adds carry it).
+BLANK_SOURCES = frozenset({"", "<unspecified>"})
+
+
+def source_label(person: dict) -> str:
+    """The typed source, or "<blank>" for the two ways FUB spells an empty one."""
+    raw = str(person.get("source") or person.get("leadSource") or "").strip()
+    return "<blank>" if raw.lower() in BLANK_SOURCES else raw
 
 
 def _p(line: str = "") -> None:
@@ -200,7 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         key = (via, uname(_uid(person.get("createdById"))))
         row = census.setdefault(key, {"n": 0, "blank_source": 0, "ids": [], "first": None, "last": None})
         row["n"] += 1
-        if not str(person.get("source") or "").strip():
+        if source_label(person) == "<blank>":
             row["blank_source"] += 1
         if len(row["ids"]) < 3:
             row["ids"].append(int(person["id"]))
@@ -276,7 +285,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         pid = int(person["id"])
         via = str(person.get("createdVia") or "<missing>")
         creator = uname(_uid(person.get("createdById")))
-        source = str(person.get("source") or "").strip() or "<blank>"
+        source = source_label(person)
         pond = person.get("assignedPondId")
         where = f"pond {pond}" if pond else f"with {uname(_uid(person.get('assignedUserId')))}"
         recruit = engine.recruiting_source(person)

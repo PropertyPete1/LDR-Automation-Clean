@@ -61,6 +61,7 @@ from .seller_nurture import (
 from .assigner import (
     AUTOMATION_EDIT_WINDOW,
     AUTOMATION_PERSON_WRITE_ACTIONS,
+    HUMAN_CREATED_VIA,
     REASON_NOT_PETER,
     REASON_UNKNOWN,
     UNKNOWN as ASSIGNER_UNKNOWN,
@@ -7059,9 +7060,18 @@ class RuleEngine:
     def _is_soi_silenced(self, person: dict) -> Optional[str]:
         """Check if a lead is SOI-silenced (total silence from ALL automation).
         A lead is SOI if ANY of:
-          1. createdById != Peter (user_id 2) AND createdVia == "Manually"
+          1. Added by hand by anyone other than Peter (user_id 2): createdVia
+             "Manually" (the web UI and the mobile app) or "Import" (a
+             spreadsheet) — HUMAN_CREATED_VIA — with createdById naming that
+             person. Whatever source they typed, or left blank, is irrelevant:
+             a contact an agent adds themselves is their sphere. (Peter's rule
+             of 2026-09-28; before it only "Manually" counted, so an agent's
+             import without "SOI" in the source was emailed.)
           2. Any tag starting with "SOI" (case-insensitive)
           3. Source CONTAINS "SOI" (case-insensitive)
+        Rule 1 needs createdById, which FUB's default /people payload omits —
+        the callers fetch with fields="allFields" (measured 2026-09-28: the
+        default payload carries createdVia but never createdById).
         Returns the matched rule description or None."""
         peter_id = int(self.rules.peter_user_id or 2)
 
@@ -7077,11 +7087,18 @@ class RuleEngine:
             if tag_name.lower().startswith("soi"):
                 return f'tag starts with SOI: "{tag_name}"'
 
-        # Rule 1: createdById != Peter AND createdVia == "Manually"
-        created_via = str(person.get("createdVia") or "").lower()
-        created_by_id = int(person.get("createdById") or 0)
-        if created_via == "manually" and created_by_id != 0 and created_by_id != peter_id:
-            return f"manually created by non-Peter user (createdById={created_by_id}, createdVia=Manually)"
+        # Rule 1: added by hand by someone other than Peter — that person's
+        # sphere. Both human channels count ("Manually", "Import"). API leads
+        # carry the API key's user (Peter) and Email Parsing carries -1, so
+        # neither names a person who added a contact; they never match.
+        created_via = str(person.get("createdVia") or "").strip().lower()
+        try:
+            created_by_id = int(person.get("createdById") or 0)
+        except (TypeError, ValueError):
+            created_by_id = 0
+        if created_via in HUMAN_CREATED_VIA and created_by_id > 0 and created_by_id != peter_id:
+            return (f"added by non-Peter user (createdById={created_by_id}, "
+                    f"createdVia={person.get('createdVia')})")
 
         return None
 
