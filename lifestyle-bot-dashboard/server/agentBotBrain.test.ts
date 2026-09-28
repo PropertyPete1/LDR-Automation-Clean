@@ -26,6 +26,8 @@ import {
   clearDealCache,
   fetchLeadsForAgent,
   HUMAN_CREATED_VIA,
+  RECRUITING_SOURCES,
+  isRecruitingSource,
   type FubPerson,
 } from "./botHelpers";
 
@@ -362,8 +364,8 @@ describe("SOI rule 1 covers every human channel (Peter's rule of 2026-09-28)", (
     expect(isSOISilenced({ id: 4, createdVia: "Import", createdById: STEVEN, source: "" })).toBeTruthy();
     // FUB spells a blank source "<unspecified>"
     expect(isSOISilenced({ id: 5, createdVia: "Import", createdById: STEVEN, source: "<unspecified>" })).toBeTruthy();
-    // ...and a typed source changes nothing
-    expect(isSOISilenced({ id: 6, createdVia: "IMPORT", createdById: STEVEN, source: "Agent Scouting" })).toBeTruthy();
+    // ...and a typed (non-recruiting) source changes nothing
+    expect(isSOISilenced({ id: 6, createdVia: "IMPORT", createdById: STEVEN, source: "Open House" })).toBeTruthy();
   });
 
   it("a mobile-app add — recorded like a web-UI add: Manually, by the agent, source <unspecified> — is silenced", () => {
@@ -403,6 +405,40 @@ describe("SOI rule 1 covers every human channel (Peter's rule of 2026-09-28)", (
     expect(result.reason).toContain("soi_silenced");
     expect(result.reason).toContain("createdVia=Import");
     expect(mockFetch.mock.calls.length).toBe(0);
+  });
+
+  it("carve-out: an agent-imported recruiting-source contact is not SOI (keeps the recruiting track) yet the agent bots still refuse it", async () => {
+    const recruit: FubPerson = {
+      id: uid(),
+      createdVia: "Import",
+      createdById: STEVEN,
+      source: "Agent Scouting",
+      notes: [],
+    };
+    expect(isRecruitingSource(recruit)).toBe("Agent Scouting");
+    expect(isSOISilenced(recruit)).toBeNull();
+    // CONTAINS, like excluded sources — and both recruiting sources
+    expect(isSOISilenced({ ...recruit, id: uid(), source: "Agent Scouting - LinkedIn" })).toBeNull();
+    expect(isSOISilenced({ ...recruit, id: uid(), source: "New Agent Inquiry" })).toBeNull();
+    // Every lead path here (the agent bots) still blocks it: excluded source, before any network call
+    const mockFetch = mockRoutedFetch({});
+    const result = await shouldSkipLead(recruit);
+    expect(result.skip).toBe(true);
+    expect(result.reason).toContain("excluded source");
+    expect(mockFetch.mock.calls.length).toBe(0);
+  });
+
+  it("the carve-out stops at the Import channel: a recruit added by hand, an SOI-tagged recruit and a non-recruit import stay silent", () => {
+    expect(isSOISilenced({ id: 1, createdVia: "Manually", createdById: STEVEN, source: "New Agent Inquiry" })).toBeTruthy();
+    expect(isSOISilenced({ id: 2, createdVia: "Import", createdById: STEVEN, source: "Agent Scouting", tags: ["SOI"] })).toBeTruthy();
+    expect(isSOISilenced({ id: 3, createdVia: "Import", createdById: STEVEN, source: "<unspecified>" })).toBeTruthy();
+    expect(isSOISilenced({ id: 4, createdVia: "Import", createdById: PETER, source: "Agent Scouting" })).toBeNull();
+    expect(isRecruitingSource({ id: 5, source: "Zillow" })).toBeNull();
+    expect(isRecruitingSource({ id: 6 })).toBeNull();
+  });
+
+  it("RECRUITING_SOURCES mirrors rules.yaml recruiting_sources", () => {
+    expect([...RECRUITING_SOURCES].sort()).toEqual(["Agent Scouting", "New Agent Inquiry"]);
   });
 
   it("fetchLeadsForAgent asks FUB for fields=allFields — the default payload never carries createdById", async () => {

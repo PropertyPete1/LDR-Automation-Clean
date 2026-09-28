@@ -98,6 +98,27 @@ const PETER_USER_ID = 2;
 export const HUMAN_CREATED_VIA: ReadonlySet<string> = new Set(["manually", "import"]);
 
 /**
+ * FUB sources of licensed agents answering recruiting posts — recruits, never
+ * leads. Mirrors pond-nurture-bot/config/rules.yaml recruiting_sources (a test
+ * in that suite keeps the two lists in step). Matched like excluded sources:
+ * case-insensitive, the configured words CONTAINED in the source, so
+ * "Agent Scouting - LinkedIn" counts.
+ */
+export const RECRUITING_SOURCES: readonly string[] = ["New Agent Inquiry", "Agent Scouting"];
+
+/** The recruiting source a contact came from, or null — a recruit, not a lead. */
+export function isRecruitingSource(person: FubPerson): string | null {
+  const source = (person.source ?? person.leadSource ?? "").toLowerCase().trim();
+  if (!source) return null;
+  for (const name of RECRUITING_SOURCES) {
+    if (source.includes(name.toLowerCase())) {
+      return person.source ?? person.leadSource ?? source;
+    }
+  }
+  return null;
+}
+
+/**
  * Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
  * Returns the matched source string or null.
  */
@@ -129,7 +150,9 @@ export function isExcludedSource(person: FubPerson): string | null {
  *      source they typed, or left blank, is irrelevant: a contact an agent
  *      adds themselves is their sphere. (Peter's rule of 2026-09-28; before it
  *      only "Manually" counted, so an agent's import without "SOI" in the
- *      source was emailed.)
+ *      source was emailed.) Carve-out: an IMPORTED contact whose source
+ *      matches RECRUITING_SOURCES is a recruit — the recruiting track keeps
+ *      it; the agent bots refuse recruits through isExcludedSource() anyway.
  *   2. Any tag starting with "SOI" (case-insensitive)
  *   3. Source CONTAINS "SOI" (case-insensitive) — catches "Theo's SOI", "Tiffany SOI", etc.
  * Rule 1 needs createdById, which FUB's default /people payload omits —
@@ -159,6 +182,14 @@ export function isSOISilenced(person: FubPerson): string | null {
   const createdVia = (person.createdVia ?? "").trim().toLowerCase();
   const createdById = person.createdById ?? 0;
   if (HUMAN_CREATED_VIA.has(createdVia) && createdById > 0 && createdById !== PETER_USER_ID) {
+    // Carve-out (2026-09-28): a recruit an agent IMPORTED keeps the recruiting
+    // track (pond-nurture-bot runs it). Recruiting-source contacts are licensed
+    // agents answering recruiting posts, not anyone's sphere. The agent bots
+    // never email them anyway: shouldSkipLead asks isExcludedSource() first and
+    // the shared excluded_sources list carries both recruiting sources. A
+    // recruit added by hand keeps today's verdict (silenced), and rules 2/3
+    // (an SOI tag or source) still silence a recruit either way.
+    if (createdVia === "import" && isRecruitingSource(person)) return null;
     return `added by non-Peter user (createdById=${createdById}, createdVia=${person.createdVia})`;
   }
 

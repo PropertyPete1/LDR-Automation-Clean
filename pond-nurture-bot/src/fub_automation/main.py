@@ -7066,7 +7066,10 @@ class RuleEngine:
              person. Whatever source they typed, or left blank, is irrelevant:
              a contact an agent adds themselves is their sphere. (Peter's rule
              of 2026-09-28; before it only "Manually" counted, so an agent's
-             import without "SOI" in the source was emailed.)
+             import without "SOI" in the source was emailed.) Carve-out: an
+             IMPORTED contact whose source matches recruiting_sources is a
+             recruit — the recruiting track keeps it; every lead path refuses
+             recruits through is_excluded() regardless of this check.
           2. Any tag starting with "SOI" (case-insensitive)
           3. Source CONTAINS "SOI" (case-insensitive)
         Rule 1 needs createdById, which FUB's default /people payload omits —
@@ -7097,6 +7100,17 @@ class RuleEngine:
         except (TypeError, ValueError):
             created_by_id = 0
         if created_via in HUMAN_CREATED_VIA and created_by_id > 0 and created_by_id != peter_id:
+            # Carve-out (2026-09-28): a recruit an agent IMPORTED keeps the
+            # recruiting track. Contacts whose source matches rules.yaml
+            # recruiting_sources (New Agent Inquiry, Agent Scouting) are
+            # licensed agents answering recruiting posts, not anyone's sphere.
+            # Every lead path already refuses them — is_excluded() rule 0 and
+            # _is_excluded_source() run before this check everywhere — so this
+            # only decides whether the recruiting track may write. A recruit
+            # added by hand keeps today's verdict (silenced), and rules 2/3
+            # (an SOI tag or source) still silence a recruit either way.
+            if created_via == "import" and self.recruiting_source(person):
+                return None
             return (f"added by non-Peter user (createdById={created_by_id}, "
                     f"createdVia={person.get('createdVia')})")
 

@@ -202,3 +202,18 @@ def test_excluded_source_empty_and_missing_are_safe():
     assert m.match(None) is None
     # An empty entry in config must never match everything.
     assert _Matcher(["", "Zillow Rentals"]).match("Website Form") is None
+
+
+def test_ts_recruiting_sources_match_rules_yaml():
+    """botHelpers.ts RECRUITING_SOURCES must equal rules.yaml recruiting_sources:
+    the SOI carve-out for imported recruits (2026-09-28) reads the list in both
+    systems, and a recruit one system keeps the other must not silence."""
+    import yaml
+
+    rules = yaml.safe_load(open(ROOT / "pond-nurture-bot" / "config" / "rules.yaml"))
+    expected = sorted(str(s).lower() for s in rules["recruiting_sources"])
+    src = BOT_HELPERS.read_text()
+    match = re.search(r"RECRUITING_SOURCES[^=]*=\s*\[([^\]]*)\]", src)
+    assert match, "RECRUITING_SOURCES not found in lifestyle-bot-dashboard botHelpers.ts"
+    ts = sorted(s.lower() for s in re.findall(r'"([^"]+)"', match.group(1)))
+    assert ts == expected, f"recruiting sources diverged: rules.yaml {expected} vs botHelpers.ts {ts}"

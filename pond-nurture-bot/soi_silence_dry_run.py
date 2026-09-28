@@ -232,6 +232,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _p("\n=== B. Newly silenced — live RuleEngine._is_soi_silenced vs the legacy Manually-only rule ===")
     newly: List[Tuple[dict, str]] = []
     freed: List[int] = []
+    kept_recruits: List[int] = []
     legacy_count = live_count = 0
     for person in people:
         legacy = legacy_soi_rule(person, peter)
@@ -242,8 +243,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             newly.append((person, live))
         elif legacy and not live:
             freed.append(int(person["id"]))
+        elif not live and str(person.get("createdVia") or "").strip().lower() == "import" \
+                and (_uid(person.get("createdById")) or 0) > 0 \
+                and _uid(person.get("createdById")) != peter and engine.recruiting_source(person):
+            # The carve-out: an agent-imported recruit the live rule leaves to
+            # the recruiting track (every lead path refuses it regardless).
+            kept_recruits.append(int(person["id"]))
     _p(f"  legacy rule silences {legacy_count}; live rule silences {live_count}; "
        f"newly silenced {len(newly)}; freed by the change {len(freed)} (must be 0)")
+    _p(f"  carve-out: {len(kept_recruits)} agent-imported recruiting-source contact(s) stay on the "
+       f"recruiting track — not silenced by either rule, refused by every lead path")
     if freed:
         _p(f"  FREED — the live rule silences fewer contacts than the legacy rule: {sorted(freed)[:50]}")
 

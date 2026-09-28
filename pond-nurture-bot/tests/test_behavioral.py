@@ -146,9 +146,9 @@ class TestSOISilence:
         # FUB spells a blank source "<unspecified>"
         assert engine._is_soi_silenced(
             {"id": 14, "createdVia": "Import", "createdById": self.STEVEN, "source": "<unspecified>"})
-        # ...and a typed source changes nothing
+        # ...and a typed (non-recruiting) source changes nothing
         assert engine._is_soi_silenced(
-            {"id": 15, "createdVia": "IMPORT", "createdById": self.STEVEN, "source": "Agent Scouting"})
+            {"id": 15, "createdVia": "IMPORT", "createdById": self.STEVEN, "source": "Open House"})
 
     def test_a_mobile_app_add_is_silenced(self, engine):
         """FUB has no mobile-specific createdVia: a contact added from the
@@ -189,13 +189,55 @@ class TestSOISilence:
         assert rows and rows[0]["status"] == "soi_silenced" and "createdVia=Import" in rows[0]["details"]
         assert fake_http.calls == []  # a cheap local check — FUB was never asked
 
-    def test_recruiting_track_is_silenced_for_a_recruit_an_agent_imported(self, engine):
-        """The rule reaches the recruiting track too: Steven's 2026-09-20 Agent
-        Scouting import is his sphere, so the recruiting emails stop for it."""
+    # ── Carve-out (2026-09-28): an agent-imported RECRUIT keeps the recruiting track ──
+
+    def test_an_agent_imported_recruit_keeps_the_recruiting_track_and_stays_off_every_lead_path(
+            self, engine, tmp_db, fake_http):
+        """A recruiting-source contact an agent imported is a recruit, not
+        sphere: the recruiting track may write to it, and every lead path
+        refuses it exactly as before this rule."""
         recruit = {"id": 9002, "createdVia": "Import", "createdById": self.STEVEN, "source": "Agent Scouting",
-                   "assignedUserId": self.STEVEN, "tags": [], "emails": [{"value": "agent@example.com"}]}
-        assert engine.recruiting_source(recruit)
-        assert engine.recruiting_suppressed(recruit).startswith("soi_silenced")
+                   "assignedUserId": self.STEVEN, "stage": "Lead", "tags": [],
+                   "emails": [{"value": "agent@example.com"}]}
+        assert engine.recruiting_source(recruit) == "Agent Scouting"
+        assert engine._is_soi_silenced(recruit) is None            # the carve-out
+        assert engine.recruiting_suppressed(recruit) is None        # recruiting email allowed
+        # ...and blocked from every lead path, as before:
+        assert engine.is_excluded(recruit) is True                  # pond, speed-to-lead, the sweeps
+        assert engine._is_excluded_source(recruit)                  # drips, seller nurture, stale-agent
+        assert engine._never_a_lead_email(recruit)                  # welcome and congrats emails
+        assert engine.process_reengagement_candidate(dict(recruit, assignedPondId=2)) == "suppressed"
+        assert fake_http.calls == []                                # nothing asked of FUB
+        rows = tmp_db.recent_audit_rows(["pond_nurture"], dt.datetime(2000, 1, 1, tzinfo=timezone.utc))
+        assert rows and rows[0]["status"] == "suppressed"
+        # CONTAINS, like excluded sources — and both recruiting sources
+        assert engine._is_soi_silenced(dict(recruit, id=9003, source="Agent Scouting - LinkedIn")) is None
+        assert engine._is_soi_silenced(dict(recruit, id=9004, source="New Agent Inquiry")) is None
+
+    def test_an_agent_imported_non_recruit_is_totally_silent(self, engine, tmp_db):
+        contact = {"id": 9005, "createdVia": "Import", "createdById": self.STEVEN, "source": "<unspecified>",
+                   "assignedUserId": self.STEVEN, "stage": "Lead", "tags": [],
+                   "emails": [{"value": "lead@example.com"}]}
+        assert engine.recruiting_source(contact) is None
+        assert engine._is_soi_silenced(contact)
+        assert engine.recruiting_suppressed(contact).startswith("soi_silenced")
+        assert engine.process_reengagement_candidate(dict(contact, assignedPondId=2)) == "suppressed"
+        rows = tmp_db.recent_audit_rows(["pond_nurture"], dt.datetime(2000, 1, 1, tzinfo=timezone.utc))
+        assert rows and rows[0]["status"] == "soi_silenced"
+
+    def test_the_carve_out_stops_at_the_import_channel(self, engine):
+        """It covers the channel this PR adds. A recruit typed in by hand was
+        silenced from the recruiting track before this PR and still is (widen
+        the carve-out to "Manually" if Peter wants otherwise); an SOI tag or
+        source silences a recruit either way; Peter's own import never was."""
+        by_hand = {"id": 9006, "createdVia": "Manually", "createdById": self.STEVEN, "source": "New Agent Inquiry"}
+        assert engine._is_soi_silenced(by_hand)
+        assert engine.recruiting_suppressed(by_hand).startswith("soi_silenced")
+        tagged = {"id": 9007, "createdVia": "Import", "createdById": self.STEVEN, "source": "Agent Scouting",
+                  "tags": ["SOI"]}
+        assert engine._is_soi_silenced(tagged)
+        peters = {"id": 9008, "createdVia": "Import", "createdById": self.PETER, "source": "Agent Scouting"}
+        assert engine._is_soi_silenced(peters) is None
 
 
 # ═══ 4. Deal protection ═══════════════════════════════════════════════════════
