@@ -267,6 +267,7 @@ def seller_engine(m, engine, monkeypatch):
                             "kwargs": kwargs})
     monkeypatch.setattr(engine.email, "send", fake_send)
     monkeypatch.setattr(engine, "safe_get_notes", lambda pid: [])
+    monkeypatch.setattr(engine, "safe_get_notes_deep", lambda pid: [])
     monkeypatch.setattr(engine, "_is_soi_silenced", lambda person: None)
     monkeypatch.setattr(engine.content, "should_skip_lead_llm", lambda p, n: (False, ""))
     monkeypatch.setattr(
