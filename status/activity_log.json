@@ -1,5 +1,11 @@
 [
   {
+    "ts": "2026-10-08T01:35:59Z",
+    "type": "needs_reply",
+    "contact_name": "Dani Martinez",
+    "detail": "replied by email — awaiting a human"
+  },
+  {
     "ts": "2026-10-07T19:19:35Z",
     "type": "drip",
     "contact_name": "Ray Herron",
@@ -591,12 +597,6 @@
     "ts": "2026-10-07T19:05:07Z",
     "type": "sent",
     "contact_name": "Sheryl Gomez-Correa",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-10-07T19:04:59Z",
-    "type": "sent",
-    "contact_name": "Eric Cody",
     "detail": "pond nurture email — San Antonio"
   }
 ]
