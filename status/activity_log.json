@@ -1,5 +1,12 @@
 [
   {
+    "ts": "2026-10-11T01:44:28Z",
+    "type": "needs_reply",
+    "contact_name": "Lyndsay Blasienz",
+    "detail": "replied by email — awaiting a human",
+    "track": "recruiting"
+  },
+  {
     "ts": "2026-10-10T17:46:15Z",
     "type": "drip",
     "contact_name": "Michael Sahag",
@@ -592,11 +599,5 @@
     "type": "sent",
     "contact_name": "John Gorafe",
     "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-10-10T17:28:18Z",
-    "type": "sent",
-    "contact_name": "Chelsea | Denver Lifestyle + Travel Content Creator",
-    "detail": "pond nurture email — Austin"
   }
 ]
