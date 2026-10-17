@@ -233,6 +233,18 @@ PERSON_ROWS: tuple[PersonRow, ...] = (
         backward_only=("first_seen_at",),
         reset_on=("assigned_user_id",),
     ),
+    # The remembered skip/timeline checks (2026-09 cost audit). A row is only
+    # valid for the notes its fingerprint was taken on, so when the two sides
+    # saw DIFFERENT notes the newer review wins the row whole — a verdict must
+    # never be carried onto notes it never read. On the same notes the two
+    # halves (skip, timeline) fill each other in field by field, and a written
+    # skip note is never forgotten.
+    PersonRow(
+        name="note_review",
+        clock=("reviewed_at",),
+        forward_only=("reviewed_at", "skip_note_at"),
+        reset_on=("fingerprint",),
+    ),
     # Not a person — the volume ramp's singleton row (ramp.py, CHECK (id = 1))
     # — but exactly this reconciliation shape: one row per key, field by field.
     # It NEEDS a rule more than most: the unclassified fallback is a union, and
