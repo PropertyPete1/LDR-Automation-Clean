@@ -136,20 +136,26 @@ export async function runEngineForAgent(botSlug: string): Promise<{
   for (const person of candidates) {
     const personId = person.id;
     try {
-      // LLM-powered skip check
-      const skipCheck = await shouldSkipLead(person);
-      if (skipCheck.skip) {
+      // Minimum contact gap check — don't email the same lead within 3 days.
+      // A database read, so it runs BEFORE the Claude skip check: a lead we
+      // just emailed no longer costs a model call to be told to wait.
+      if (await wasContactedRecently(personId)) {
         skipped++;
-        await postFubNote(
-          personId,
-          `[${agent.botName}] Skipped automated follow-up. Reason: ${skipCheck.reason ?? "Notes indicate no follow-up needed"}`
-        ).catch(() => {});
         continue;
       }
 
-      // Minimum contact gap check — don't email the same lead within 3 days
-      if (await wasContactedRecently(personId)) {
+      // LLM-powered skip check (the AI verdict is remembered per notes version)
+      const skipCheck = await shouldSkipLead(person);
+      if (skipCheck.skip) {
         skipped++;
+        // One FUB note per decision: a remembered verdict was noted the day it
+        // was reached, and a note a day would only bury the lead's real notes.
+        if (!skipCheck.remembered) {
+          await postFubNote(
+            personId,
+            `[${agent.botName}] Skipped automated follow-up. Reason: ${skipCheck.reason ?? "Notes indicate no follow-up needed"}`
+          ).catch(() => {});
+        }
         continue;
       }
 
