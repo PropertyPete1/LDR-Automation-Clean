@@ -1,5 +1,12 @@
 [
   {
+    "ts": "2026-10-17T17:10:18Z",
+    "type": "needs_reply",
+    "contact_name": "Veronica Lockett",
+    "detail": "replied by email — awaiting a human",
+    "track": "recruiting"
+  },
+  {
     "ts": "2026-10-17T16:01:21Z",
     "type": "sent",
     "contact_name": "Jimmy Jennings",
@@ -591,12 +598,6 @@
     "ts": "2026-10-17T15:49:24Z",
     "type": "sent",
     "contact_name": "Pablo Valdez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-10-17T15:49:18Z",
-    "type": "sent",
-    "contact_name": "Michelle Aradillas",
     "detail": "pond nurture email — San Antonio"
   }
 ]
