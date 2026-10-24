@@ -633,6 +633,7 @@ def live_engine(m, engine, monkeypatch):
     monkeypatch.setattr(engine.email, "send",
                         lambda to, subject, body, **kw: engine.sent.append(to))
     monkeypatch.setattr(engine, "safe_get_notes", lambda pid: [])
+    monkeypatch.setattr(engine, "safe_get_notes_deep", lambda pid: [])
     monkeypatch.setattr(engine, "_is_soi_silenced", lambda person: None)
     monkeypatch.setattr(engine.content, "should_skip_lead_llm", lambda p, n: (False, ""))
     monkeypatch.setattr(engine.content, "_llm_call",
