@@ -43,6 +43,13 @@
       "when": 1784740333299,
       "tag": "0005_young_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1790306499373,
+      "tag": "0006_far_warstar",
+      "breakpoints": true
     }
   ]
 }
