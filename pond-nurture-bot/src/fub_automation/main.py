@@ -70,6 +70,8 @@ from .assigner import (
     resolve_assigner,
 )
 from .mailbox import MailboxReplyReader, strip_quoted_reply
+from .addresses import property_address_or_blank
+from . import datecontext
 from .names import greeting_first_name
 from .recruiting import (
     RECRUITING_AUDIT_ACTION,
@@ -1420,6 +1422,59 @@ class ContentGenerator:
                     return content[start : i + 1]
         return content
 
+    # ── Send-date grounding (2026-11-06) ───────────────────────────────────────
+    def send_day(self, now: Optional[dt.datetime] = None) -> dt.date:
+        """The local calendar date this run's emails go out on."""
+        return datecontext.send_date(getattr(self.rules, "local_timezone", None) or datecontext.DEFAULT_TZ, now)
+
+    def date_grounding(self, day: Optional[dt.date] = None,
+                       holiday: Optional["datecontext.HolidayContext"] = None,
+                       include_holiday: bool = True) -> str:
+        day = day or self.send_day()
+        if include_holiday and holiday is None:
+            holiday = datecontext.upcoming_holiday(day)
+        tz_name = getattr(self.rules, "local_timezone", None) or datecontext.DEFAULT_TZ
+        return datecontext.grounding_block(day, tz_name, holiday if include_holiday else None)
+
+    @staticmethod
+    def rejection_note(problems: List[str]) -> str:
+        return ("YOUR PREVIOUS DRAFT WAS REJECTED because it contradicted the send date: "
+                + "; ".join(problems)
+                + ". Rewrite it. Do not mention any holiday, season, or part of the year at all this time.")
+
+    def grounded_generate(self, generate: Any, day: Optional[dt.date] = None) -> dict:
+        """Run generate(extra_instruction) and refuse a draft that contradicts
+        the send date. generate("") makes the first draft; on problems it is
+        called once more with the rejection note; if that draft still fails,
+        DateGroundingError is raised and nothing may be sent. What each caller
+        records (deferred / error) and whether it is ever retried differs:
+        see datecontext.DateGroundingError.
+        """
+        day = day or self.send_day()
+        generated = generate("")
+        problems = datecontext.date_language_problems(
+            f"{generated.get('subject', '')}\n{generated.get('email_body', '')}", day)
+        if not problems:
+            return generated
+        LOGGER.warning("Generated email contradicted the send date (%s) — requesting one rewrite", "; ".join(problems))
+        generated = generate(self.rejection_note(problems))
+        problems = datecontext.date_language_problems(
+            f"{generated.get('subject', '')}\n{generated.get('email_body', '')}", day)
+        if problems:
+            raise datecontext.DateGroundingError(problems)
+        return generated
+
+    def grounded_json(self, prompt: str, temperature: float, day: Optional[dt.date] = None) -> dict:
+        """The buyer/client prompts' path through grounded_generate."""
+        def _draft(extra: str) -> dict:
+            text = prompt + ("\n\n" + extra if extra else "")
+            content = self._llm_call(messages=[{"role": "user", "content": text}],
+                                     temperature=temperature if not extra else min(temperature, 0.6))
+            if not content:
+                raise ValueError("LLM returned empty content")
+            return json.loads(self.extract_json_object(content))
+        return self.grounded_generate(_draft, day)
+
     def should_skip_lead_llm(self, person: dict, notes: List[dict]) -> Tuple[bool, str]:
         if not notes:
             return False, ""
@@ -1605,18 +1660,18 @@ NO_WINDOW"""
         )
         safe_lead_context = lead_context or "No safe lead-specific note context is available beyond the first name and city guidance."
         safe_recent_note = recent_note_text or "No recent note was available."
-        today_str = dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        # The send date in local time, not UTC: an evening Central run used to
+        # be told it was already tomorrow. See datecontext.py.
+        send_day = self.send_day()
+        today_str = send_day.isoformat()
 
-        # Holiday-aware email generation
-        holiday_instruction = ""
-        if holiday:
-            holiday_instruction = (
-                f"HOLIDAY CONTEXT: Today is {holiday}! This is a holiday, so the email should "
-                f"warmly acknowledge {holiday} in the opening or subject line. Wish them a happy {holiday} "
-                f"and keep the tone celebratory and festive. The email should still be about real estate "
-                f"and their home search, but lead with the holiday greeting. Make it feel like "
-                f"the team is sending a quick personal holiday note to a friend, not a mass blast."
-            )
+        # Holiday handling (2026-11-06): the old instruction said "Today is
+        # upcoming Veterans Day!" with no date, five days early, and the model
+        # filled the gap with "this week"/"this weekend". The holiday now
+        # arrives as a HolidayContext with its exact date, and the grounding
+        # block states what may and may not be said about it.
+        holiday_ctx = holiday if isinstance(holiday, datecontext.HolidayContext) else datecontext.upcoming_holiday(send_day)
+        holiday_instruction = self.date_grounding(send_day, holiday_ctx)
 
         # Thread-aware email generation: if there's a recent email thread, prioritize continuing it
         thread_section = ""
@@ -1707,12 +1762,7 @@ NO_WINDOW"""
         - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language, because the system adds the footer separately.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
-        LOGGER.debug("LLM Response content: %s", content[:200])
-        if not content:
-            LOGGER.error("LLM returned empty content")
-            raise ValueError("LLM returned empty content")
-        generated = json.loads(content)
+        generated = self.grounded_json(textwrap.dedent(prompt).strip(), temperature=0.86, day=send_day)
         generated["freshness_angle"] = angle
         generated["asked_referral"] = ask_referral
         return generated
@@ -1731,10 +1781,16 @@ NO_WINDOW"""
         Ends with a soft referral ask.
         """
         first_name = greeting_first_name(person)
+        send_day = self.send_day()
         close_year = ""
+        close_ago = ""
         if close_date:
             try:
-                close_year = str(parse_fub_datetime(close_date).year)
+                closed_on = parse_fub_datetime(close_date)
+                close_year = str(closed_on.year)
+                months = (send_day.year - closed_on.year) * 12 + (send_day.month - closed_on.month)
+                if months >= 1:
+                    close_ago = f" (about {months} month{'s' if months != 1 else ''} before this email)"
             except Exception:
                 pass
 
@@ -1749,15 +1805,19 @@ NO_WINDOW"""
                 spot_lines.append(f"{name}" + (f" ({vicinity_short})" if vicinity_short else ""))
 
         spots_context = (
-            "Recent local spots near their home: " + "; ".join(spot_lines)
+            "Spots near their home (from a map search; do not claim any are new or recently opened): " + "; ".join(spot_lines)
             if spot_lines
-            else "No specific local spots available — use warm, general neighborhood language."
+            else "No specific local spots available — use warm, general neighborhood language. Do not name any business."
         )
+        # deal_address arrives already validated (property_address_or_blank).
+        # Without one the email must not name or describe a property at all.
         close_context = (
-            f"They closed on their home at {deal_address}" + (f" in {close_year}" if close_year else "") + "."
+            f"They closed on their home at {deal_address}" + (f" in {close_year}" if close_year else "") + close_ago + "."
             if deal_address
-            else "They are a past client of Lifestyle Design Realty."
+            else "They are a past client of Lifestyle Design Realty. No verified property address is available, "
+                 "so do not mention a street, address, or property name."
         )
+        date_block = self.date_grounding(send_day)
 
         prompt = f"""
         You are writing on behalf of the Lifestyle Design Realty team.
@@ -1766,6 +1826,7 @@ NO_WINDOW"""
         Client first name: {first_name}
         Context: {close_context}
         {spots_context}
+        {date_block}
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
@@ -1776,16 +1837,13 @@ NO_WINDOW"""
         - CRITICAL STYLE RESTRICTION: Do NOT use dashes (- or --) anywhere in the subject or body.
         - CRITICAL STYLE RESTRICTION: Do NOT use bullet points, numbered lists, or list structures. Keep it strictly conversational prose.
         - Open with a genuine "how's the home?" style question.
-        - Naturally mention 1-2 of the local spots near their home (new restaurants, bars, coffee shops, parks). Make it feel like a neighbor tip, not a list.
+        - If spots are listed above, naturally mention 1 or 2 of them as places near their home. Make it feel like a neighbor tip, not a list. Never call a place new, just opened, or recently opened.
         - Include a warm, low-pressure referral ask: something like "If you ever know anyone looking to buy or sell, I'd love to help them the way I helped you."
         - End with EXACTLY: "Warmly,\nThe Lifestyle Design Realty Team" — no individual name, no address, no unsubscribe language (the system adds the footer separately).
         - Keep it concise: 130 to 200 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
-        if not content:
-            raise ValueError("LLM returned empty closed drip email choices")
-        return json.loads(content)
+        return self.grounded_json(textwrap.dedent(prompt).strip(), temperature=0.86, day=send_day)
 
     def generate_congrats_email(self, person: dict, deal_address: str) -> dict:
         """Generate a warm, personal congratulations email for a newly closed deal.
@@ -1795,11 +1853,14 @@ NO_WINDOW"""
         celebration email sent the same day the deal closes.
         """
         first_name = greeting_first_name(person)
+        send_day = self.send_day()
         address_context = (
             f"They just closed on their new home at {deal_address}."
             if deal_address
-            else "They just closed on their new home."
+            else "They just closed on their new home. No verified property address is available, so do not "
+                 "mention a street, address, or property name."
         )
+        date_block = self.date_grounding(send_day)
 
         prompt = f"""
         You are writing on behalf of the Lifestyle Design Realty team.
@@ -1807,6 +1868,7 @@ NO_WINDOW"""
 
         Client first name: {first_name}
         Context: {address_context}
+        {date_block}
 
         Requirements:
         - This is a genuine celebration email — make it feel like the team just heard the news and is genuinely excited.
@@ -1822,13 +1884,11 @@ NO_WINDOW"""
         - Keep it concise: 100 to 160 words.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.88)
-        if not content:
-            raise ValueError("LLM returned empty congrats email choices")
-        return json.loads(content)
+        return self.grounded_json(textwrap.dedent(prompt).strip(), temperature=0.88, day=send_day)
 
     def generate_welcome_email(self, person: dict, city: str) -> dict:
         first_name = greeting_first_name(person)
+        send_day = self.send_day()
         city_instruction = (
             f"The lead appears interested in {city}. Tailor the welcome to that city/area."
             if city and city.lower() not in {"texas", "your area", "any city in texas", "texas/general"}
@@ -1840,6 +1900,7 @@ NO_WINDOW"""
 
         Lead first name: {first_name}
         City/area guidance: {city_instruction}
+        {self.date_grounding(send_day)}
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
@@ -1856,11 +1917,7 @@ NO_WINDOW"""
         - Email must include a subject and body.
         - Return strict JSON with keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
-        if not content:
-            raise ValueError("LLM returned empty welcome email choices")
-        generated = json.loads(content)
-        return generated
+        return self.grounded_json(textwrap.dedent(prompt).strip(), temperature=0.86, day=send_day)
 
 
     def generate_long_term_nurture_email(
@@ -1932,6 +1989,8 @@ NO_WINDOW"""
 
         safe_notes = notes_context or "No recent notes available."
         safe_trigger = trigger_snippet or "They mentioned they’re not quite ready yet."
+        send_day = self.send_day()
+        date_block = self.date_grounding(send_day)
 
         prompt = f"""
         You are writing on behalf of the Lifestyle Design Realty team.
@@ -1943,6 +2002,7 @@ NO_WINDOW"""
         Recent FUB notes context: {safe_notes}
         Email number in drip: {emails_sent + 1} (so this is not the first email they’ve received)
         Content focus for this email: {content_instruction}
+        {date_block}
 
         Requirements:
         - CRITICAL (anti-phantom): NEVER reference a previous email, message, call, attachment, or conversation unless it appears explicitly in the provided FUB notes. Real prior outreach always appears in the notes (every automated email logs one). If the notes show no prior outreach, write as a natural FIRST touch — do not imply any earlier contact existed.
@@ -1961,10 +2021,7 @@ NO_WINDOW"""
         - End with a warm team sign-off such as "Cheers,\nThe LDR Team" or "Talk soon,\nYour friends at Lifestyle Design Realty". NEVER use any individual person's name. Do not add the company address, legal disclaimer, or unsubscribe language.
         - Return strict JSON with exactly these keys: subject, email_body.
         """
-        content = self._llm_call(messages=[{"role": "user", "content": textwrap.dedent(prompt).strip()}], temperature=0.86)
-        if not content:
-            raise ValueError("LLM returned empty long-term nurture email choices")
-        return json.loads(content)
+        return self.grounded_json(textwrap.dedent(prompt).strip(), temperature=0.86, day=send_day)
 
 
     def classify_lead_intent(
@@ -2498,6 +2555,7 @@ class RuleEngine:
 
         # Try to get the property address from the Buyers deal room
         deal_address = ""
+        deal_name = ""
         try:
             deals = self.fub.get_deals_for_person(person_id)
             buyers_deals = [
@@ -2506,14 +2564,25 @@ class RuleEngine:
                 or "purchase" in str(d.get("pipelineName") or "").lower()
             ]
             if buyers_deals:
-                # Use the most recently updated deal's name as the address
+                # The most recently updated deal's NAME is the only address-like
+                # field this path reads; agents often name deals after the client.
                 buyers_deals.sort(key=lambda d: d.get("updated") or d.get("updatedAt") or "", reverse=True)
-                deal_address = str(buyers_deals[0].get("name") or "").strip()
+                deal_name = str(buyers_deals[0].get("name") or "").strip()
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Phase 3b: Could not fetch deals for person %s: %s", person_id, exc)
+        deal_address, address_reason = property_address_or_blank(deal_name, person)
+        if deal_name and not deal_address:
+            self.db.log("closed_congrats", "address_omitted", person_id, {"reason": address_reason, "deal_name_len": len(deal_name)})
 
         # Generate the congratulations email
-        generated = self.content.generate_congrats_email(person, deal_address)
+        try:
+            generated = self.content.generate_congrats_email(person, deal_address)
+        except datecontext.DateGroundingError as exc:
+            # NOT guaranteed to be retried: congrats discovery only looks back
+            # 26 hours. A retry path is proposed separately (safety patch).
+            self.db.log("closed_congrats", "deferred", person_id, {
+                "reason": "date_grounding_failed", "problems": exc.problems, "retry": "not automatic"})
+            return "deferred"
         subject = generated.get("subject", "Congratulations on your new home! 🏡")
         email_body = generated.get("email_body", "")
         if not email_body:
@@ -2529,10 +2598,15 @@ class RuleEngine:
             reply_to=self.rules.owner_email,
             html_body=build_pond_email_html(email_body, self.rules),
         )
-        # Log the note in FUB
+        # Log the note in FUB (kept: Peter wants a note under every lead for
+        # every email). It now also says when the deal name was NOT used as an
+        # address, so the note matches the email that actually went out.
         note_body = f"Congratulations email sent to {to_email}"
         if deal_address:
-            note_body += f" re: {deal_address}"
+            note_body += f" re: {deal_address} (from the FUB deal name; not verified)"
+        elif deal_name:
+            note_body += " (no property address mentioned: the deal name is not a street address)"
+        note_body += f"\nSubject: \"{subject}\""
         self.fub.add_note(person_id, "Automation: Congrats Email Sent", note_body)
 
         # Record in audit DB so we never send twice
@@ -2657,41 +2731,51 @@ class RuleEngine:
             return "suppressed"
 
         # Pull the property address from FUB Buyers pipeline deals
-        deal_address = ""
+        deal_name = ""
         close_date = None
         try:
             deals = self.fub.get_deals_for_person(person_id)
             # Prefer Buyers pipeline closed deals; fall back to any deal with an address-like name
             buyers_closed = [
                 d for d in deals
-                if "buyer" in d.get("pipelineName", "").lower()
-                and d.get("stageName", "").lower() == "closed"
+                if "buyer" in (d.get("pipelineName") or "").lower()
+                and (d.get("stageName") or "").lower() == "closed"
             ]
             if buyers_closed:
                 best_deal = sorted(buyers_closed, key=lambda d: d.get("projectedCloseDate") or "", reverse=True)[0]
-                deal_address = best_deal.get("name", "")
+                deal_name = best_deal.get("name") or ""
                 close_date = best_deal.get("projectedCloseDate")
             elif deals:
                 # Fallback: use the most recent deal name that looks like an address (starts with a number)
-                address_deals = [d for d in deals if re.match(r"^\d", d.get("name", ""))]
+                address_deals = [d for d in deals if re.match(r"^\d", d.get("name") or "")]
                 if address_deals:
-                    deal_address = address_deals[0].get("name", "")
+                    deal_name = address_deals[0].get("name") or ""
                     close_date = address_deals[0].get("projectedCloseDate")
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Phase 3: Could not fetch deals for person %s: %s", person_id, exc)
+        # 2026-11-06 ("at Alexandra Examplefamily"): the deal NAME is free text. Use it as
+        # an address only when it is street-shaped and not the client's name.
+        deal_address, address_reason = property_address_or_blank(deal_name, person)
+        if deal_name and not deal_address:
+            self.db.log("closed_drip", "address_omitted", person_id, {"reason": address_reason, "deal_name_len": len(deal_name)})
 
-        # Fetch local spots near the property address
+        # Fetch local spots near the property address (only a verified one:
+        # the unchecked name used to be sent to Google Places as an address).
         local_spots: List[dict] = []
         if deal_address:
             local_spots = self._fetch_local_spots(deal_address)
 
         # Generate the email
-        generated = self.content.generate_closed_drip_email(
-            person=person,
-            deal_address=deal_address,
-            close_date=close_date,
-            local_spots=local_spots,
-        )
+        try:
+            generated = self.content.generate_closed_drip_email(
+                person=person,
+                deal_address=deal_address,
+                close_date=close_date,
+                local_spots=local_spots,
+            )
+        except datecontext.DateGroundingError as exc:
+            self.db.log("closed_drip", "deferred", person_id, {"reason": "date_grounding_failed", "problems": exc.problems})
+            return "deferred"
 
         to_email = emails[0].get("value") or emails[0].get("email") if emails else None
         if not to_email:
@@ -2711,7 +2795,7 @@ class RuleEngine:
             note_body = (
                 f"Quarterly check-in email sent via Phase 3 automation.\n\n"
                 f"Subject: \"{generated.get('subject', '')}\"\n"
-                f"Property: {deal_address or 'N/A'}\n"
+                f"Property: {(deal_address + ' (from the FUB deal name; not verified)') if deal_address else ('not mentioned (the deal name is not a street address)' if deal_name else 'N/A')}\n"
                 f"Local spots featured: {', '.join(s.get('name','') for s in local_spots[:3]) or 'None'}"
             )
             self.fub.add_note(person_id, "Quarterly Check-In Email Sent", note_body)
@@ -2840,12 +2924,16 @@ class RuleEngine:
         trigger_snippet = (enrollment or {}).get("trigger_snippet") or ""
 
         # Generate the AI email
-        generated = self.content.generate_long_term_nurture_email(
-            person=person,
-            emails_sent=emails_sent,
-            trigger_snippet=trigger_snippet,
-            notes_context=notes_context,
-        )
+        try:
+            generated = self.content.generate_long_term_nurture_email(
+                person=person,
+                emails_sent=emails_sent,
+                trigger_snippet=trigger_snippet,
+                notes_context=notes_context,
+            )
+        except datecontext.DateGroundingError as exc:
+            self.db.log("long_term_nurture_drip", "deferred", person_id, {"reason": "date_grounding_failed", "problems": exc.problems})
+            return "deferred"
         subject = generated.get("subject", "Thinking of you 🏡")
         email_body = generated.get("email_body", "")
         if not email_body:
@@ -3082,16 +3170,27 @@ class RuleEngine:
             self.db.log(SELLER_NURTURE_AUDIT_ACTION, "skipped", person_id, {"reason": f"LLM skip: {skip_reason}"})
             return "skipped"
 
-        # ── Generate the AI email ──
-        generated = generate_seller_email(
-            llm_call_fn=self.content._llm_call,
-            person=person,
-            email_number=emails_sent,
-            property_address=prop_addr,
-            neighborhood=neighborhood,
-            notes_context=notes_context,
-            rules=self.rules,
-        )
+        # ── Generate the AI email (send-date grounded, 2026-11-06) ──
+        _send_day = self.content.send_day()
+        _date_block = self.content.date_grounding(_send_day)
+        try:
+            generated = self.content.grounded_generate(lambda extra: generate_seller_email(
+                llm_call_fn=self.content._llm_call,
+                person=person,
+                email_number=emails_sent,
+                property_address=prop_addr,
+                neighborhood=neighborhood,
+                notes_context=notes_context,
+                rules=self.rules,
+                today_str=_send_day.isoformat(),
+                date_block=_date_block + ("\n    " + extra if extra else ""),
+            ), _send_day)
+        except datecontext.DateGroundingError as exc:
+            # No claim was taken yet and the drip does not advance, so a later
+            # run may regenerate this same email number if the lead still
+            # qualifies; that is not a guaranteed retry.
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "deferred", person_id, {"reason": "date_grounding_failed", "problems": exc.problems})
+            return "deferred"
         subject = generated.get("subject", "Your home's value \U0001f3e1")
         email_body = generated.get("email_body", "")
         if not email_body:
@@ -4705,9 +4804,9 @@ class RuleEngine:
         recent_email_thread = self.get_recent_email_thread(person_id, limit=5)
         if recent_email_thread:
             LOGGER.info("Thread-aware mode: found email thread for person %s, will continue conversation", person_id)
-        # Detect holiday for holiday-aware emails
-        from .sms_helpers import get_upcoming_holiday as _get_holiday
-        _today_holiday = _get_holiday(dt.datetime.now(ZoneInfo(self.rules.local_timezone)).date()) or ""
+        # Holiday for this send, with its exact date (datecontext.py). The old
+        # sms_helpers string ("upcoming Veterans Day") carried no date.
+        _today_holiday = datecontext.upcoming_holiday(self.content.send_day())
         # ── Tier 3 Feature 2: Gather expanded context for deeper personalization ──
         last_angle_used = self.db.get_last_email_angle(person_id) or ""
         # Build full note history (up to 20 notes, chronological)
@@ -4720,16 +4819,23 @@ class RuleEngine:
                 if n_body:
                     note_snippets.append(f"[{n_date[:10]}] {n_body[:300]}")
             full_note_history = "\n".join(note_snippets)
-        generated = self.content.generate(
-            person, city or "Texas", market_context, lead_context,
-            recent_note_text=recent_note_text,
-            recent_email_thread=recent_email_thread,
-            holiday=_today_holiday,
-            engagement_tier=tier,
-            full_note_history=full_note_history,
-            last_angle_used=last_angle_used,
-            is_value_led=is_value_led,
-        )
+        try:
+            generated = self.content.generate(
+                person, city or "Texas", market_context, lead_context,
+                recent_note_text=recent_note_text,
+                recent_email_thread=recent_email_thread,
+                holiday=_today_holiday,
+                engagement_tier=tier,
+                full_note_history=full_note_history,
+                last_angle_used=last_angle_used,
+                is_value_led=is_value_led,
+            )
+        except datecontext.DateGroundingError as exc:
+            # Nothing was sent and no FUB note is written. The lead stays due,
+            # so a later run's normal scan may pick it up again if it still
+            # qualifies; that is not a guaranteed retry.
+            self.db.log("pond_nurture", "deferred", person_id, {"reason": "date_grounding_failed", "problems": exc.problems})
+            return "deferred"
         sent_channels = []
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
             from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"

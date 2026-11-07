@@ -168,6 +168,8 @@ def generate_seller_email(
     neighborhood: str,
     notes_context: str,
     rules,
+    today_str: Optional[str] = None,
+    date_block: str = "",
 ) -> dict:
     """Generate a seller nurture email using Claude.
     
@@ -184,7 +186,9 @@ def generate_seller_email(
         dict with keys: subject, email_body
     """
     first_name = greeting_first_name(person)
-    today_str = dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    # 2026-11-06: the caller passes the LOCAL send date and the shared date
+    # grounding block (datecontext.py); the UTC fallback is legacy only.
+    today_str = today_str or dt.datetime.now(timezone.utc).strftime('%Y-%m-%d')
     
     # Location context for personalization
     location_context = ""
@@ -293,6 +297,7 @@ def generate_seller_email(
 
     Lead first name: {first_name}
     Today's date: {today_str}
+    {date_block}
     Email number in sequence: {email_number + 1}
     Email angle: {email_angle}
     Location context: {location_context}
