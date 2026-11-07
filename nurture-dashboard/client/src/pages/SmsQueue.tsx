@@ -458,6 +458,9 @@ export default function SmsQueue() {
         daysStale: lead.days_stale,
         assignedAgent: lead.assigned_agent,
         notes: lead.notes,
+        // The per-lead-per-day draft cache is keyed on personId: without it
+        // every page load, for every viewer, paid for a fresh Claude draft.
+        personId: lead.id,
         ...accessParams,
       });
       setDraftMessages(prev => ({ ...prev, [lead.id]: result.draft }));
