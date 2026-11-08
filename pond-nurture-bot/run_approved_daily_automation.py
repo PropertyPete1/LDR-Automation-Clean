@@ -190,6 +190,22 @@ def run_automation() -> int:
     except Exception as _ramp_exc:  # noqa: BLE001
         print(f"Warning: ramp evaluation failed, cap falls back to rules.yaml: {_ramp_exc}")
 
+    # Replies FIRST, before any scan below can send (2026-11-08). An emailed
+    # UNSUBSCRIBE becomes the trash + tags + opt-out ledger row that every
+    # sender's is_excluded() checks only when one of these scans reads it.
+    # Reply Detection's own */10 schedule is not a guarantee: on 2026-11-08
+    # GitHub created its runs 4.5 to 7 hours apart (08:05, 15:08, 19:40 UTC),
+    # and this run used to read replies only after every sending scan, so a
+    # typed unsubscribe could sit unread through a day's sends. Only the pond
+    # path re-checks inbound mail at send time (_check_incoming_opt_out);
+    # seller, closed, long-term and agent emails rely on these two scans.
+    # Moved, not duplicated: each still runs exactly once per daily run.
+    engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
+    # Replies to OLD threads. The scan above only watches leads emailed in the
+    # last 7 days; this walks every lead FUB says was updated in the last 2
+    # days — any inbound bumps `updated` — so a reply to a month-old thread
+    # (Joe Muñoz, 2026-08-22) is caught within a day instead of never.
+    engine.scan_wide_reply_sweep()
     engine.scan_all_leads_for_disqualification()  # Reply Intent Handler: auto-trash relocated/bought-elsewhere leads (ALL leads)
     engine.scan_pond_responses_for_intent()
     engine.scan_stale_agent_no_note_reassignment()
@@ -207,12 +223,6 @@ def run_automation() -> int:
     engine.scan_new_closed_leads()  # Phase 3b: same-day congrats email when a deal closes
     engine.scan_closed_drip()  # Phase 3: quarterly check-in emails for Closed/Past Client/Sphere leads
     engine.scan_deleted_leads()  # Ghost sweep: drop needs-reply/watch/timer rows whose FUB record is gone
-    engine.scan_reply_detection()  # Reply detection: tag + alert for leads that replied to bot emails
-    # Replies to OLD threads. The scan above only watches leads emailed in the
-    # last 7 days; this walks every lead FUB says was updated in the last 2
-    # days — any inbound bumps `updated` — so a reply to a month-old thread
-    # (Joe Muñoz, 2026-08-22) is caught within a day instead of never.
-    engine.scan_wide_reply_sweep()
     engine.send_phase2_daily_summary()
     
     # Auto-refresh the dashboard data. refresh_dashboard.sh now lives in this
