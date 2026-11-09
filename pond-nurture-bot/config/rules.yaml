@@ -116,13 +116,23 @@ sms_opt_out_tags: []
 # Phase 3 — Closed/Past Client/Sphere quarterly check-in drip
 # Approved by Peter on 2026-06-12. Email-only. Signed 'Truly, Peter'.
 # Includes hyper-local neighborhood spots (restaurants, bars, cafes, parks) near the closed property address.
-phase3_closed_drip_enabled: true
+phase3_closed_drip_enabled: true  # also gates the Phase 3b congrats email, so it stays on
 phase3_cadence_days: 90
-phase3_max_emails_per_run: 20
-phase3_eligible_stages:
-  - "Closed"
-  - "Past Client"
-  - "Sphere"
+phase3_max_emails_per_run: 20  # NOTE: 0 here means NO cap, not "off" — never use it to pause
+# PAUSED 2026-11-09 (quarterly check-ins only). The send clocks for check-ins
+# sent while the state DB could not be saved (2026-10-29 to 2026-11-08) were
+# lost, so the next run would re-send to the same past clients (20 got one on
+# 2026-11-06). An empty stage list gives the check-in scan no candidates; the
+# congrats email and every other track are unaffected.
+# ORIGINAL VALUE — restore exactly:
+#   phase3_eligible_stages:
+#     - "Closed"
+#     - "Past Client"
+#     - "Sphere"
+# Restore only when the lost closed_drip_log rows are rebuilt (or Peter accepts
+# one repeat check-in per affected client) AND a daily run's state push is
+# confirmed saved on the new storage.
+phase3_eligible_stages: []
 phase3_daily_summary_enabled: true
 
 # Long-Term Nurture Reply Handler
@@ -151,7 +161,15 @@ email_address_update_scan_enabled: true
 # Daily seller-email cap ramps weekly: week 0 (from the first seller email ever
 # sent) uses the first value, week 1 the second, etc., then HOLDS at the last
 # value forever. Edit the list to change pace; a single value = flat cap.
-seller_daily_cap_ramp: [25, 25, 50, 50]
+# PAUSED 2026-11-09: cap 0 sends no seller emails (the scan stops at the cap
+# check before any send). The sequence position (emails_sent) and send claims
+# for seller emails sent 2026-10-29 to 2026-11-08 were lost, and the same leads
+# were re-sent email #8 on later days (20 leads; one got it 4 times).
+# ORIGINAL VALUE — restore exactly: seller_daily_cap_ramp: [25, 25, 50, 50]
+# Restore only when the lost seller_nurture_drip / seller_send_claims rows are
+# rebuilt (or Peter accepts one more repeat per affected lead) AND a daily run's
+# state push is confirmed saved on the new storage.
+seller_daily_cap_ramp: [0]
 # After email #5 (day 30), long-tail cadence in days (21 = every 3 weeks).
 # Long-tail emails rotate angles market_update -> equity_teaser -> case_study
 # so copy never repeats back-to-back for the same lead. Was 30 (monthly).
