@@ -558,3 +558,63 @@ def test_welcome_date_grounding_failure_is_logged_as_error_not_deferred_and_neve
         rows = con.execute("SELECT status, details FROM audit_log WHERE action='instant_welcome_email'").fetchall()
     assert [r[0] for r in rows] == ["error"]
     assert "Veterans Day" in rows[0][1] and "retry" not in rows[0][1]
+
+
+# ── 2026-11-09: a midweek holiday makes no holiday weekend ───────────────────
+#
+# Sent on Monday Nov 9, 2026 with Veterans Day on Wednesday Nov 11. The first
+# was caught by the "this weekend" rule; the next two passed the check and went
+# out at 22:59 UTC. All three, and the cross-sentence form, must be refused.
+
+NOV9 = dt.date(2026, 11, 9)
+
+NOV9_SENT = [
+    "Wanted to send a warm note ahead of Veterans Day this weekend.",
+    "Wanted to send a quick note as we head into Veterans Day weekend. Hope you get some time to relax and reflect!",
+    "Wanted to send a quick note ahead of Veterans Day to say thanks for your service, if that applies to you, "
+    "and to wish you a peaceful long weekend ahead.",
+    "Thinking of you ahead of Veterans Day. Enjoy the long weekend!",
+    "Hope you enjoy the Veterans Day holiday weekend.",
+    "Wishing you a restful three-day weekend for Veterans Day.",
+]
+
+
+@pytest.mark.parametrize("sent", NOV9_SENT)
+def test_a_midweek_holiday_is_never_a_weekend(sent):
+    assert dc.date_language_problems("Hey Sam,\n" + sent, NOV9), sent
+
+
+@pytest.mark.parametrize("sent", NOV9_SENT)
+def test_the_wrapper_refuses_the_nov9_holiday_weekend_wording(engine, monkeypatch, fake_http, sent):
+    """Through the REAL wrapper every buyer email is generated with: one
+    rewrite is requested, and two bad drafts raise, so nothing is sent."""
+    monkeypatch.setattr(engine.content, "send_day", lambda now=None: NOV9)
+    bad = {"subject": "A quick note", "email_body": "Hey Sam,\n" + sent + " Still looking in Boerne?"}
+    good = {"subject": "A quick note", "email_body": "Hey Sam,\nWith Veterans Day coming up on Wednesday, "
+            "November 11, thank you to everyone who served. Still looking in Boerne?"}
+    llm = _ScriptedLLM([bad, good])
+    monkeypatch.setattr(engine.content, "_llm_call", llm)
+    assert engine.content.grounded_json("PROMPT", 0.86) == good
+    assert len(llm.prompts) == 2 and "REJECTED" in llm.prompts[1]
+    monkeypatch.setattr(engine.content, "_llm_call", _ScriptedLLM([bad, bad]))
+    with pytest.raises(dc.DateGroundingError):
+        engine.content.grounded_json("PROMPT", 0.86)
+
+
+@pytest.mark.parametrize("day,valid", [
+    (NOV9, "With Veterans Day coming up on Wednesday, November 11, thank you to everyone who served."),
+    (NOV9, "Any plans this weekend? I have two homes in Boerne worth a look."),
+    (NOV9, "Are you free the weekend of November 14 to tour a few homes?"),
+    (dt.date(2026, 11, 23), "Hope you have a great Thanksgiving weekend ahead."),
+    (dt.date(2026, 9, 3), "Enjoy the long Labor Day weekend coming up."),
+    (dt.date(2026, 5, 21), "Enjoy the Memorial Day long weekend."),
+])
+def test_real_weekends_and_real_holiday_weekends_still_pass(day, valid):
+    assert dc.date_language_problems("Hey Sam,\n" + valid, day) == []
+
+
+def test_the_prompt_says_a_midweek_holiday_has_no_weekend():
+    block = dc.grounding_block(NOV9, holiday=dc.upcoming_holiday(NOV9))
+    assert "Veterans Day falls on a Wednesday this year" in block and "long weekend" in block
+    labor = dt.date(2026, 9, 3)
+    assert "long weekend" not in dc.grounding_block(labor, holiday=dc.upcoming_holiday(labor))

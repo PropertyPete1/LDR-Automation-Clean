@@ -146,7 +146,21 @@ def grounding_block(day: dt.date, tz_name: str = DEFAULT_TZ,
             f"You may mention it once using that exact weekday and date (for example \"with "
             f"{holiday.name} coming up on {holiday.date.strftime('%A')}, {holiday.date.strftime('%B')} "
             f"{holiday.date.day}\"), or leave it out. Do not wish them a happy {holiday.name} yet.")
+    if holiday is not None and _midweek(holiday.name, holiday.date):
+        lines.append(
+            f"{holiday.name} falls on a {holiday.date.strftime('%A')} this year, so there is NO "
+            f"\"{holiday.name} weekend\", holiday weekend or long weekend. Never write those phrases.")
     return "\n".join(lines)
+
+
+# A holiday on Tuesday-Thursday makes no long weekend. Thanksgiving is the one
+# exception: it is always a Thursday and "Thanksgiving weekend" is how people
+# speak of the four days that follow.
+_WEEKEND_MAKING = frozenset({"Thanksgiving"})
+
+
+def _midweek(name: str, when: dt.date) -> bool:
+    return name not in _WEEKEND_MAKING and when.weekday() in (1, 2, 3)
 
 
 # ── Post-generation check ─────────────────────────────────────────────────────
@@ -178,6 +192,13 @@ _RELATIVE = {
     "this week": r"\bthis week\b(?!end)",
     "next week": r"\bnext week\b(?!end)",
 }
+
+# 2026-11-09: "this weekend" was caught, but these went out the same day with
+# Veterans Day on a Wednesday: "as we head into Veterans Day weekend" and
+# "ahead of Veterans Day ... a peaceful long weekend ahead".
+_WEEKEND_WORD = re.compile(r"\bweekend\b")
+_LONG_WEEKEND = re.compile(
+    r"\b(?:long|holiday|extended|(?:three|3|four|4)[- ]day) weekend\b")
 
 _MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august",
                 "september", "october", "november", "december"]
@@ -387,6 +408,11 @@ def date_language_problems(text: str, day: dt.date) -> List[str]:
                     problems.append(
                         f"says {name} is '{phrase}' but it is {long_date(when)} "
                         f"and the email is sent {long_date(day)}")
+            if (_midweek(name, when) and _WEEKEND_WORD.search(sentence)
+                    and not any(p.startswith(f"says {name} is 'this weekend'") for p in problems)):
+                problems.append(
+                    f"ties {name} to a weekend, but it falls on {long_date(when)} "
+                    f"(midweek: there is no {name} weekend or long weekend)")
             delta = (when - day).days
             if delta >= 1 and re.search(rf"\bhappy (?!early\b)(?:upcoming )?(?:{pattern})", sentence):
                 problems.append(f"wishes a happy {name} {delta} day{'s' if delta != 1 else ''} early ({long_date(when)})")
@@ -418,6 +444,20 @@ def date_language_problems(text: str, day: dt.date) -> List[str]:
             if weekday and resolved and _WEEKDAYS[resolved.weekday()] != weekday:
                 problems.append(f"calls {resolved.strftime('%B')} {resolved.day}, {resolved.year} a "
                                 f"{weekday.title()} but it is a {_WEEKDAYS[resolved.weekday()].title()}")
+
+    # A long / holiday weekend claimed anywhere in an email that names a
+    # midweek holiday, even in a different sentence ("...ahead of Veterans
+    # Day. Enjoy the long weekend!").
+    if _LONG_WEEKEND.search(lowered) and not any(p.startswith("ties ") for p in problems):
+        for name, pattern in _HOLIDAY_PATTERNS.items():
+            if not re.search(rf"\b(?:{pattern})", lowered):
+                continue
+            when = _next_occurrence(name, day)
+            if _midweek(name, when):
+                problems.append(
+                    f"implies a long weekend for {name}, but it falls on {long_date(when)} "
+                    f"(midweek: there is no long weekend)")
+                break
 
     for word, months in _SEASON_CLAIMS.items():
         if day.month in months:
