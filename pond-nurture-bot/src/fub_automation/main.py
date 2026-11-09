@@ -4457,6 +4457,38 @@ class RuleEngine:
             return f"[Note dated {note_date[:10]}]: {cleaned}"
         return cleaned
 
+    def _last_outbound_fub_email_at(self, person_id: int) -> Optional[dt.datetime]:
+        """The newest OUTBOUND email on the lead's FUB timeline, or None.
+
+        The cadence backstop for when the state DB's own clock is missing. The
+        cadence gates above read reengagement_log, and from at least 2026-10-30
+        to 2026-11-08 no daily run's rows reached the state branch (the encrypted
+        DB was over GitHub's 100 MB file limit), so every clock froze at its last
+        saved send. Only the 3-day FUB check still held, and leads were emailed
+        every 3-4 days instead of every 10-21 (one Austin lead: Nov 1, Nov 4,
+        Nov 8; she replied UNSUBSCRIBE to the third). The bot's own sends sync
+        into FUB from the mailbox, so the FUB timeline remembers them even when
+        the DB does not.
+
+        Outbound = not from the lead (is_inbound_message), so a manual email from
+        Peter or an agent in the window also counts: the bot waits rather than
+        piling on. It can only skip, never send. On an API error it returns None
+        and the DB gates above stand as they always have.
+        """
+        try:
+            messages = self.fub.get_emails(person_id, limit=5)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.debug("FUB email timeline unavailable for cadence backstop, person %s: %s", person_id, exc)
+            return None
+        newest: Optional[dt.datetime] = None
+        for message in messages or []:
+            if is_inbound_message(message):
+                continue
+            stamp = message_timestamp(message)
+            if stamp and (newest is None or stamp > newest):
+                newest = stamp
+        return newest
+
     def was_contacted_recently(self, person: dict, days: int = 3) -> bool:
         """Check if the lead has been contacted recently (within `days` days).
         
@@ -4608,6 +4640,12 @@ class RuleEngine:
         if not self.rules.email_outreach_enabled or not emails:
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
             return "suppressed"
+        fub_last_out = self._last_outbound_fub_email_at(person_id)
+        if fub_last_out and dt.datetime.now(UTC) - fub_last_out < dt.timedelta(days=cadence_days):
+            self.db.log("pond_nurture", "skipped", person_id, {
+                "reason": f"{tier}-tier cadence cap ({cadence_days}d) [FUB email timeline]",
+                "last_outbound_email": fub_last_out.isoformat()})
+            return "skipped"
 
         notes = self.safe_get_notes(person_id)
         should_skip, skip_reason = self.content.should_skip_lead_llm(person, notes)
