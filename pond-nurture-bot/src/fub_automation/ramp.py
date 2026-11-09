@@ -464,7 +464,7 @@ def digest_section_html(con: sqlite3.Connection, guardrails: Optional[dict] = No
     <tr><td style="padding:6px;">Emails sent</td><td style="padding:6px;"><strong>{guardrails['sends']}</strong></td><td style="padding:6px;color:#6b7280;">denominator</td></tr>
     <tr><td style="padding:6px;">Bounce / failure rate</td><td style="padding:6px;"><strong>{pct(guardrails['bounce_pct'])}</strong></td><td style="padding:6px;color:#6b7280;">limit {BOUNCE_RATE_LIMIT_PCT}%</td></tr>
     <tr><td style="padding:6px;">Opt-out rate</td><td style="padding:6px;"><strong>{pct(guardrails['opt_out_pct'])}</strong></td><td style="padding:6px;color:#6b7280;">limit {OPT_OUT_RATE_LIMIT_PCT}%</td></tr>
-    <tr><td style="padding:6px;">Worst run duration</td><td style="padding:6px;"><strong>{'—' if guardrails['worst_runtime_min'] is None else f"{guardrails['worst_runtime_min']:.0f} min"}</strong></td><td style="padding:6px;color:#6b7280;">limit {guardrails['runtime_limit_min']:.0f} min of {WORKFLOW_TIMEOUT_MINUTES}</td></tr>
+    <tr><td style="padding:6px;">Worst run duration</td><td style="padding:6px;"><strong>{'—' if guardrails['worst_runtime_min'] is None else f"{guardrails['worst_runtime_min']:.0f} min"}</strong></td><td style="padding:6px;color:#6b7280;">hold line {guardrails['runtime_limit_min']:.0f} min (timeout {WORKFLOW_TIMEOUT_MINUTES} min)</td></tr>
 """
 
     return f"""

@@ -70,6 +70,14 @@ earlier state commit stays a readable backup. A payload that is neither is
 refused rather than written over the DB. A push whose blob would still be over
 MAX_BLOB_BYTES fails in plain words before it is sent, and a refusal by the
 remote that is not a lost race is reported as such and not retried.
+
+Before packing, the DB is opened (which rolls back a hot journal left by a run
+the job timeout killed mid-write) and must pass quick_check. One that opens but
+fails it is refused unless the DB already on the branch fails it too: every job
+pulls the same DB, so damage that is already there is in every run's copy, and
+refusing those pushes would lose every run's rows while protecting nothing.
+The rule is "never make the branch worse". The pull runs the same check and
+says so in the log, without failing.
 """
 from __future__ import annotations
 
@@ -81,6 +89,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import zlib
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -108,8 +117,14 @@ MAX_BLOB_BYTES = 95 * 1024 * 1024
 #: The first bytes of the decrypted payload say which form it is.
 SQLITE_HEADER = b"SQLite format 3\x00"
 GZIP_HEADER = b"\x1f\x8b"
-#: Remote refusals that are not a lost race: retrying cannot change them.
-PERMANENT_REFUSALS = ("pre-receive hook declined", "gh001", "file size limit", "large files detected")
+#: Warn, and still push, once the blob passes this: room to prune or VACUUM
+#: before MAX_BLOB_BYTES stops the pushes. Raw growth was ~1.2 MB a day in 2026.
+WARN_BLOB_BYTES = 60 * 1024 * 1024
+#: Remote refusals that are not a lost race: retrying cannot change them. This
+#: is GitHub's own wording for an oversized file, and deliberately NOT the bare
+#: "pre-receive hook declined" that git prints for ANY failing hook, so a hook
+#: failure that is not about size keeps its retries.
+PERMANENT_REFUSALS = ("gh001", "large files detected", "file size limit")
 
 
 class StateSyncError(RuntimeError):
@@ -261,7 +276,7 @@ def decrypt(enc_path: Path, out_path: Path) -> None:
             try:
                 with gzip.open(plain, "rb") as gz, open(staged, "wb") as dst:
                     shutil.copyfileobj(gz, dst, 1024 * 1024)
-            except (OSError, EOFError) as exc:
+            except (OSError, EOFError, zlib.error) as exc:
                 raise StateSyncError(f"compressed state DB is corrupt: {exc}") from exc
             with open(staged, "rb") as fh:
                 if fh.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
@@ -275,8 +290,12 @@ def decrypt(enc_path: Path, out_path: Path) -> None:
                 "refusing to use it")
         # Copy within the temp dir's lifetime, then replace in one step.
         partial = out_path.with_name(out_path.name + ".partial")
-        shutil.copyfile(staged, partial)
-        os.replace(partial, out_path)
+        try:
+            shutil.copyfile(staged, partial)
+            os.replace(partial, out_path)
+        except OSError:
+            partial.unlink(missing_ok=True)
+            raise
 
 
 # ── baseline bookkeeping ─────────────────────────────────────────────────────
@@ -346,13 +365,41 @@ def pull(repo: Path, db_path: Path, baseline_path: Path) -> int:
     write_baseline(baseline_path, blob)
     log(f"Pulled and decrypted {db_path} from {blob[:12]} "
         f"({db_path.stat().st_size} bytes)")
+    # Said here, at the start of the run, rather than first discovered by the
+    # push. Never fatal: the run's own reads work or fail on their own terms.
+    result = _quick_check_or_error(db_path)
+    if result != "ok":
+        log(f"::warning::The state DB pulled from {blob[:12]} fails SQLite's integrity "
+            f"check ({result}). The damage is on '{STATE_BRANCH}', not from this run; "
+            f"the DB needs a repair.")
     return 0
 
 
 # ── push ─────────────────────────────────────────────────────────────────────
 
 
-def settle_db(db_path: Path) -> None:
+def _quick_check(db_path: Path) -> str:
+    """Return "ok", or SQLite's own account of what is wrong, on one line.
+
+    Raises sqlite3.DatabaseError when the file cannot be read as a DB at all.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute("PRAGMA quick_check").fetchone()
+    finally:
+        conn.close()
+    result = row[0] if row else "no result"
+    return result if result == "ok" else " ".join(str(result).split())[:300]
+
+
+def _quick_check_or_error(db_path: Path) -> str:
+    try:
+        return _quick_check(db_path)
+    except sqlite3.DatabaseError as exc:
+        return f"unreadable: {exc}"
+
+
+def settle_db(db_path: Path) -> Optional[str]:
     """Make the file on disk a complete, consistent DB before it is packed.
 
     The push runs under `if: always()`, so it also runs after the job timeout
@@ -360,21 +407,47 @@ def settle_db(db_path: Path) -> None:
     rollback journal: a killed transaction leaves a hot `-journal` file and a
     main file that may hold half-written pages, and packing only the main file
     would push exactly that. Opening the DB and reading it makes SQLite roll the
-    hot journal back; quick_check then confirms the result. A DB that still
-    fails is refused rather than pushed over a good one.
+    hot journal back; quick_check then confirms the result.
+
+    An unreadable DB is refused here. One that opens but fails quick_check is
+    returned as what quick_check found (None means sound), and push() decides
+    against the branch: see _refuse_unless_the_branch_is_already_damaged.
     """
     try:
-        conn = sqlite3.connect(str(db_path))
-        try:
-            result = conn.execute("PRAGMA quick_check").fetchone()
-        finally:
-            conn.close()
+        result = _quick_check(db_path)
     except sqlite3.DatabaseError as exc:
         raise StateSyncError(f"state DB at {db_path} is unreadable — refusing to push it: {exc}") from exc
-    if not result or result[0] != "ok":
+    return None if result == "ok" else result
+
+
+def _refuse_unless_the_branch_is_already_damaged(repo: Path, db_path: Path, damage: str) -> None:
+    """Refuse a DB that fails quick_check, unless the branch's DB fails it too.
+
+    Every job pulls the same DB, so damage already on the branch is in every
+    run's copy. Refusing those pushes would protect nothing — the branch keeps
+    its damaged DB either way — and would lose every run's rows, the same
+    "rows never persist" failure that froze the cadence clocks in Oct-Nov 2026.
+    So: never make the branch worse. A sound tip, an empty branch, or a tip
+    that cannot be fetched means this run's DB may be the worse one, and it is
+    refused.
+    """
+    tip = fetch_state(repo)
+    blob = state_blob_sha(repo, tip)
+    tip_result = None
+    if blob is not None:
+        with tempfile.TemporaryDirectory() as tmp:
+            enc = Path(tmp) / "tip.enc"
+            theirs = Path(tmp) / "tip.sqlite3"
+            _, payload = git(repo, "cat-file", "blob", blob, binary=True)
+            enc.write_bytes(payload)
+            decrypt(enc, theirs)
+            tip_result = _quick_check_or_error(theirs)
+    if tip_result is None or tip_result == "ok":
         raise StateSyncError(
-            f"state DB at {db_path} failed its integrity check ({result[0] if result else 'no result'}) "
-            f"— refusing to push it")
+            f"state DB at {db_path} failed its integrity check ({damage}) — refusing to push it")
+    log(f"::warning::The state DB fails its integrity check ({damage}), and so does the DB "
+        f"already on '{STATE_BRANCH}' ({blob[:12]}: {tip_result}). The damage predates this "
+        f"run, so pushing anyway rather than losing its rows. The state DB needs a repair.")
 
 
 def _commit_blob(repo: Path, enc_path: Path, parent: Optional[str], message: str) -> str:
@@ -406,7 +479,9 @@ def push(
         log(f"No state DB at {db_path} — nothing to push")
         return 0
 
-    settle_db(db_path)
+    damage = settle_db(db_path)
+    if damage is not None:
+        _refuse_unless_the_branch_is_already_damaged(repo, db_path, damage)
     baseline = read_baseline(baseline_path)
     if baseline is None:
         log("No pull baseline recorded for this run — treating the branch as "
@@ -445,6 +520,10 @@ def push(
                     f"refuses files over {GITHUB_FILE_LIMIT_BYTES} bytes. Not pushing. This "
                     f"run's rows were NOT persisted. Nothing was overwritten.")
                 return 1
+            if size > WARN_BLOB_BYTES:
+                log(f"::warning::Encrypted state DB is {size} bytes, past the {WARN_BLOB_BYTES}-byte "
+                    f"early-warning line; pushes stop at {MAX_BLOB_BYTES}. Pushing. The DB needs "
+                    f"pruning or a VACUUM before it gets there.")
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             commit = _commit_blob(
                 repo, enc, parent, f"state: update encrypted SQLite DB [{stamp}]")

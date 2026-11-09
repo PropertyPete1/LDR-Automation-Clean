@@ -358,3 +358,115 @@ def test_a_corrupt_local_db_is_refused_and_the_branch_is_untouched(job, legacy_s
     assert state_sync.main(["push", "--repo", str(a.repo), "--baseline", str(a.baseline)]) == 1
     assert "refusing to push it" in capsys.readouterr().out
     assert _git(origin, "rev-parse", "refs/heads/state") == tip_before
+
+
+# ── review follow-ups ────────────────────────────────────────────────────────
+
+
+def damage(db: Path) -> None:
+    """Leave the DB openable and writable but failing quick_check: a table's
+    pages are orphaned ("never used") by removing it from the schema."""
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE scratch_pages(x TEXT)")
+        conn.executemany("INSERT INTO scratch_pages VALUES (?)", [("y" * 200,)] * 200)
+    conn.execute("PRAGMA writable_schema=ON")
+    with conn:
+        conn.execute("DELETE FROM sqlite_master WHERE name = 'scratch_pages'")
+    conn.close()
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA quick_check").fetchone()[0] != "ok", "precondition: damaged"
+    conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()   # ...yet it opens
+    conn.close()
+
+
+def test_a_corrupt_deflate_body_is_refused_and_the_db_untouched(job, legacy_seeded, tmp_path):
+    """zlib.error is not an OSError: it must still become the plain refusal, not
+    a traceback, and leave neither a changed DB nor a stray partial file."""
+    reader = job("reader")
+    assert reader.pull() == 0
+    before = reader.db.read_bytes()
+    bad = tmp_path / "bad-deflate.enc"
+    # A gzip header, then a deflate block of the reserved type 3.
+    bad.write_bytes(_openssl(data=b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x07" + b"\x00" * 64))
+    with pytest.raises(state_sync.StateSyncError, match="compressed state DB is corrupt"):
+        state_sync.decrypt(bad, reader.db)
+    assert reader.db.read_bytes() == before
+    assert not reader.db.with_name(reader.db.name + ".partial").exists()
+
+
+def test_damage_already_on_the_branch_is_reported_at_pull_and_does_not_block_pushes(
+        job, legacy_seeded, capsys):
+    """Every job pulls the same DB, so damage already on the branch is in every
+    run's copy. Refusing their pushes would lose every run's rows and protect
+    nothing: they land, with a warning at pull and at push."""
+    damager = job("damage-already-there")
+    assert damager.pull() == 0
+    damage(damager.db)
+    push_legacy(damager)
+    capsys.readouterr()
+
+    a = job("daily-automation")
+    assert a.pull() == 0
+    assert "::warning::" in capsys.readouterr().out
+    a.write_send(101)
+    assert a.push() == 0
+    out = capsys.readouterr().out
+    assert "::warning::" in out and "predates this run" in out
+
+    reader = job("verifier")
+    assert reader.pull() == 0
+    assert people_in_audit(reader.db) == {1, 101}
+
+
+def test_damage_that_is_only_in_this_runs_db_is_still_refused(job, legacy_seeded, origin, capsys):
+    tip_before = _git(origin, "rev-parse", "refs/heads/state")
+    a = job("daily-automation")
+    assert a.pull() == 0
+    assert "::warning::" not in capsys.readouterr().out, "a sound branch DB must pull quietly"
+    a.write_send(101)
+    damage(a.db)
+    assert state_sync.main(["push", "--repo", str(a.repo), "--baseline", str(a.baseline)]) == 1
+    out = capsys.readouterr().out
+    assert "failed its integrity check" in out and "refusing to push it" in out
+    assert _git(origin, "rev-parse", "refs/heads/state") == tip_before
+
+
+def test_a_hook_failure_that_is_not_about_size_keeps_its_retries(job, legacy_seeded, origin, tmp_path, capsys):
+    """git prints "(pre-receive hook declined)" for ANY failing hook. Only
+    GitHub's size wording is permanent; anything else is retried."""
+    marker = tmp_path / "declined-once"
+    hook = origin / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\n"
+        f"if [ ! -e '{marker}' ]; then : > '{marker}'; "
+        "echo 'error: temporarily unavailable' >&2; exit 1; fi\n"
+        "exit 0\n")
+    hook.chmod(0o755)
+
+    a = job("daily-automation")
+    assert a.pull() == 0
+    a.write_send(101)
+    assert a.push() == 0
+    out = capsys.readouterr().out
+    hook.unlink()
+    assert "pre-receive hook declined" in out and "not a lost race" not in out
+    assert "(attempt 2)" in out
+
+    reader = job("verifier")
+    assert reader.pull() == 0
+    assert people_in_audit(reader.db) == {1, 101}
+
+
+def test_a_blob_past_the_early_warning_line_warns_and_still_pushes(job, legacy_seeded, monkeypatch, capsys):
+    a = job("daily-automation")
+    assert a.pull() == 0
+    a.write_send(101)
+    monkeypatch.setattr(state_sync, "WARN_BLOB_BYTES", 10)
+    assert a.push() == 0
+    out = capsys.readouterr().out
+    assert "::warning::" in out and "early-warning" in out
+
+    reader = job("verifier")
+    assert reader.pull() == 0
+    assert people_in_audit(reader.db) == {1, 101}

@@ -2275,7 +2275,7 @@ class EmailSender:
             msg.add_alternative(html_body, subtype="html", cte="base64")
         # timeout is REQUIRED: without it smtplib inherits the OS socket
         # default, so a hung SMTP connection stalls the whole daily run until
-        # the 120-minute job timeout and every remaining lead goes unsent.
+        # the 240-minute job timeout and every remaining lead goes unsent.
         with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port,
                           timeout=SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.starttls()
@@ -4474,9 +4474,13 @@ class RuleEngine:
         Peter or an agent in the window also counts: the bot waits rather than
         piling on. It can only skip, never send. On an API error it returns None
         and the DB gates above stand as they always have.
+
+        limit=25, as reply detection reads it: FUB documents no sort order for
+        /emails, so a short page could miss the send behind a few newer inbound
+        messages. The newest outbound is taken across the whole page.
         """
         try:
-            messages = self.fub.get_emails(person_id, limit=5)
+            messages = self.fub.get_emails(person_id, limit=25)
         except Exception as exc:  # noqa: BLE001
             LOGGER.debug("FUB email timeline unavailable for cadence backstop, person %s: %s", person_id, exc)
             return None
@@ -4604,6 +4608,23 @@ class RuleEngine:
             )
             return "skipped"
 
+        # ── FUB EMAIL TIMELINE GATE (lost-clock backstop, same lower bound) ───
+        # The DB clock above can be stale (no daily run's rows reached the state
+        # branch from 2026-10-30 to 2026-11-08), so the lead's own FUB timeline
+        # is checked too — here, BEFORE the notes fetch and Anthropic call, with
+        # the same equivalence argument as the early gate: cadence_days is a
+        # lower bound on its final value. Fetched ONCE; the same value is
+        # re-checked against the final cadence after the override below. Only
+        # for a lead the run could email at all, so a lead with no email channel
+        # costs no FUB call and is suppressed below exactly as before.
+        has_email_channel = bool(self.rules.email_outreach_enabled and (person.get("emails") or []))
+        fub_last_out = self._last_outbound_fub_email_at(person_id) if has_email_channel else None
+        if fub_last_out and dt.datetime.now(UTC) - fub_last_out < dt.timedelta(days=cadence_days):
+            self.db.log("pond_nurture", "skipped", person_id, {
+                "reason": f"{tier}-tier cadence cap ({cadence_days}d) [FUB email timeline]",
+                "last_outbound_email": fub_last_out.isoformat()})
+            return "skipped"
+
         # ── Timeline-Aware Cadence Override (stretches cadence, never shortens) ──
         is_value_led = False
         notes_for_timeline = self.safe_get_notes(person_id)
@@ -4640,10 +4661,12 @@ class RuleEngine:
         if not self.rules.email_outreach_enabled or not emails:
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
             return "suppressed"
-        fub_last_out = self._last_outbound_fub_email_at(person_id)
+        # The timeline fetched above, against the final (possibly stretched)
+        # cadence. No second API call.
         if fub_last_out and dt.datetime.now(UTC) - fub_last_out < dt.timedelta(days=cadence_days):
             self.db.log("pond_nurture", "skipped", person_id, {
-                "reason": f"{tier}-tier cadence cap ({cadence_days}d) [FUB email timeline]",
+                "reason": f"{tier}-tier cadence cap ({cadence_days}d) [FUB email timeline]"
+                          f"{' [timeline-adjusted]' if is_value_led else ''}",
                 "last_outbound_email": fub_last_out.isoformat()})
             return "skipped"
 
