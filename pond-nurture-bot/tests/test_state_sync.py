@@ -45,7 +45,9 @@ KEY = "test-state-encryption-key"
 #: The six workflows that share the audit DB, with the timeout and cadence from
 #: #9's table. The starvation argument below is arithmetic on these numbers.
 SHARED_DB_WORKFLOWS = {
-    "daily-automation.yml": {"timeout": 120, "cron": "0 12 * * *"},
+    # 240 since 2026-11-09: every run was being killed at 120. It holds only its
+    # own concurrency group, so the starvation argument below is unchanged.
+    "daily-automation.yml": {"timeout": 240, "cron": "0 12 * * *"},
     # 20 rather than 10 since the cancellation fix: the scan alone takes ~7
     # minutes over a ~1,050-lead watch list, and the timeout must leave room
     # for a slow FUB day plus the telemetry publish and state push after it.
@@ -252,7 +254,7 @@ def _whole_file_push(run: Job) -> int:
 
 
 def test_a_three_way_pileup_keeps_every_row(job, seeded):
-    """Three workflows can be in flight at once — daily (120 min) trivially
+    """Three workflows can be in flight at once — daily (240 min) trivially
     overlaps both of the ten-minute cadences."""
     runs = [job("daily-automation"), job("reply-detection"), job("speed-to-lead")]
     for run in runs:
@@ -604,7 +606,7 @@ def test_reply_detection_queues_rather_than_cancels_itself():
 def test_no_two_scheduled_workflows_share_a_concurrency_group():
     """The starvation proof, as arithmetic rather than prose: a group is only
     ever held by one workflow, so the longest anything can wait for it is that
-    workflow's own timeout — never the daily run's 120 minutes.
+    workflow's own timeout — never the daily run's 240 minutes.
 
     A manual workflow may share a group (a one-shot repair has no cadence to
     starve), so only the scheduled six are checked here.

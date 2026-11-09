@@ -48,12 +48,37 @@ The encryption is unchanged: AES-256-CBC through openssl with PBKDF2, keyed by
 STATE_ENCRYPTION_KEY, read from the environment as STATE_KEY so the passphrase
 never appears in a command line or in a run log. Only the encrypted blob is ever
 written to the branch, and the plaintext DB never leaves the runner.
+
+─────────────────────────────────────────────────────────────────────────────
+COMPRESSED AT REST (2026-11-09)
+
+GitHub refuses any file over 100 MiB. The encrypted DB grew from ~14 MB
+(2026-08-24) to 104,763,424 bytes, 94 KB under that limit, and from then on
+any push that added real rows was declined by GitHub's pre-receive hook. Every
+Daily Automation run from at least 2026-10-30 to 2026-11-08 ended with "State DB
+push failed after 6 attempts. This run's rows were NOT persisted": the 11-08
+run's merged DB was 108,163,104 bytes. Small pushes (Reply Detection with
+nothing new) still fit, so the branch kept moving while every day's sends,
+opt-out ledger rows and cadence clocks were lost, and Reply Detection then found
+"no recent bot emails" to watch.
+
+So the push now gzips the DB before encrypting it, and the pull reads BOTH
+forms: a decrypted payload that starts with the SQLite header is the old
+uncompressed blob (every commit already on the branch), one that starts with
+the gzip header is the new one. Nothing on the branch is rewritten, so every
+earlier state commit stays a readable backup. A payload that is neither is
+refused rather than written over the DB. A push whose blob would still be over
+MAX_BLOB_BYTES fails in plain words before it is sent, and a refusal by the
+remote that is not a lost race is reported as such and not retried.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import os
+import shutil
+import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
@@ -75,6 +100,17 @@ PUSH_ATTEMPTS = 6
 
 ENCRYPT_ARGS = ("-aes-256-cbc", "-pbkdf2")
 
+#: GitHub's hard per-file limit. A push carrying a bigger blob is declined by
+#: its pre-receive hook, every time, however often it is retried.
+GITHUB_FILE_LIMIT_BYTES = 100 * 1024 * 1024
+#: Refuse a little under GitHub's limit, so the failure is ours and says why.
+MAX_BLOB_BYTES = 95 * 1024 * 1024
+#: The first bytes of the decrypted payload say which form it is.
+SQLITE_HEADER = b"SQLite format 3\x00"
+GZIP_HEADER = b"\x1f\x8b"
+#: Remote refusals that are not a lost race: retrying cannot change them.
+PERMANENT_REFUSALS = ("pre-receive hook declined", "gh001", "file size limit", "large files detected")
+
 
 class StateSyncError(RuntimeError):
     """Anything that must stop a push rather than push the wrong bytes."""
@@ -85,10 +121,22 @@ def log(message: str) -> None:
 
 
 def _why(output: str) -> str:
-    """The one line of a git failure worth putting in a run log."""
+    """The line(s) of a git failure worth putting in a run log.
+
+    The remote's own explanation (`remote: error: ...`, e.g. GitHub's file size
+    refusal) comes first when there is one; the bare `! [remote rejected] ...
+    (pre-receive hook declined)` line alone hides the reason.
+    """
     lines = [line.strip() for line in output.splitlines() if line.strip()]
+    remote_errors = [line for line in lines if line.lower().startswith("remote: error")]
     rejections = [line for line in lines if "reject" in line.lower()]
-    return (rejections or lines or ["no output"])[-1]
+    picked = remote_errors[-2:] + rejections[-1:]
+    return " | ".join(picked) if picked else (lines or ["no output"])[-1]
+
+
+def _is_permanent_refusal(output: str) -> bool:
+    lowered = output.lower()
+    return any(marker in lowered for marker in PERMANENT_REFUSALS)
 
 
 # ── git ──────────────────────────────────────────────────────────────────────
@@ -185,11 +233,50 @@ def _openssl(*args: str) -> None:
 
 
 def encrypt(db_path: Path, out_path: Path) -> None:
-    _openssl("-in", str(db_path), "-out", str(out_path))
+    """gzip the DB, then encrypt it. Always writes the compressed form."""
+    with tempfile.TemporaryDirectory() as tmp:
+        packed = Path(tmp) / "state.sqlite3.gz"
+        with open(db_path, "rb") as src, open(packed, "wb") as raw:
+            # mtime=0 and no filename: the same DB always packs to the same bytes.
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0, compresslevel=6) as gz:
+                shutil.copyfileobj(src, gz, 1024 * 1024)
+        _openssl("-in", str(packed), "-out", str(out_path))
 
 
 def decrypt(enc_path: Path, out_path: Path) -> None:
-    _openssl("-d", "-in", str(enc_path), "-out", str(out_path))
+    """Decrypt a state blob of EITHER form into a plain SQLite file at out_path.
+
+    Old blobs (every commit before 2026-11-09) decrypt straight to a SQLite file;
+    new ones decrypt to a gzip stream of it. Anything else is refused and
+    out_path is left untouched, so a bad blob can never replace a good DB.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        plain = Path(tmp) / "state.plain"
+        _openssl("-d", "-in", str(enc_path), "-out", str(plain))
+        with open(plain, "rb") as fh:
+            head = fh.read(len(SQLITE_HEADER))
+        staged = Path(tmp) / "state.sqlite3"
+        if head.startswith(GZIP_HEADER):
+            try:
+                with gzip.open(plain, "rb") as gz, open(staged, "wb") as dst:
+                    shutil.copyfileobj(gz, dst, 1024 * 1024)
+            except (OSError, EOFError) as exc:
+                raise StateSyncError(f"compressed state DB is corrupt: {exc}") from exc
+            with open(staged, "rb") as fh:
+                if fh.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
+                    raise StateSyncError(
+                        "decompressed state is not a SQLite database — refusing to use it")
+        elif head == SQLITE_HEADER:
+            staged = plain
+        else:
+            raise StateSyncError(
+                "decrypted state is neither a SQLite database nor a compressed one — "
+                "refusing to use it")
+        # Copy within the temp dir's lifetime, then replace in one step.
+        partial = out_path.with_name(out_path.name + ".partial")
+        shutil.copyfile(staged, partial)
+        os.replace(partial, out_path)
 
 
 # ── baseline bookkeeping ─────────────────────────────────────────────────────
@@ -265,6 +352,31 @@ def pull(repo: Path, db_path: Path, baseline_path: Path) -> int:
 # ── push ─────────────────────────────────────────────────────────────────────
 
 
+def settle_db(db_path: Path) -> None:
+    """Make the file on disk a complete, consistent DB before it is packed.
+
+    The push runs under `if: always()`, so it also runs after the job timeout
+    killed the automation, possibly mid-write. The DB uses SQLite's default
+    rollback journal: a killed transaction leaves a hot `-journal` file and a
+    main file that may hold half-written pages, and packing only the main file
+    would push exactly that. Opening the DB and reading it makes SQLite roll the
+    hot journal back; quick_check then confirms the result. A DB that still
+    fails is refused rather than pushed over a good one.
+    """
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            result = conn.execute("PRAGMA quick_check").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as exc:
+        raise StateSyncError(f"state DB at {db_path} is unreadable — refusing to push it: {exc}") from exc
+    if not result or result[0] != "ok":
+        raise StateSyncError(
+            f"state DB at {db_path} failed its integrity check ({result[0] if result else 'no result'}) "
+            f"— refusing to push it")
+
+
 def _commit_blob(repo: Path, enc_path: Path, parent: Optional[str], message: str) -> str:
     """Build a commit holding exactly one file, without touching HEAD.
 
@@ -294,6 +406,7 @@ def push(
         log(f"No state DB at {db_path} — nothing to push")
         return 0
 
+    settle_db(db_path)
     baseline = read_baseline(baseline_path)
     if baseline is None:
         log("No pull baseline recorded for this run — treating the branch as "
@@ -325,10 +438,18 @@ def push(
         with tempfile.TemporaryDirectory() as tmp:
             enc = Path(tmp) / "state.enc"
             encrypt(db_path, enc)
+            size = enc.stat().st_size
+            if size > MAX_BLOB_BYTES:
+                log(f"::error::Encrypted state DB is {size} bytes (DB {db_path.stat().st_size} "
+                    f"bytes, compressed) — over the {MAX_BLOB_BYTES}-byte safety limit; GitHub "
+                    f"refuses files over {GITHUB_FILE_LIMIT_BYTES} bytes. Not pushing. This "
+                    f"run's rows were NOT persisted. Nothing was overwritten.")
+                return 1
             stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             commit = _commit_blob(
                 repo, enc, parent, f"state: update encrypted SQLite DB [{stamp}]")
-            log(f"Encrypted state DB ({enc.stat().st_size} bytes) → {commit[:12]}")
+            log(f"Encrypted state DB ({size} bytes, compressed from "
+                f"{db_path.stat().st_size} bytes) → {commit[:12]}")
 
         rc, output = git(
             repo, "push", "origin", f"{commit}:refs/heads/{STATE_BRANCH}", check=False)
@@ -336,12 +457,16 @@ def push(
             write_baseline(baseline_path, state_blob_sha(repo, commit))
             log(f"Pushed to '{STATE_BRANCH}' (attempt {attempt}): {commit[:12]}")
             return 0
+        if _is_permanent_refusal(output):
+            log(f"Push refused by the remote (attempt {attempt}) — not a lost race, so "
+                f"retrying cannot help: {_why(output)}")
+            break
         log(f"Push rejected (attempt {attempt}) — the branch moved again: {_why(output)}")
 
     # Deliberately not a force push. The run's writes are still in its local
     # file and are lost either way, but a loud failure is what tells anyone that
     # they are — the silence is what made 2026-08-11 permanent.
-    log(f"::error::State DB push failed after {attempts} attempts. This run's rows "
+    log(f"::error::State DB push failed (up to {attempts} attempts). This run's rows "
         f"were NOT persisted. Nothing was overwritten.")
     return 1
 

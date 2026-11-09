@@ -30,13 +30,14 @@ GUARDRAILS (all computed from audit_log rows the system already writes)
     runtime headroom = worst daily run duration vs the workflow      -> HOLD
                        timeout
 
-The third one is not cosmetic. The daily workflow allows 120 timeout-minutes,
-raised from 90 after a run was KILLED at the old limit on cap 100 (2026-08-05:
-cancelled at 91.1 min, mid-pond). Advancing the cap into a timeout does not
-send more email — it gets the run killed part-way through, which is strictly
-worse than not advancing. So runtime is a first-class guardrail: if last week's
-worst run used more than RUNTIME_HOLD_FRACTION of the timeout, the ramp holds
-regardless of how clean the list looks.
+The third one is not cosmetic. The daily workflow allowed 120 timeout-minutes
+(raised from 90 after a run was KILLED at the old limit on cap 100, 2026-08-05:
+cancelled at 91.1 min, mid-pond), and 240 since 2026-11-09, when every run was
+being killed at 120. Advancing the cap into a timeout does not send more email
+— it gets the run killed part-way through, which is strictly worse than not
+advancing. So runtime is a first-class guardrail: if last week's worst run took
+longer than RUNTIME_HOLD_MINUTES (96, unchanged by the 240-minute timeout), the
+ramp holds regardless of how clean the list looks.
 
 A guardrail with a zero denominator (a week with no sends) is NOT green — it
 is unknown, and unknown must not advance a ramp.
@@ -60,10 +61,14 @@ OPT_OUT_RATE_LIMIT_PCT = 1.5
 
 # Workflow timeout-minutes for daily-automation.yml. If that value changes in
 # the workflow, change it here too — this module cannot read it.
-WORKFLOW_TIMEOUT_MINUTES = 120
-# Hold if the worst run last week used more than this share of the timeout.
-# 0.8 leaves ~24 minutes of headroom for a slow FUB or a slow Anthropic day.
-RUNTIME_HOLD_FRACTION = 0.8
+WORKFLOW_TIMEOUT_MINUTES = 240
+# Hold if the worst run last week took longer than this. It was 0.8 x the old
+# 120-minute timeout, and it stays at those 96 minutes on purpose: the timeout
+# went to 240 on 2026-11-09 so a run that has sent its emails can finish its
+# reply scans, summary and state push, NOT so the ramp can send more. Scaling
+# the hold line with the timeout would let the cap advance on 192-minute runs.
+RUNTIME_HOLD_MINUTES = 96.0
+RUNTIME_HOLD_FRACTION = RUNTIME_HOLD_MINUTES / WORKFLOW_TIMEOUT_MINUTES
 
 # Actions whose 'sent' status means an email actually went to a lead.
 EMAIL_SEND_ACTIONS = (
@@ -254,7 +259,7 @@ def evaluate_guardrails(
 
     bounce_pct = (bounce_ish * 100.0 / sends) if sends else None
     opt_out_pct = (opt_outs * 100.0 / sends) if sends else None
-    runtime_limit = WORKFLOW_TIMEOUT_MINUTES * RUNTIME_HOLD_FRACTION
+    runtime_limit = RUNTIME_HOLD_MINUTES
 
     reasons: List[str] = []
     if sends == 0:
@@ -271,8 +276,8 @@ def evaluate_guardrails(
         reasons.append("no run-duration data — runtime headroom unknown")
     elif runtime > runtime_limit:
         reasons.append(
-            f"runtime {runtime:.0f} min of {WORKFLOW_TIMEOUT_MINUTES} min timeout "
-            f"(limit {runtime_limit:.0f} min)"
+            f"runtime {runtime:.0f} min (hold line {runtime_limit:.0f} min; "
+            f"workflow timeout {WORKFLOW_TIMEOUT_MINUTES} min)"
         )
 
     return {

@@ -28,7 +28,13 @@ env:
 jobs:
   daily-automation:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 240 since 2026-11-09 (was 120). Every daily run from at least 2026-10-30
+    # to 2026-11-08 was killed at 120 minutes: the pond phase alone takes ~97
+    # minutes at the 300 cap (still running at 119 minutes on 2026-11-07), then
+    # seller, recruiting, closed and the reply scans need ~25 more. A killed run
+    # skips its summary and duration record. This does not raise any cap: the
+    # ramp's runtime hold line stays at 96 minutes (ramp.RUNTIME_HOLD_MINUTES).
+    timeout-minutes: 240
 
     # Declared rather than inherited: state-sync pushes the encrypted DB to the
     # 'state' branch and publish-telemetry pushes status/ to main. Both need
