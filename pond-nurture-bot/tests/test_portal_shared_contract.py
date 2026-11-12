@@ -2,9 +2,9 @@
 import ast
 import copy
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
-import subprocess
 import types
 
 import pytest
@@ -178,6 +178,11 @@ def test_seven_paths_exact_refusal_side_effects(sending, monkeypatch, path, surf
 
 
 _BASE = "552c0c510aba1534aaf869ba5f17f39aba954ded"
+# Exact bytes of pond-nurture-bot/src/fub_automation/main.py at _BASE, pinned by
+# SHA-256. CI checks out a single commit, so the base revision is not available
+# through git there; the pinned snapshot keeps the comparison identical.
+_BASE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "base_main_552c0c5.py.txt"
+_BASE_SHA256 = "39b7d0fcb79f9211c823e1cc95b64e1a35a1ece33b2ce40af37ccb37b5652936"
 _BASE_SOURCE = None
 
 
@@ -195,9 +200,9 @@ def count_synthetic_smtp_attempts(m, monkeypatch):
 def base_methods(m):
     global _BASE_SOURCE
     if _BASE_SOURCE is None:
-        _BASE_SOURCE = subprocess.check_output(
-            ["git", "show", f"{_BASE}:pond-nurture-bot/src/fub_automation/main.py"],
-            cwd=ROOT.parent, text=True)
+        raw = _BASE_FIXTURE.read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == _BASE_SHA256, "base snapshot does not match pinned SHA-256"
+        _BASE_SOURCE = raw.decode("utf-8")
     tree = ast.parse(_BASE_SOURCE)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "RuleEngine")
     wanted = {"process_congrats_candidate", "process_closed_drip_candidate", "process_long_term_nurture_candidate",
