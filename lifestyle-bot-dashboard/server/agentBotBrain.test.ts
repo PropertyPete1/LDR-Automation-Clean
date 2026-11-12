@@ -327,19 +327,19 @@ describe("SOI + excluded-source total silence (engine protection inheritance)", 
     expect(isExcludedSource({ id: 1, source: "BOTM NEWSLETTER" })).toBeTruthy();
   });
 
-  it("a clean company lead flows through the whole gate to a send decision", async () => {
+  it("a portal source is denied before API or model checks", async () => {
     const mockFetch = mockRoutedFetch({ anthropicText: "SKIP: NO", fubDeals: [] });
     const person: FubPerson = {
       id: uid(),
       source: "Zillow",
       createdVia: "API",
       createdById: 2,
-      notes: [{ body: "Sent listings, awaiting reply", createdAt: daysAgoIso(6) }],
+      notes: [],
     };
     const result = await shouldSkipLead(person);
-    expect(result.skip).toBe(false);
-    expect(fubCalls(mockFetch).length).toBeGreaterThanOrEqual(1); // deals checked
-    expect(anthropicCalls(mockFetch).length).toBe(1); // LLM consulted
+    expect(result).toEqual({ skip: true, reason: "PORTAL_SOURCE" });
+    expect(fubCalls(mockFetch).length).toBe(0);
+    expect(anthropicCalls(mockFetch).length).toBe(0);
   });
 });
 

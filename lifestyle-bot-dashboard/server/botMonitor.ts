@@ -209,6 +209,7 @@ export async function runBotMonitor(): Promise<void> {
   `;
 
   await sendEmail({
+    kind: "internal",
     to: [PETER_EMAIL, STEVEN_EMAIL],
     subject,
     html,

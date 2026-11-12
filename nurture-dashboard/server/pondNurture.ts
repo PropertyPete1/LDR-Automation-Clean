@@ -22,6 +22,7 @@ import { pondNurtureLog, suppressedLeads } from "../drizzle/schema";
 import { suppressLead } from "./compliance";
 import { invokeLLM } from "./_core/llm";
 import { getSharedSuppressionTags, isExcludedSource, isSOISilenced } from "./botHelpers";
+import { hasPortalProvenance, inspectPortalProvenance, portalEmailGate, type PortalProvenance, type PortalEmailVerdict } from "./portalEmailGate";
 
 // ── Config (mirrors rules.yaml) ───────────────────────────────────────────────
 
@@ -40,7 +41,8 @@ const STALE_REASSIGN_POND_ID = 2;
 
 const EXCLUDED_STAGES = ["Trash"];
 // EXCLUDED_TAGS now reads from the shared suppression list (single source of truth)
-const EXCLUDED_TAGS = getSharedSuppressionTags();
+// Baseline tags only: inbound compliance and assignment are not email selection.
+const EXCLUDED_TAGS = getSharedSuppressionTags(false);
 const MANUAL_SUPPRESSION_TAGS = [
   "Do Not Nurture", "No AI Email", "Do Not Email", "Manual Review",
 ];
@@ -232,7 +234,8 @@ function personFirstName(p: any): string {
 }
 
 function hasTag(person: any, tags: string[]): boolean {
-  const personTags: string[] = (person.tags ?? []).map((t: string) => t.toLowerCase());
+  const personTags: string[] = (person.tags ?? []).map((t: string | { name?: string }) =>
+    (typeof t === "string" ? t : t?.name ?? "").toLowerCase());
   return tags.some(t => personTags.includes(t.toLowerCase()));
 }
 
@@ -634,7 +637,9 @@ Requirements:
 
 // ── SMTP send ─────────────────────────────────────────────────────────────────
 
-async function sendEmail(to: string, subject: string, body: string): Promise<void> {
+async function sendEmail(to: string, subject: string, body: string,
+  audience: { internal: true } | { personId: number; provenance: PortalProvenance }
+): Promise<PortalEmailVerdict> {
   const nodemailer = await import("nodemailer");
   const smtpHost = process.env.SMTP_HOST;
   const smtpPort = parseInt(process.env.SMTP_PORT ?? "587", 10);
@@ -653,6 +658,11 @@ async function sendEmail(to: string, subject: string, body: string): Promise<voi
     auth: { user: smtpUser, pass: smtpPassword },
   });
 
+  if (!(audience && "internal" in audience && audience.internal === true)) {
+    const leadAudience = audience as { personId?: number; provenance?: PortalProvenance } | undefined;
+    const verdict = await portalEmailGate(leadAudience?.personId as number, leadAudience?.provenance);
+    if (!verdict.allowed) return verdict;
+  }
   await transporter.sendMail({
     from: `"Peter Allen" <${fromEmail}>`,
     to,
@@ -660,6 +670,7 @@ async function sendEmail(to: string, subject: string, body: string): Promise<voi
     text: body,
     replyTo: fromEmail,
   });
+  return { allowed: true };
 }
 
 // ── Opt-out detection ─────────────────────────────────────────────────────────
@@ -748,7 +759,7 @@ async function processLead(person: any): Promise<LeadResult> {
     return "suppressed";
   }
   // Source-based exclusion
-  const excludedSrc = isExcludedSource(person);
+  const excludedSrc = isExcludedSource(person, false);
   if (excludedSrc) {
     console.log(`[PondNurture] ${name} (${personId}): suppressed — excluded source: ${excludedSrc}`);
     return "suppressed";
@@ -840,6 +851,17 @@ async function processLead(person: any): Promise<LeadResult> {
     return "skipped"; // Not an email send, but not an error
   }
 
+  // Email-only portal selection follows baseline inbound opt-out/intent handling.
+  // Refusal creates no sent/skip note or cadence record; the final gate rereads FUB.
+  if (hasPortalProvenance(person)) {
+    console.info("PORTAL_SOURCE_EXCLUDED");
+    return "suppressed";
+  }
+
+  if (!inspectPortalProvenance(person).metadataUsable) {
+    console.info("PORTAL_PROVENANCE_UNUSABLE");
+    return "skipped";
+  }
   // 9. AI skip check
   const { skip, reason } = await shouldSkipLead(person, notes);
   if (skip) {
@@ -872,7 +894,9 @@ async function processLead(person: any): Promise<LeadResult> {
 
   // 12. Send email
   const fullBody = generated.emailBody + buildEmailFooter();
-  await sendEmail(toEmail, generated.subject, fullBody);
+  // Validate the original identity at the email boundary, not a Number() coercion.
+  const sendVerdict = await sendEmail(toEmail, generated.subject, fullBody, { personId: person.id, provenance: person });
+  if (!sendVerdict.allowed) return "skipped";
 
   // 13. FUB note trail
   const threadAwareLabel = emailThread ? " (Thread-Aware Follow-up)" : "";
@@ -927,7 +951,7 @@ async function runStaleAgentReassignment(): Promise<{ reassigned: number; suppre
     if (isExcluded(person)) { suppressed++; continue; }
     if (hasTag(person, MANUAL_SUPPRESSION_TAGS)) { suppressed++; continue; }
     // Source-based exclusion
-    const exSrc = isExcludedSource(person);
+    const exSrc = isExcludedSource(person, false);
     if (exSrc) {
       console.log(`[PondNurture] ${personName(person)} (${personId}): skipped stale reassign — excluded source: ${exSrc}`);
       suppressed++;
@@ -1123,7 +1147,7 @@ async function sendPeterSummary(result: PondNurtureResult): Promise<void> {
   ].join("\n");
 
   try {
-    await sendEmail(PETER_EMAIL, subject, body);
+    await sendEmail(PETER_EMAIL, subject, body, { internal: true });
     console.log(`[PondNurture] Peter summary email sent`);
   } catch (e) {
     console.warn(`[PondNurture] Peter summary email failed:`, e instanceof Error ? e.message : e);

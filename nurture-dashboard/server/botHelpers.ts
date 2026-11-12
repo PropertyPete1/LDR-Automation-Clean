@@ -20,6 +20,7 @@ import { getDb } from "./db";
 import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog, purchaseWindow } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import { ENV } from "./_core/env";
+import { hasPortalProvenance, hasMalformedPortalMetadata, portalEmailGate, PortalEmailBlockedError, PORTAL_SOURCE_NAMES, PORTAL_SOURCE_HOSTS, type PortalProvenance } from "./portalEmailGate";
 
 // ESM-safe __dirname
 const __botHelpers_filename = fileURLToPath(import.meta.url);
@@ -34,18 +35,23 @@ const FALLBACK_SUPPRESSION_TAGS_PATH = path.resolve(__botHelpers_dirname, "../co
 let _sharedSuppressionTags: string[] | null = null;
 let _sharedExcludedSources: string[] | null = null;
 
-/** Load the shared suppression tag list from the canonical JSON file */
-export function getSharedSuppressionTags(): string[] {
-  if (_sharedSuppressionTags !== null) return _sharedSuppressionTags;
+/** Only newly added portal tags are removed for inbound/internal/non-email lanes. */
+function suppressionTagsForLane(tags: string[], includePortal: boolean): string[] {
+  return includePortal ? tags : tags.filter(tag => !(PORTAL_SOURCE_NAMES as readonly string[]).includes(tag));
+}
+
+/** Load shared tags; includePortal=false preserves the original non-email policy. */
+export function getSharedSuppressionTags(includePortal = true): string[] {
+  if (_sharedSuppressionTags !== null) return suppressionTagsForLane(_sharedSuppressionTags, includePortal);
   const paths = [SUPPRESSION_TAGS_PATH, FALLBACK_SUPPRESSION_TAGS_PATH];
   for (const p of paths) {
     try {
       if (fs.existsSync(p)) {
         const data = JSON.parse(fs.readFileSync(p, "utf-8"));
-        _sharedSuppressionTags = (data.tags ?? []).map((t: string) => t.toLowerCase());
-        _sharedExcludedSources = (data.excluded_sources ?? []).map((s: string) => s.toLowerCase());
+        _sharedSuppressionTags = Array.from(new Set([...((data.tags ?? []).map((t: string) => t.toLowerCase())), ...PORTAL_SOURCE_NAMES]));
+        _sharedExcludedSources = Array.from(new Set([...((data.excluded_sources ?? []).map((s: string) => s.toLowerCase())), ...PORTAL_SOURCE_NAMES]));
         console.log(`[botHelpers] Loaded ${_sharedSuppressionTags!.length} shared suppression tags and ${_sharedExcludedSources!.length} excluded sources from ${p}`);
-        return _sharedSuppressionTags!;
+        return suppressionTagsForLane(_sharedSuppressionTags!, includePortal);
       }
     } catch (e) {
       console.warn(`[botHelpers] Failed to load suppression config from ${p}:`, e);
@@ -60,9 +66,10 @@ export function getSharedSuppressionTags(): string[] {
     "dnc", "realtor", "agent", "spam", "annual nurture only",
     "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
     "landlord", "lease listing inquiry",
+    "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com",
   ];
-  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"];
-  return _sharedSuppressionTags;
+  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry", "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com"];
+  return suppressionTagsForLane(_sharedSuppressionTags, includePortal);
 }
 
 /** Force reload of suppression tags (used after adding a new tag) */
@@ -78,6 +85,16 @@ export function getSharedExcludedSources(): string[] {
     getSharedSuppressionTags(); // triggers load of both
   }
   return _sharedExcludedSources ?? [];
+}
+
+/** Local configuration view; mandatory portal semantics survive older shared JSON. */
+export function getSharedSuppressionConfig() {
+  return {
+    tags: getSharedSuppressionTags(),
+    excluded_sources: getSharedExcludedSources(),
+    portal_source_names: [...PORTAL_SOURCE_NAMES],
+    portal_source_hosts: [...PORTAL_SOURCE_HOSTS],
+  };
 }
 
 // ─── Compliance footer (mirror of the Python bot's append_email_footer) ─────
@@ -131,15 +148,18 @@ export const HARD_OPT_OUT_TAGS = new Set([
 ]);
 
 // ─── Source-Based Exclusion ─────────────────────────────────────────────────
-// Any lead whose source matches an entry in excluded_sources is skipped by ALL automation.
+// Original sources apply across automation; newly added portal rules are email-only.
 const PETER_USER_ID = 2; // Peter Allen's FUB user ID
 
 /**
  * Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
+ * includePortal=false bypasses only the new portal rule, not Zillow Rentals or other old rules.
  * Returns the matched source string or null.
  */
-export function isExcludedSource(person: FubPerson): string | null {
-  const source = (person.source ?? person.leadSource ?? "").toLowerCase().trim();
+export function isExcludedSource(person: FubPerson, includePortal = true): string | null {
+  if (includePortal && hasPortalProvenance(person)) return "PORTAL_SOURCE_EXCLUDED";
+  const selectedSource = person.source ?? person.leadSource ?? "";
+  const source = typeof selectedSource === "string" ? selectedSource.toLowerCase().trim() : "";
   if (!source) return null;
   const excludedSources = getSharedExcludedSources();
   for (const excluded of excludedSources) {
@@ -147,9 +167,9 @@ export function isExcludedSource(person: FubPerson): string | null {
     // ("Lease Listing Inquiry - Web", "Zillow Rentals - Austin"), and exact
     // matching silently let every one of those variants through.
     //
-    // Direction is load-bearing: source.includes(excluded), never the reverse.
-    // "zillow" does NOT contain "zillow rentals", so the legit Zillow buyer
-    // source stays unsuppressed, while "Zillow Rentals - Austin" is caught.
+    // Existing unrelated substring rules remain intact. Portal names are handled
+    // by the precise provenance matcher above, including normalized forms.
+    if ((PORTAL_SOURCE_NAMES as readonly string[]).includes(excluded)) continue;
     if (excluded && source.includes(excluded)) {
       return person.source ?? person.leadSource ?? source;
     }
@@ -169,7 +189,8 @@ export function isExcludedSource(person: FubPerson): string | null {
  */
 export function isSOISilenced(person: FubPerson): string | null {
   // Rule 3: source contains "SOI" (case-insensitive)
-  const source = (person.source ?? person.leadSource ?? "").toLowerCase();
+  const sourceValue = person.source ?? person.leadSource ?? "";
+  const source = typeof sourceValue === "string" ? sourceValue.toLowerCase() : "";
   if (source.includes("soi")) {
     return `source contains SOI: "${person.source ?? person.leadSource}"`;
   }
@@ -329,7 +350,7 @@ export async function fubRequest<T = unknown>(
   throw new Error(`FUB rate-limit exceeded after 4 attempts on ${path}`);
 }
 
-export interface FubPerson {
+export interface FubPerson extends PortalProvenance {
   id: number;
   firstName?: string | null;
   lastName?: string | null;
@@ -394,8 +415,9 @@ export async function postFubNote(personId: number, body: string): Promise<void>
 /** Check if a lead has a DNC / opt-out / suppression tag.
  * Now reads from the shared suppression_tags.json (single source of truth).
  */
-export function hasDncTag(person: FubPerson): boolean {
-  const suppressionTags = getSharedSuppressionTags();
+export function hasDncTag(person: FubPerson, includePortal = true): boolean {
+  if (includePortal && hasPortalProvenance({ tags: person.tags })) return true;
+  const suppressionTags = getSharedSuppressionTags(false);
   const tags = person.tags ?? [];
   // Normalize hyphens/underscores to spaces so tag variants like
   // "do-not-contact" still match the shared list entry "do not contact".
@@ -455,7 +477,7 @@ export function isEligible(person: FubPerson): boolean {
 
   if (person.assignedPondId) return false; // already on a pond — handled by pond nurture
   if (person.textOptOut) return false;
-  if (hasDncTag(person)) return false;
+  if (hasDncTag(person, false)) return false; // generic/SMS eligibility retains baseline tags
 
   // For stale override leads, don't apply the normal day window — they're already past it
   if (isStaleOverride) return true;
@@ -803,9 +825,14 @@ export function isBotAuthoredNote(body: string | undefined | null): boolean {
  * Returns { skip: true, reason: string } if the lead should be skipped.
  * Returns { skip: false } if it's safe to send a follow-up.
  */
-export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
+export async function shouldSkipLead(person: FubPerson, includePortal = true): Promise<{ skip: boolean; reason?: string }> {
   // ── Source-Based Exclusion (cheap local check — no API call) ──────────────
-  const excludedSource = isExcludedSource(person);
+  const excludedSource = isExcludedSource(person, includePortal);
+  if (excludedSource === "PORTAL_SOURCE_EXCLUDED") {
+    console.info(excludedSource);
+    return { skip: true, reason: excludedSource };
+  }
+  if (includePortal && hasMalformedPortalMetadata(person)) return { skip: true, reason: "PORTAL_PROVENANCE_UNUSABLE" };
   if (excludedSource) {
     console.log(`[skipGate] person ${person.id} skipped: excluded source: ${excludedSource}`);
     return { skip: true, reason: `excluded source: ${excludedSource}` };
@@ -818,14 +845,12 @@ export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean
     return { skip: true, reason: `soi_silenced (rule matched: ${soiRule})` };
   }
 
-  // Deal-Based Pond Protection: ANY lead with a deal in FUB is protected
-  // Rule A: Any deal → skip (no automation touches deal-room leads)
+  // Deal-room protections remain after cheap source/SOI checks.
   if (await hasAnyDeal(person.id)) {
     return { skip: true, reason: "Lead has active deal in FUB deal room — protected from all automation" };
   }
 
-  // Rule C: Lease listing silenced leads get TOTAL SILENCE — no agent-bot emails
-  // (This is technically redundant now since hasAnyDeal catches it, but kept for explicit logging)
+  // Rule C: retain lease listing total silence.
   if (await isLeaseListingSilenced(person.id)) {
     return { skip: true, reason: "Lease listing silenced (closed Residential Lease Listing, no purchase deal)" };
   }
@@ -1464,6 +1489,8 @@ IMPORTANT:
  * This is the primary outreach channel (SMS is disabled per system config).
  */
 export async function sendLeadFollowUpEmail(opts: {
+  personId: number;
+  provenance?: PortalProvenance;
   agentEmail: string;
   agentFirstName: string;
   agentLastName: string;
@@ -1492,6 +1519,8 @@ export async function sendLeadFollowUpEmail(opts: {
   `;
 
   await sendEmail({
+    personId: opts.personId,
+    provenance: opts.provenance,
     from: `${agentFirstName} | Lifestyle Design Realty <${agentEmail}>`,
     to: leadEmail,
     subject,
@@ -1523,8 +1552,16 @@ export async function sendEmail(opts: {
   from?: string;
   replyTo?: string;
   bcc?: string | string[];
-}): Promise<void> {
+} & ({ internal: true } | { internal?: false; personId: number; provenance?: PortalProvenance })): Promise<void> {
   const transporter = getTransporter();
+  if (opts.internal !== true) {
+    const addresses = Array.isArray(opts.to) ? opts.to : [opts.to];
+    if (!addresses.some(address => typeof address === "string" && address.trim().includes("@"))) {
+      throw new Error("LEAD_EMAIL_ADDRESS_MISSING");
+    }
+    const verdict = await portalEmailGate(opts.personId, opts.provenance);
+    if (!verdict.allowed) throw new PortalEmailBlockedError(verdict.reason);
+  }
   await transporter.sendMail({
     from: opts.from ?? EMAIL_FROM,
     to: Array.isArray(opts.to) ? opts.to.join(", ") : opts.to,
@@ -1773,6 +1810,7 @@ export async function sendClockinEmail(opts: {
 </html>`;
 
   await sendEmail({
+    internal: true,
     to: [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i),
     subject,
     html,
@@ -1953,6 +1991,7 @@ export async function sendClockoffEmail(opts: {
 </html>`;
 
   await sendEmail({
+    internal: true,
     to: [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i),
     subject,
     html,
@@ -2295,6 +2334,7 @@ export async function sendBotIntroEmail(botSlug: string): Promise<void> {
     : [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i);
 
   await sendEmail({
+    internal: true,
     to: recipients,
     subject,
     html,

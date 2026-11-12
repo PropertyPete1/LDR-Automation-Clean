@@ -1,0 +1,1285 @@
+[
+  {
+    "name": "plain-zillow",
+    "record": {
+      "source": "Zillow"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "zillow-premier",
+    "record": {
+      "source": "Zillow Premier Agent"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "zillow-flex",
+    "record": {
+      "source": "Zillow Flex"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "zillow-rentals",
+    "record": {
+      "source": "Zillow Rentals"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "zillow-case-trademark",
+    "record": {
+      "source": "  ZILLOW® -- Premier  Agent™ "
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "zillow-contained",
+    "record": {
+      "leadSource": "Imported from Zillow campaign"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "plain-realtorcom",
+    "record": {
+      "source": "Realtor.com"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-rental",
+    "record": {
+      "source": "Realtor.com - Rental"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-space",
+    "record": {
+      "source": "Realtor com"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-spelled-dot",
+    "record": {
+      "source": "REALTOR DOT COM"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-joined-dot",
+    "record": {
+      "leadSource": "realtordotcom"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-punctuation-trademark",
+    "record": {
+      "source": " Realtor®...com™ / Buyer "
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-company-not-form",
+    "record": {
+      "source": "Realtor company"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-commercial-not-form",
+    "record": {
+      "source": "Realtor.commercial"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-zillow",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-realtor-subdomain",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://leads.realtor.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-zillow-dns-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-realtor-subdomain-dns-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://sub.realtor.com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-suffix-lookalike",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com.example.org/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-prefix-lookalike",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://notzillow.com/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-userinfo",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com@example.org/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "url-path-query",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://example.org/zillow.com?source=realtor.com"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "tag-zillow",
+    "record": {
+      "source": "Website",
+      "tags": [
+        "Zillow"
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "tag-zillow-flex",
+    "record": {
+      "source": "Website",
+      "tags": [
+        {
+          "name": "Zillow Flex - Buyer"
+        }
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "tag-realtor",
+    "record": {
+      "source": "Website",
+      "tags": [
+        "Realtor.com - Rental"
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "tag-casual-mention",
+    "record": {
+      "source": "Website",
+      "tags": [
+        "Asked about Zillow"
+      ]
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "tag-realtor-referral",
+    "record": {
+      "source": "Website",
+      "tags": [
+        "Realtor referral"
+      ]
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-source",
+    "record": {
+      "source": "Website",
+      "originalSource": "Zillow"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-source",
+    "record": {
+      "source": "Website",
+      "eventSource": "Realtor.com"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-record",
+    "record": {
+      "source": "Website",
+      "original": {
+        "source": "Zillow"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-record",
+    "record": {
+      "source": "Website",
+      "event": {
+        "source": "Realtor.com"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-provenance",
+    "record": {
+      "source": "Website",
+      "originalProvenance": {
+        "source": "Zillow"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-provenance",
+    "record": {
+      "source": "Website",
+      "eventProvenance": {
+        "source": "Realtor.com"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "loaded-events",
+    "record": {
+      "source": "Website",
+      "events": [
+        {
+          "source": "Realtor.com"
+        }
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "loaded-provenance",
+    "record": {
+      "source": "Website",
+      "provenance": [
+        {
+          "leadSource": "Zillow"
+        }
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "deep-original",
+    "record": {
+      "source": "Website",
+      "original": {
+        "event": {
+          "source": "Zillow"
+        }
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "notes-not-proof",
+    "record": {
+      "source": "Website",
+      "notes": [
+        {
+          "source": "Zillow",
+          "text": "Zillow"
+        }
+      ]
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "messages-not-proof",
+    "record": {
+      "source": "Website",
+      "messages": [
+        {
+          "source": "Realtor.com"
+        }
+      ],
+      "body": "Zillow"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "sourceid-not-proof",
+    "record": {
+      "source": "Website",
+      "sourceId": "Zillow",
+      "createdVia": "Realtor.com"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "website-control",
+    "record": {
+      "source": "Website"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "facebook-control",
+    "record": {
+      "source": "Facebook"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "google-control",
+    "record": {
+      "source": "Google"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "referral-control",
+    "record": {
+      "source": "Referral"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "realtor-referral-control",
+    "record": {
+      "source": "Realtor referral"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "agent-inquiry-control",
+    "record": {
+      "source": "Agent Inquiry"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "bare-realtor-control",
+    "record": {
+      "source": "realtor"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "bare-agent-control",
+    "record": {
+      "source": "agent"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "blank-control",
+    "record": {
+      "source": ""
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "trulia-unadded",
+    "record": {
+      "source": "Trulia"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "hotpads-unadded",
+    "record": {
+      "source": "HotPads"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "homescom-unadded",
+    "record": {
+      "source": "Homes.com"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "opcity-unadded",
+    "record": {
+      "source": "Opcity"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "local-realtor-committee-control",
+    "record": {
+      "source": "Local Realtor Committee"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-source-object-name",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "name": "Zillow"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-source-object-name",
+    "record": {
+      "source": "Website",
+      "eventSource": {
+        "name": "Realtor.com"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-source-object-source",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "source": "Zillow Flex"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-source-object-leadsource",
+    "record": {
+      "source": "Website",
+      "eventSource": {
+        "leadSource": "realtor dot com"
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-source-object-nonportal",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "name": "Referral"
+      }
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "event-source-object-nonportal",
+    "record": {
+      "source": "Website",
+      "eventSource": {
+        "source": "Facebook"
+      }
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "source-object-blank",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "name": ""
+      }
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "source-alias-null",
+    "record": {
+      "source": "Website",
+      "originalSource": null,
+      "eventSource": null
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "original-source-wrong-type",
+    "record": {
+      "source": "Website",
+      "originalSource": 42
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "event-source-wrong-type",
+    "record": {
+      "source": "Website",
+      "eventSource": true
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "source-object-empty",
+    "record": {
+      "source": "Website",
+      "originalSource": {}
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "source-object-unknown",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "unknown": "Zillow"
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "source-object-name-wrong-type",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "name": 42
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "original-record-wrong-type",
+    "record": {
+      "source": "Website",
+      "original": 42
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "event-provenance-unknown",
+    "record": {
+      "source": "Website",
+      "eventProvenance": {
+        "unknown": "Zillow"
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "events-wrong-type",
+    "record": {
+      "source": "Website",
+      "events": "Zillow"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "provenance-array-invalid",
+    "record": {
+      "source": "Website",
+      "provenance": [
+        42
+      ]
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "any-portal-wins-invalid-original",
+    "record": {
+      "source": "Zillow",
+      "originalSource": 42
+    },
+    "portal": true,
+    "metadataUsable": false
+  },
+  {
+    "name": "any-portal-wins-nested-invalid",
+    "record": {
+      "source": "Website",
+      "event": {
+        "source": "Zillow"
+      },
+      "original": 42
+    },
+    "portal": true,
+    "metadataUsable": false
+  },
+  {
+    "name": "encoded-zillow",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%7Aillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "encoded-realtor",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%72ealtor.com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "idna-fullwidth",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://Ｚｉｌｌｏｗ.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "idna-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow。com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "no-authority",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https:zillow.com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "one-slash",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https:/zillow.com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "double-dns-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com../lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "invalid-port",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com:bad/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "current-source-object",
+    "record": {
+      "source": {
+        "name": "Referral"
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "current-leadsource-object",
+    "record": {
+      "source": "Website",
+      "leadSource": {
+        "name": "Referral"
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "empty-array-source-object",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "events": []
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "nested-record-in-source-object",
+    "record": {
+      "source": "Website",
+      "originalSource": {
+        "event": {
+          "source": "Zillow"
+        }
+      }
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "absent-only-null-alias",
+    "record": {
+      "originalSource": null
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "nullable-tags",
+    "record": {
+      "source": "Website",
+      "tags": null
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "exact-no-slash",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https:zillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "exact-one-slash",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https:/zillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "exact-relative",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "//www.realtor.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "exact-bare",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "www.zillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "exact-bad-port",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com:bad/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "backslash-portal",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com\\lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "backslash-port",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com:443\\lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "backslash-before-userinfo",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com\\@example.invalid/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "recoverable-case-dns-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "  HTTPS:/WWW.Realtor.Com./lead  "
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "bare-encoded",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "%7Aillow.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "bare-idna",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "Ｚｉｌｌｏｗ.com/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "relative-idna-dot",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "//zillow。com./lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "bad-port-encoded",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%72ealtor.com:bad/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "bare-port",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "www.zillow.com:bad/lead"
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "backslash-reverse-userinfo",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://example.invalid\\@zillow.com/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-zillow-co",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.co/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-realtor-community",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://realtor.community/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-path-only",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://example.org/zillow.com/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-query-only",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://example.org/?ref=zillow.com"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-relative-userinfo",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "//zillow.com@example.org/x"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-bare-suffix",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "zillow.com.example.org/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "negative-bad-port-nonportal",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://example.org:bad/lead"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "unreadable-url-text",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "not-a-url"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-empty-authority",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-relative-path",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-invalid-escape",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%ZZillow.com/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-invalid-utf8",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%FFillow.com/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-space-host",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow .com/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-encoded-path",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow.com%2F.example.org/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-empty-label",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://zillow..com/lead"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unrelated-empty-snapshot",
+    "record": {},
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "unrelated-webhook-snapshot",
+    "record": {
+      "id": 1,
+      "firstName": "Synthetic"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "unreadable-url-encoded-tab-leading",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%09example.invalid/x"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-encoded-tab-internal",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://ex%09ample.invalid/x"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "unreadable-url-encoded-newline-leading",
+    "record": {
+      "source": "Website",
+      "sourceUrl": "https://%0Aexample.invalid/x"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-true-website-reviewer",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": true
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-false-website",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": false
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-null-website",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": null
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-absent-website",
+    "record": {
+      "source": "Website Form"
+    },
+    "portal": false,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-true-source-absent",
+    "record": {
+      "isZillowPACLead": true
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-true-source-blank",
+    "record": {
+      "source": "",
+      "isZillowPACLead": true
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-original-person-snapshot",
+    "record": {
+      "source": "Website Form",
+      "original": {
+        "isZillowPACLead": true
+      }
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-provenance-person-snapshot",
+    "record": {
+      "source": "Website Form",
+      "provenance": [
+        {
+          "isZillowPACLead": true
+        }
+      ]
+    },
+    "portal": true,
+    "metadataUsable": true
+  },
+  {
+    "name": "native-flag-malformed-string-true",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": "true"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-malformed-string-false",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": "false"
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-malformed-number-one",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": 1
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-malformed-number-zero",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": 0
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-malformed-object",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": {}
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-malformed-array",
+    "record": {
+      "source": "Website Form",
+      "isZillowPACLead": []
+    },
+    "portal": false,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-portal-source-wins-malformed",
+    "record": {
+      "source": "Zillow",
+      "isZillowPACLead": "true"
+    },
+    "portal": true,
+    "metadataUsable": false
+  },
+  {
+    "name": "native-flag-true-wins-malformed-source",
+    "record": {
+      "source": {},
+      "isZillowPACLead": true
+    },
+    "portal": true,
+    "metadataUsable": false
+  }
+]

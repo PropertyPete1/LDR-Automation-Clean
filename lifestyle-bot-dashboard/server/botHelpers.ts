@@ -20,6 +20,8 @@ import { getDb } from "./db";
 import { botObservations, botRunLogs, smsSentToday, contactedLeads, emailAngleLog, purchaseWindow } from "../drizzle/schema";
 import { and, eq, gte, desc } from "drizzle-orm";
 import { ENV } from "./_core/env";
+import { hasPortalProvenance, hasUsableFreshProvenance, hasUsableProvenanceMetadata, isProvenanceRecord, isPortalSourceName, isUsablePersonId, type PortalProvenance } from "./portalProvenance";
+import { loadPortalEventHistoryPage, scanPortalEventHistory, type PortalHistoryLoader } from "./portalEventHistory";
 
 // ESM-safe __dirname
 const __botHelpers_filename = fileURLToPath(import.meta.url);
@@ -64,6 +66,7 @@ export function getSharedSuppressionTags(): string[] {
     "dnc", "realtor", "agent", "spam", "annual nurture only",
     "replied - paused", "not now - 30 day pause", "bot_suppress", "soi",
     "landlord", "lease listing inquiry",
+    "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com",
   ];
   return _sharedSuppressionTags;
 }
@@ -75,7 +78,7 @@ export function getSharedExcludedSources(): string[] {
   getSharedSuppressionTags();
   if (_sharedExcludedSources) return _sharedExcludedSources;
   // Fallback
-  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"];
+  _sharedExcludedSources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry", "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com"];
   return _sharedExcludedSources;
 }
 
@@ -120,9 +123,11 @@ export function isRecruitingSource(person: FubPerson): string | null {
 
 /**
  * Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
+ * includePortal=false bypasses only newly added portal evidence for non-email lanes.
  * Returns the matched source string or null.
  */
-export function isExcludedSource(person: FubPerson): string | null {
+export function isExcludedSource(person: FubPerson, includePortal = true): string | null {
+  if (includePortal && hasPortalProvenance(person)) return "PORTAL_SOURCE";
   const source = (person.source ?? person.leadSource ?? "").toLowerCase().trim();
   if (!source) return null;
   const excludedSources = getSharedExcludedSources();
@@ -132,9 +137,11 @@ export function isExcludedSource(person: FubPerson): string | null {
     // matching silently let every one of those variants through.
     //
     // Direction is load-bearing: source.includes(excluded), never the reverse.
-    // "zillow" does NOT contain "zillow rentals", so the legit Zillow buyer
-    // source stays unsuppressed, while "Zillow Rentals - Austin" is caught.
-    if (excluded && source.includes(excluded)) {
+    // Portal names use the shared normalized matcher above; unrelated source
+    // exclusions retain their original case-insensitive substring semantics.
+    // Never let JSON portal aliases reintroduce partial-token false positives or
+    // leak into non-email lanes. Zillow Rentals is NOT an exact portal alias.
+    if (excluded && !isPortalSourceName(excluded) && source.includes(excluded)) {
       return person.source ?? person.leadSource ?? source;
     }
   }
@@ -338,7 +345,7 @@ export async function fubRequest<T = unknown>(
   throw new Error(`FUB rate-limit exceeded after 4 attempts on ${path}`);
 }
 
-export interface FubPerson {
+export interface FubPerson extends PortalProvenance {
   id: number;
   firstName?: string | null;
   lastName?: string | null;
@@ -406,8 +413,10 @@ export async function postFubNote(personId: number, body: string): Promise<void>
 
 /** Check if a lead has a DNC / opt-out / suppression tag.
  * Now reads from the shared suppression_tags.json (single source of truth).
+ * Non-email callers can bypass only new portal tags, not old realtor/agent tags.
  */
-export function hasDncTag(person: FubPerson): boolean {
+export function hasDncTag(person: FubPerson, includePortal = true): boolean {
+  if (includePortal && hasPortalProvenance({ tags: person.tags })) return true;
   const suppressionTags = getSharedSuppressionTags();
   const tags = person.tags ?? [];
   // Normalize hyphens/underscores to spaces so tag variants like
@@ -415,7 +424,7 @@ export function hasDncTag(person: FubPerson): boolean {
   const normalize = (s: string) => s.toLowerCase().replace(/[-_]+/g, " ");
   return tags.some(t => {
     const tag = normalize(typeof t === "string" ? t : (t as { name?: string })?.name ?? "");
-    return suppressionTags.some(st => tag.includes(normalize(st)));
+    return suppressionTags.some(st => !isPortalSourceName(st) && tag.includes(normalize(st)));
   });
 }
 
@@ -453,7 +462,8 @@ export function daysStale(person: FubPerson): number {
  *
  * Excludes: skip stages, pond leads, DNC/opt-out, outside the 3-19 day window.
  */
-export function isEligible(person: FubPerson): boolean {
+export function isEligible(person: FubPerson, includePortal = true): boolean {
+  if (includePortal && hasPortalProvenance(person)) return false;
   const stage = (person.stage ?? "").trim();
   const days = daysStale(person);
 
@@ -468,7 +478,7 @@ export function isEligible(person: FubPerson): boolean {
 
   if (person.assignedPondId) return false; // already on a pond — handled by pond nurture
   if (person.textOptOut) return false;
-  if (hasDncTag(person)) return false;
+  if (hasDncTag(person, includePortal)) return false;
 
   // For stale override leads, don't apply the normal day window — they're already past it
   if (isStaleOverride) return true;
@@ -778,6 +788,7 @@ export async function isLeaseListingSilenced(personId: number): Promise<boolean>
  * Returns { skip: false } if it's safe to send a follow-up.
  */
 export async function shouldSkipLead(person: FubPerson): Promise<{ skip: boolean; reason?: string }> {
+  if (hasPortalProvenance(person)) return { skip: true, reason: "PORTAL_SOURCE" };
   // Source-based exclusion (cheap local check — no API call)
   const excludedSrc = isExcludedSource(person);
   if (excludedSrc) {
@@ -1240,7 +1251,8 @@ export async function generateFollowUpMessage(opts: {
   stage: string;
   person?: FubPerson;
   isValueLed?: boolean;
-}): Promise<{ body: string; subject: string }> {
+  deferSentRecord?: boolean;
+}): Promise<{ body: string; subject: string; recordDelivery?: () => Promise<void> }> {
   const { agentFirstName, agentLastName, leadFirstName, daysStale: staleDays, stage, person, isValueLed } = opts;
   const hasName = !!leadFirstName && leadFirstName.toLowerCase() !== "there";
   const nameContext = hasName
@@ -1416,6 +1428,9 @@ IMPORTANT:
 
     // ── Feature 3: Save the angle used ─────────────────────────────────────────
     if (personId) {
+      if (opts.deferSentRecord) {
+        return { body, subject, recordDelivery: () => saveAngle(personId, angle) };
+      }
       await saveAngle(personId, angle);
     }
 
@@ -1436,6 +1451,8 @@ IMPORTANT:
  * This is the primary outreach channel (SMS is disabled per system config).
  */
 export async function sendLeadFollowUpEmail(opts: {
+  personId: number;
+  provenance: PortalProvenance;
   agentEmail: string;
   agentFirstName: string;
   agentLastName: string;
@@ -1443,7 +1460,7 @@ export async function sendLeadFollowUpEmail(opts: {
   leadFirstName: string | null;
   messageBody: string;
   subject?: string;
-}): Promise<void> {
+}): Promise<EmailDeliveryResult> {
   const { agentEmail, agentFirstName, agentLastName, leadEmail, messageBody } = opts;
   // Use the context-aware subject from the LLM, or fall back to a generic one.
   const subject = opts.subject ?? `Following up — ${agentFirstName} ${agentLastName}, Lifestyle Design Realty`;
@@ -1492,7 +1509,9 @@ export async function sendLeadFollowUpEmail(opts: {
     </div>
   `;
 
-  await sendEmail({
+  return sendEmail({
+    kind: "lead",
+    leadContact: { personId: opts.personId, provenance: opts.provenance },
     from: `${agentFirstName} | Lifestyle Design Realty <${TEAM_EMAIL}>`,
     to: leadEmail,
     subject,
@@ -1503,6 +1522,35 @@ export async function sendLeadFollowUpEmail(opts: {
 }
 
 // ─── SMTP email ──────────────────────────────────────────────────────────────
+
+export type EmailDeliveryResult =
+  | { sent: true }
+  | { sent: false; reason: "PORTAL_SOURCE" | "PORTAL_PERSON_UNAVAILABLE" | "PORTAL_PERSON_ID_UNRESOLVED" | "PORTAL_HISTORY_UNAVAILABLE" | "PORTAL_HISTORY_INCOMPLETE" | "EMAIL_CONTEXT_REQUIRED" | "LEAD_EMAIL_ADDRESS_MISSING" };
+
+/** Hard gate: fresh identity/provenance, then bounded own history; no cache/writes. */
+export async function checkLeadEmailPortalGate(
+  personId: number, provenance?: PortalProvenance,
+  historyLoader: PortalHistoryLoader | null = request => loadPortalEventHistoryPage(request, FUB_API_KEY),
+): Promise<EmailDeliveryResult> {
+  if (!isUsablePersonId(personId)) {
+    return { sent: false, reason: hasPortalProvenance(provenance) ? "PORTAL_SOURCE" : "PORTAL_PERSON_ID_UNRESOLVED" };
+  }
+  let current: unknown;
+  try {
+    current = await fubRequest(`/people/${personId}?fields=allFields`);
+  } catch {
+    return { sent: false, reason: hasPortalProvenance(provenance) ? "PORTAL_SOURCE" : "PORTAL_PERSON_UNAVAILABLE" };
+  }
+  if (hasPortalProvenance(current) || hasPortalProvenance(provenance)) {
+    return { sent: false, reason: "PORTAL_SOURCE" };
+  }
+  if (!hasUsableFreshProvenance(current, personId) ||
+      (provenance !== undefined && !hasUsableProvenanceMetadata(provenance))) {
+    return { sent: false, reason: "PORTAL_PERSON_UNAVAILABLE" };
+  }
+  const history = await scanPortalEventHistory(personId, historyLoader);
+  return history.sent ? { sent: true } : { sent: false, reason: history.reason };
+}
 
 let _transporter: nodemailer.Transporter | null = null;
 
@@ -1518,14 +1566,56 @@ function getTransporter(): nodemailer.Transporter {
   return _transporter;
 }
 
-export async function sendEmail(opts: {
+export type EmailOptions = {
   to: string | string[];
   subject: string;
   html: string;
   from?: string;
   replyTo?: string;
   bcc?: string | string[];
-}): Promise<void> {
+} & (
+  | { kind: "internal"; leadContact?: never }
+  | { kind: "lead"; leadContact: { personId: number; provenance: PortalProvenance } }
+);
+
+/** Missing context never implies internal, even for malformed JavaScript callers. */
+export function hasRequiredEmailContext(value: unknown): value is EmailOptions {
+  try {
+    if (!isProvenanceRecord(value) || !Object.prototype.hasOwnProperty.call(value, "kind")) return false;
+    if (value.kind === "internal") return value.leadContact === undefined;
+    if (value.kind !== "lead" || !Object.prototype.hasOwnProperty.call(value, "leadContact") ||
+        !isProvenanceRecord(value.leadContact)) return false;
+    const contact = value.leadContact;
+    return Object.prototype.hasOwnProperty.call(contact, "personId") &&
+      Object.prototype.hasOwnProperty.call(contact, "provenance") &&
+      isProvenanceRecord(contact.provenance);
+  } catch { return false; }
+}
+
+/** Internal CC/BCC recipients never prove that a lead has a delivery address. */
+function hasLeadRecipient(value: unknown): boolean {
+  try {
+    if (typeof value === "string") return value.trim().length > 0;
+    return Array.isArray(value) && value.some(item => typeof item === "string" && item.trim().length > 0);
+  } catch { return false; }
+}
+
+export async function sendEmail(opts: EmailOptions): Promise<EmailDeliveryResult> {
+  if (!hasRequiredEmailContext(opts)) {
+    console.info("EMAIL_CONTEXT_REQUIRED");
+    return { sent: false, reason: "EMAIL_CONTEXT_REQUIRED" };
+  }
+  if (opts.kind === "lead") {
+    if (!hasLeadRecipient(opts.to)) {
+      console.info("LEAD_EMAIL_ADDRESS_MISSING");
+      return { sent: false, reason: "LEAD_EMAIL_ADDRESS_MISSING" };
+    }
+    const result = await checkLeadEmailPortalGate(opts.leadContact.personId, opts.leadContact.provenance);
+    if (!result.sent) {
+      console.info(result.reason);
+      return result;
+    }
+  }
   const transporter = getTransporter();
   await transporter.sendMail({
     from: opts.from ?? EMAIL_FROM,
@@ -1535,6 +1625,7 @@ export async function sendEmail(opts: {
     replyTo: opts.replyTo,
     bcc: opts.bcc,
   });
+  return { sent: true };
 }
 
 // ─── Clock-in / Clock-off emails ─────────────────────────────────────────────
@@ -1880,6 +1971,7 @@ export async function sendClockinEmail(opts: {
 </html>`;
 
   await sendEmail({
+    kind: "internal",
     to: [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i),
     subject,
     html,
@@ -2060,6 +2152,7 @@ export async function sendClockoffEmail(opts: {
 </html>`;
 
   await sendEmail({
+    kind: "internal",
     to: [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i),
     subject,
     html,

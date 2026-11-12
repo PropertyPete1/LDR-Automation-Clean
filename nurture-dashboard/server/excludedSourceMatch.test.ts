@@ -5,9 +5,8 @@
  * "Zillow Rentals - Austin". Exact matching silently let every variant through,
  * so the suppression entry only ever caught a source spelled byte-for-byte.
  *
- * The direction is the safety property: source.includes(excluded), never the
- * reverse. "zillow" does not contain "zillow rentals", so a legitimate Zillow
- * buyer lead stays unsuppressed while "Zillow Rentals - Austin" is caught.
+ * Unrelated sources retain the old contains rule. Zillow and Realtor.com
+ * sources are now excluded by the explicit portal provenance rule.
  */
 import { describe, it, expect } from "vitest";
 import { isExcludedSource, reloadSharedSuppressionTags } from "./botHelpers";
@@ -25,6 +24,10 @@ describe("isExcludedSource — CONTAINS matching", () => {
       "Zillow Rentals - Austin",
       "New Agent Inquiry 2026",
       "  BOTM Newsletter  ",
+      "Zillow",
+      "Zillow Premier Agent",
+      "Zillow Flex",
+      "Realtor.com",
     ]) {
       expect(isExcludedSource(src(variant)), `${variant} should be suppressed`).toBeTruthy();
     }
@@ -32,13 +35,13 @@ describe("isExcludedSource — CONTAINS matching", () => {
 
   it("never false-matches a legitimate buyer source", () => {
     for (const legit of [
-      "Zillow",              // must NOT be caught by "Zillow Rentals"
-      "Zillow Premier Agent",
-      "Zillow Flex",
-      "Realtor.com",
       "Website Form",
       "Open House",
       "Referral",
+      "realtor",
+      "agent",
+      "Realtor referral",
+      "Agent Inquiry",
       "Agent Referral",      // must NOT be caught by "New Agent Inquiry"
       "Newsletter Signup",   // must NOT be caught by "BOTM Newsletter"
       "Lease",               // shorter than the excluded entry

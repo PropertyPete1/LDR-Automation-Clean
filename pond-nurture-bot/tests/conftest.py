@@ -59,7 +59,8 @@ class FakeHttp:
         self.calls: list[RecordedRequest] = []
         self.responses = list(responses or [(200, {})])
 
-    def __call__(self, method, url, params=None, json=None, headers=None, auth=None, timeout=None):
+    def __call__(self, method, url, params=None, json=None, headers=None, auth=None, timeout=None,
+                 allow_redirects=None):
         self.calls.append(RecordedRequest(method, url, dict(params) if params else {}, json))
         status, payload = self.responses[0]
         if len(self.responses) > 1:

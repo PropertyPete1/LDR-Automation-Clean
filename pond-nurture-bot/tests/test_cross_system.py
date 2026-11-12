@@ -8,6 +8,7 @@ The shared suppression list is the single source of truth for BOTH codebases:
 If these diverge, one system protects leads the other one emails.
 This test FAILS on divergence.
 """
+import ast
 import json
 import re
 from pathlib import Path
@@ -33,13 +34,61 @@ ALL_BOT_HELPERS = [
 ]
 
 
+def _semantic_sources(values):
+    """Collapse only exact portal spelling aliases; retain all unrelated entries."""
+    from fub_automation.portal import normalize_source
+    result = set()
+    for value in values:
+        lower = value.lower()
+        normalized = normalize_source(value)
+        if normalized in {"realtor com", "realtordotcom", "realtor dot com"}:
+            lower = "realtor.com"
+        result.add(lower)
+    return sorted(result)
+
+
+def _ts_array_values(path, name, seen=None):
+    """Read the actual fallback literals, following only named relative imports.
+
+    A spread must resolve to an explicit constant array; unrelated strings or
+    comments elsewhere in a module cannot satisfy a missing fallback entry.
+    """
+    seen = set() if seen is None else seen
+    key = (path.resolve(), name)
+    assert key not in seen, f"cyclic fallback constant: {name}"
+    seen.add(key)
+    source = path.read_text()
+    match = re.search(rf"\b{re.escape(name)}\s*(?::[^=;]+)?=\s*\[([^\]]*)\]", source, re.DOTALL)
+    if not match:
+        for imports, module in re.findall(r'import\s*\{([^}]+)\}\s*from\s*[\"\'](\.[^\"\']+)[\"\']', source):
+            for binding in imports.split(","):
+                parts = re.split(r"\s+as\s+", binding.strip())
+                if parts[-1] == name:
+                    target = (path.parent / module).with_suffix(".ts")
+                    return _ts_array_values(target, parts[0], seen)
+        raise AssertionError(f"could not resolve fallback constant {name} in {path}")
+    values = []
+    for entry in match.group(1).split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if entry.startswith("..."):
+            assert re.fullmatch(r"\.\.\.[A-Za-z_]\w*", entry), f"unsupported fallback spread: {entry}"
+            values.extend(_ts_array_values(path, entry[3:], seen.copy()))
+        else:
+            value = ast.literal_eval(entry)
+            assert isinstance(value, str), f"non-string fallback: {entry}"
+            values.append(value.lower())
+    return values
+
+
 def test_python_and_ts_suppression_json_are_identical():
     py = json.load(open(PY_JSON))
     ts = json.load(open(TS_JSON))
     assert sorted(t.lower() for t in py["tags"]) == sorted(t.lower() for t in ts["tags"]), \
         "suppression tag lists diverged between pond-nurture-bot and lifestyle-bot-dashboard"
-    assert sorted(s.lower() for s in py.get("excluded_sources", [])) == \
-           sorted(s.lower() for s in ts.get("excluded_sources", [])), \
+    assert _semantic_sources(py.get("excluded_sources", [])) == \
+           _semantic_sources(ts.get("excluded_sources", [])), \
         "excluded_sources diverged between the two config copies"
 
 
@@ -51,8 +100,8 @@ def test_all_three_suppression_json_copies_are_identical():
     for p, d in loaded.items():
         assert sorted(t.lower() for t in d["tags"]) == sorted(t.lower() for t in ref["tags"]), \
             f"tags diverged: {p.relative_to(ROOT)} vs {ref_path.relative_to(ROOT)}"
-        assert sorted(s.lower() for s in d.get("excluded_sources", [])) == \
-               sorted(s.lower() for s in ref.get("excluded_sources", [])), \
+        assert _semantic_sources(d.get("excluded_sources", [])) == \
+               _semantic_sources(ref.get("excluded_sources", [])), \
             f"excluded_sources diverged: {p.relative_to(ROOT)} vs {ref_path.relative_to(ROOT)}"
 
 
@@ -80,10 +129,7 @@ def test_every_ts_fallback_covers_every_shared_tag():
     shared list, or a missing JSON silently weakens suppression in that project."""
     shared = [t.lower() for t in json.load(open(PY_JSON))["tags"]]
     for h in ALL_BOT_HELPERS:
-        src = h.read_text()
-        m = re.search(r"_sharedSuppressionTags = \[(.*?)\];", src, re.DOTALL)
-        assert m, f"could not locate TS fallback list in {h.relative_to(ROOT)}"
-        fallback = [t.strip().strip('"').lower() for t in m.group(1).split(",") if t.strip().strip('"')]
+        fallback = _ts_array_values(h, "_sharedSuppressionTags")
         missing = [t for t in shared if t not in fallback]
         assert not missing, f"{h.relative_to(ROOT)} fallback missing: {missing}"
 
@@ -92,10 +138,7 @@ def test_ts_fallback_list_covers_every_shared_tag():
     """botHelpers.ts hardcoded fallback must contain every shared tag so a
     missing JSON never silently weakens suppression."""
     shared = [t.lower() for t in json.load(open(PY_JSON))["tags"]]
-    src = BOT_HELPERS.read_text()
-    m = re.search(r"_sharedSuppressionTags = \[(.*?)\];", src, re.DOTALL)
-    assert m, "could not locate TS fallback list"
-    fallback = [t.strip().strip('"').lower() for t in m.group(1).split(",") if t.strip().strip('"')]
+    fallback = _ts_array_values(BOT_HELPERS, "_sharedSuppressionTags")
     missing = [t for t in shared if t not in fallback]
     assert not missing, f"TS fallback list missing shared tags: {missing}"
 
@@ -113,11 +156,15 @@ def test_excluded_source_fallbacks_cover_every_shared_source():
     every JSON copy but in no fallback, so a failed JSON load re-enabled mail to
     Zillow Rentals leads."""
     shared = [s.lower() for s in json.load(open(PY_JSON))["excluded_sources"]]
-    blobs = {h.relative_to(ROOT): h.read_text().lower() for h in ALL_BOT_HELPERS}
-    blobs["pond-nurture-bot/main.py"] = (
-        ROOT / "pond-nurture-bot" / "src" / "fub_automation" / "main.py").read_text().lower()
-    for name, blob in blobs.items():
-        missing = [s for s in shared if s not in blob]
+    fallbacks = {h.relative_to(ROOT): _ts_array_values(h, "_sharedExcludedSources") for h in ALL_BOT_HELPERS}
+    tree = ast.parse((ROOT / "pond-nurture-bot" / "src" / "fub_automation" / "main.py").read_text())
+    lists = [node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+             and any(isinstance(target, ast.Name) and target.id == "shared_excluded_sources"
+                     for target in node.targets) and isinstance(node.value, ast.List)]
+    assert len(lists) == 1, "could not locate Python excluded-source fallback"
+    fallbacks["pond-nurture-bot/main.py"] = ast.literal_eval(lists[0])
+    for name, fallback in fallbacks.items():
+        missing = [s for s in _semantic_sources(shared) if s not in _semantic_sources(fallback)]
         assert not missing, f"{name} excluded-source fallback missing: {missing}"
 
 
@@ -178,14 +225,9 @@ def test_excluded_source_matches_suffixed_variants():
 
 
 def test_legit_buyer_sources_never_false_match():
-    """The direction guard: `excluded in source`, never the reverse. A plain
-    Zillow buyer lead must NOT be caught by the 'Zillow Rentals' entry."""
+    """Unrelated source rules stay intact; portal sources are tested separately."""
     m = _Matcher(CANON_SOURCES)
     for legit in (
-        "Zillow",
-        "Zillow Premier Agent",
-        "Zillow Flex",
-        "Realtor.com",
         "Website Form",
         "Open House",
         "Referral",
@@ -217,3 +259,15 @@ def test_ts_recruiting_sources_match_rules_yaml():
     assert match, "RECRUITING_SOURCES not found in lifestyle-bot-dashboard botHelpers.ts"
     ts = sorted(s.lower() for s in re.findall(r'"([^"]+)"', match.group(1)))
     assert ts == expected, f"recruiting sources diverged: rules.yaml {expected} vs botHelpers.ts {ts}"
+
+
+def test_fallback_inspection_resolves_explicit_imported_constants(tmp_path):
+    (tmp_path / "portal.ts").write_text('export const PORTAL_SOURCE_NAMES: readonly string[] = ["zillow", "realtor.com"];\n')
+    helper = tmp_path / "helper.ts"
+    helper.write_text('import { PORTAL_SOURCE_NAMES } from "./portal";\n'
+                      'let _sharedExcludedSources: string[] | null = null;\n'
+                      '_sharedExcludedSources = ["zillow rentals", ...PORTAL_SOURCE_NAMES];\n'
+                      '// new agent inquiry is not a fallback entry\n')
+    values = _ts_array_values(helper, "_sharedExcludedSources")
+    assert values == ["zillow rentals", "zillow", "realtor.com"]
+    assert "new agent inquiry" not in values

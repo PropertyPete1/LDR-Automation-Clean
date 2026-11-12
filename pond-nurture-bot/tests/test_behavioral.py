@@ -97,7 +97,7 @@ class TestSuppression:
     def test_excluded_source_matches_case_insensitively(self, engine):
         assert engine._is_excluded_source({"id": 1, "source": "BOTM NEWSLETTER"})
         assert engine._is_excluded_source({"id": 2, "source": "new agent inquiry"})
-        assert engine._is_excluded_source({"id": 3, "source": "Zillow"}) is None
+        assert engine._is_excluded_source({"id": 3, "source": "Zillow"}) == "portal_source_excluded"
 
 
 # ═══ 3. SOI total silence (Option B) ══════════════════════════════════════════

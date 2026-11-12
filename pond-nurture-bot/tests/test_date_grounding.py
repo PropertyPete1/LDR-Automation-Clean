@@ -18,6 +18,8 @@ import json
 
 import pytest
 
+from portal_history_fakes import complete_history
+
 from fub_automation import datecontext as dc
 from fub_automation.addresses import property_address_or_blank
 
@@ -304,6 +306,8 @@ def closed_engine(engine, monkeypatch, fake_http):
     monkeypatch.setattr(engine.content, "generate_closed_drip_email", fake_drip)
     monkeypatch.setattr(engine.content, "generate_congrats_email", fake_congrats)
     engine._calls = calls
+    monkeypatch.setattr(engine.fub, "get_person", lambda pid: {"id": pid, "source": "", "tags": []})
+    monkeypatch.setattr(engine.fub, "get_email_portal_event_page", complete_history)
     return engine
 
 

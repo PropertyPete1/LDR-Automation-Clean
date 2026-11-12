@@ -13,6 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from portal_history_fakes import complete_history
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from fub_automation import seller_nurture as sn
@@ -273,6 +275,8 @@ def seller_engine(m, engine, monkeypatch):
         engine.content, "_llm_call",
         lambda **kw: '{"subject": "Your home", "email_body": "Hey there. Curious?"}')
     monkeypatch.setattr(engine.fub, "add_note", lambda *a, **k: None)
+    monkeypatch.setattr(engine.fub, "get_person", lambda pid: {"id": pid, "source": "", "tags": []})
+    monkeypatch.setattr(engine.fub, "get_email_portal_event_page", complete_history)
     return engine
 
 

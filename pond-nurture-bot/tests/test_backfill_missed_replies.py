@@ -260,3 +260,42 @@ def test_run_backfill_end_to_end_finds_the_old_thread_reply(wired, tmp_db, monke
     assert [r["kind"] for r in results] == ["human"]
     rows = tmp_db.recent_audit_rows(["reply_detected"], WINDOW_START - dt.timedelta(days=1))
     assert len(rows) == 1 and rows[0]["status"] == "backfilled"
+
+
+@pytest.mark.parametrize("source,tag", [("Zillow", "zillow"), ("Realtor.com", "realtor.com"),
+                                        ("Realtor dot com", "realtor dot com")])
+@pytest.mark.parametrize("kind,body", [("human", "Yes, please call about my synthetic home search."),
+                                      ("opt_out", "UNSUBSCRIBE")])
+def test_run_backfill_portal_email_exclusion_preserves_historical_replies(
+        wired, tmp_db, monkeypatch, source, tag, kind, body):
+    pid = 990001
+    send = NOW - dt.timedelta(days=3)
+    reply = NOW - dt.timedelta(days=1)
+    _seed_audit_send(tmp_db, pid, send)
+    wired._calls["emails"] = [_email(send, inbound=False, body="synthetic follow-up"),
+                                _email(reply, inbound=True, body=body)]
+    person = {"id": pid, "firstName": "Synthetic", "lastName": "Fixture", "stage": "Lead",
+              "source": source, "tags": [tag]}
+    monkeypatch.setattr(wired.fub, "get_person", lambda _: person)
+    assert wired.is_excluded(person)
+    results = bmr.run_backfill(wired, tmp_db, days=14, commit=True)
+    assert [row["kind"] for row in results] == [kind]
+    if kind == "human":
+        assert any("Replied - Paused" in payload.get("tags", []) for _, payload in wired._calls["update_person"])
+        assert len(tmp_db.recent_audit_rows(["reply_detected"], WINDOW_START)) == 1
+    else:
+        assert any(payload.get("stage") == "Trash" for _, payload in wired._calls["update_person"])
+        assert len(tmp_db.recent_audit_rows(["reply_intent_disqualification"], WINDOW_START)) == 1
+
+
+@pytest.mark.parametrize("tags", [["realtor"], ["agent"], ["unsubscribe"], ["manual review"]])
+def test_run_backfill_retains_old_nonportal_tag_exclusions(wired, tmp_db, monkeypatch, tags):
+    pid = 990001
+    send = NOW - dt.timedelta(days=3)
+    _seed_audit_send(tmp_db, pid, send)
+    wired._calls["emails"] = [_email(send, inbound=False, body="synthetic follow-up"),
+                                _email(NOW - dt.timedelta(days=1), inbound=True, body="UNSUBSCRIBE")]
+    person = {"id": pid, "firstName": "Synthetic", "source": "Zillow", "stage": "Lead", "tags": tags}
+    monkeypatch.setattr(wired.fub, "get_person", lambda _: person)
+    assert bmr.run_backfill(wired, tmp_db, days=14, commit=True) == []
+    assert wired._calls["update_person"] == []

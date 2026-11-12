@@ -344,7 +344,7 @@ def run_backfill(engine, db, *, days: int, commit: bool,
                 continue
             with_inbound += 1
             person_detail = engine.fub.get_person(person_id)
-            if not person_detail or engine.is_excluded(person_detail):
+            if not person_detail or engine.is_excluded(person_detail, portal_exclusion=False):
                 continue
             outcome = process_person(
                 engine, db, person_detail, window_start, commit, messages=messages,

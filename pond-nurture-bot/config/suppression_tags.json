@@ -28,13 +28,34 @@
     "bot_suppress",
     "SOI",
     "landlord",
-    "lease listing inquiry"
+    "lease listing inquiry",
+    "zillow",
+    "realtor.com",
+    "realtor com",
+    "realtordotcom",
+    "realtor dot com"
   ],
   "excluded_sources": [
     "New Agent Inquiry",
     "Agent Scouting",
     "BOTM Newsletter",
     "Zillow Rentals",
-    "Lease Listing Inquiry"
+    "Lease Listing Inquiry",
+    "Zillow",
+    "Realtor.com",
+    "Realtor com",
+    "Realtordotcom",
+    "Realtor dot com"
+  ],
+  "portal_source_names": [
+    "zillow",
+    "realtor.com",
+    "realtor com",
+    "realtordotcom",
+    "realtor dot com"
+  ],
+  "portal_source_hosts": [
+    "zillow.com",
+    "realtor.com"
   ]
 }

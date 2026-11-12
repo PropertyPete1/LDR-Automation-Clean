@@ -73,6 +73,7 @@ from .mailbox import MailboxReplyReader, strip_quoted_reply
 from .addresses import property_address_or_blank
 from . import datecontext
 from .names import greeting_first_name
+from .portal import PORTAL_EXCLUDED, PORTAL_TAGS, has_portal_provenance, portal_email_gate, valid_person_id
 from .recruiting import (
     RECRUITING_AUDIT_ACTION,
     RECRUITING_TRACK,
@@ -232,29 +233,35 @@ class Rules:
         # ── Shared Suppression List: merge tags from the single source of truth ──
         suppression_json_path = os.path.join(os.path.dirname(path), "suppression_tags.json")
         shared_suppression_tags: List[str] = []
+        shared_excluded_sources: List[str] = []
         if os.path.exists(suppression_json_path):
             try:
                 with open(suppression_json_path, "r", encoding="utf-8") as sf:
                     shared_data = json.loads(sf.read())
-                    shared_suppression_tags = shared_data.get("tags", [])
+                if isinstance(shared_data, dict):
+                    tags = shared_data.get("tags")
+                    sources = shared_data.get("excluded_sources")
+                    if isinstance(tags, list) and tags and all(isinstance(t, str) for t in tags):
+                        shared_suppression_tags = tags
+                    if isinstance(sources, list) and sources and all(isinstance(s, str) for s in sources):
+                        shared_excluded_sources = [s.lower() for s in sources]
                 LOGGER.info("Loaded %d shared suppression tags from %s", len(shared_suppression_tags), suppression_json_path)
             except Exception as e:
                 LOGGER.warning("Failed to load shared suppression_tags.json: %s", e)
+        if not shared_suppression_tags:
+            shared_suppression_tags = [
+                "do not contact", "do not email", "do not nurture", "no ai email", "manual review",
+                "bounced", "unsubscribe", "unsubscribed", "email opt out", "opt out", "opt-out",
+                "opt-out-auto-trash", "dnc", "realtor", "agent", "spam", "annual nurture only",
+                "replied - paused", "not now - 30 day pause", "bot_suppress", "soi", "landlord",
+                "lease listing inquiry", "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com",
+            ]
         # Merge shared tags into excluded_tags (deduplicating, case-insensitive)
         yaml_excluded = data.get("excluded_tags", ["do not contact", "past client", "closed"])
-        merged_excluded = list({t.lower() for t in yaml_excluded + shared_suppression_tags})
+        merged_excluded = list({t.lower() for t in yaml_excluded + shared_suppression_tags + list(PORTAL_TAGS)})
         # Load excluded_sources from the shared suppression JSON
-        shared_excluded_sources: List[str] = []
-        if os.path.exists(suppression_json_path):
-            try:
-                with open(suppression_json_path, "r", encoding="utf-8") as sf2:
-                    shared_data2 = json.loads(sf2.read())
-                    shared_excluded_sources = [s.lower() for s in shared_data2.get("excluded_sources", [])]
-                LOGGER.info("Loaded %d excluded sources from %s", len(shared_excluded_sources), suppression_json_path)
-            except Exception as e:
-                LOGGER.warning("Failed to load excluded_sources from suppression_tags.json: %s", e)
         if not shared_excluded_sources:
-            shared_excluded_sources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry"]
+            shared_excluded_sources = ["new agent inquiry", "agent scouting", "botm newsletter", "zillow rentals", "lease listing inquiry", "zillow", "realtor.com", "realtor com", "realtordotcom", "realtor dot com"]
         return cls(
             stale_stages=data.get("stale_stages", ["Stale", "Cold", "Long Term Nurture"]),
             stale_tags=data.get("stale_tags", ["stale", "cold", "long-term"]),
@@ -1295,6 +1302,49 @@ class FollowUpBossClient:
     def get_events(self, person_id: int, limit: int = 100) -> List[dict]:
         data = self._request("GET", "/events", params={"personId": person_id, "limit": min(limit, 100)})
         return data.get("events", data.get("data", []))
+
+    def get_email_portal_event_page(self, person_id: int, *, next_cursor: Optional[str] = None,
+                                    offset: Optional[int] = None) -> object:
+        """Email authorization only: one unfiltered request, never generic retry.
+
+        Requests uses connect/read-inactivity timeouts, not a global wall-clock
+        bound. Reject an elapsed 15-second deadline after body/JSON parsing too;
+        synchronous parsing cannot itself be interrupted. Never log payloads,
+        URLs, identifiers or exception text; the scanner emits reason codes.
+        """
+        if type(person_id) is not int or valid_person_id(person_id) is None:
+            return None
+        if next_cursor is not None and (not isinstance(next_cursor, str) or not next_cursor.strip()):
+            return None
+        if offset is not None and (type(offset) is not int or not 0 < offset < 500):
+            return None
+        if next_cursor is not None and offset is not None:
+            return None
+        params = {"personId": person_id, "limit": 100}
+        if next_cursor is not None:
+            params["next"] = next_cursor
+        elif offset is not None:
+            params["offset"] = offset
+        response = None
+        started = time.monotonic()
+        try:
+            response = requests.request(
+                "GET", "https://api.followupboss.com/v1/events", params=params,
+                headers=self._headers(registered=True), auth=(self.settings.fub_api_key, ""),
+                timeout=15, allow_redirects=False,
+            )
+            if not 200 <= response.status_code < 300:
+                return None
+            data = response.json()
+            return data if time.monotonic() - started < 15 else None
+        except Exception:
+            return None
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
 
     def get_text_messages(self, person_id: int, limit: int = 100) -> List[dict]:
         data = self._request("GET", "/textMessages", params={"personId": person_id, "limit": min(limit, 100)})
@@ -2411,6 +2461,32 @@ class RuleEngine:
         self.mailbox = MailboxReplyReader.from_settings(settings)
         self._opted_out_cache: Optional[set] = None
 
+    def _send_contact_email(self, person_id: object, provenance: object, *args, **kwargs):
+        """The single hard gate for every contact-facing email in this runtime.
+
+        Read through the live client on every call, never the candidate cache.
+        A refusal is explicit and must be handled before any sent bookkeeping.
+        Staff-only email continues to use EmailSender directly.
+        """
+        # All seven lead callers supply the selected person directly or first in
+        # their explicit snapshot tuple. Later event IDs are not person IDs.
+        selected_person = (provenance[0] if isinstance(provenance, tuple) and provenance
+                           else provenance)
+        decision = portal_email_gate(person_id, self.fub.get_person, provenance,
+                                     selected_person=selected_person,
+                                     event_page_loader=getattr(self.fub, "get_email_portal_event_page", None))
+        if not decision.allowed:
+            self.db.log("portal_email_gate", self._portal_refusal_status(decision),
+                        valid_person_id(person_id), {"reason": decision.reason})
+            LOGGER.info("%s", decision.reason)
+            return decision
+        self.email.send(*args, **kwargs)
+        return decision
+
+    @staticmethod
+    def _portal_refusal_status(decision) -> str:
+        return "suppressed" if decision.reason == PORTAL_EXCLUDED else "deferred"
+
     def _fetch_local_spots(self, address: str) -> List[dict]:
         """Use the Manus Maps proxy (Google Places API) to find new/popular spots near the property address.
 
@@ -2516,6 +2592,9 @@ class RuleEngine:
     def process_congrats_candidate(self, person: dict) -> str:
         """Send a same-day congratulations email to a newly closed lead."""
         person_id = int(person["id"])
+        if has_portal_provenance(person):
+            self.db.log("closed_congrats", "suppressed", person_id, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
 
         # These two gates predate is_excluded() and this path never asked it:
         # a recruit is never a lead, and a recorded opt-out stops every track.
@@ -2590,7 +2669,7 @@ class RuleEngine:
             return "error"
         full_body = append_email_footer(email_body, self.rules)
         from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
-        self.email.send(
+        decision = self._send_contact_email(person_id, person,
             to_email=to_email,
             subject=subject,
             body=full_body,
@@ -2598,6 +2677,8 @@ class RuleEngine:
             reply_to=self.rules.owner_email,
             html_body=build_pond_email_html(email_body, self.rules),
         )
+        if not decision.allowed:
+            return self._portal_refusal_status(decision)
         # Log the note in FUB (kept: Peter wants a note under every lead for
         # every email). It now also says when the deal name was NOT used as an
         # address, so the note matches the email that actually went out.
@@ -2668,6 +2749,9 @@ class RuleEngine:
     def process_closed_drip_candidate(self, person: dict) -> str:
         """Process a single closed/past-client lead for Phase 3 quarterly drip."""
         person_id = int(person["id"])
+        if has_portal_provenance(person):
+            self.db.log("closed_drip", "suppressed", person_id, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
         stage = str(person.get("stage", ""))
 
         # Rule C: Lease listing silenced leads get TOTAL SILENCE — no Phase 3 drip
@@ -2782,7 +2866,7 @@ class RuleEngine:
             self.db.log("closed_drip", "suppressed", person_id, {"reason": "no valid email address"})
             return "suppressed"
 
-        self.email.send(
+        decision = self._send_contact_email(person_id, person,
             to_email,
             generated["subject"],
             append_email_footer(generated["email_body"], self.rules),
@@ -2790,6 +2874,8 @@ class RuleEngine:
             reply_to=self.rules.owner_email,
             html_body=build_pond_email_html(generated["email_body"], self.rules),
         )
+        if not decision.allowed:
+            return self._portal_refusal_status(decision)
         # Log a note in FUB
         try:
             note_body = (
@@ -2859,6 +2945,9 @@ class RuleEngine:
     def process_long_term_nurture_candidate(self, person: dict) -> str:
         """Process a single long-term nurture lead for the 60-day AI drip."""
         person_id = int(person["id"])
+        if has_portal_provenance(person):
+            self.db.log("long_term_nurture_drip", "suppressed", person_id, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
 
         # These two gates predate is_excluded() and this path never asked it:
         # a recruit is never a lead, and a recorded opt-out stops every track.
@@ -2941,7 +3030,7 @@ class RuleEngine:
             return "error"
 
         # Send the email
-        self.email.send(
+        decision = self._send_contact_email(person_id, person,
             to_email,
             subject,
             append_email_footer(email_body, self.rules),
@@ -2949,6 +3038,8 @@ class RuleEngine:
             reply_to=self.rules.owner_email,
             html_body=build_pond_email_html(email_body, self.rules),
         )
+        if not decision.allowed:
+            return self._portal_refusal_status(decision)
         # Log a FUB note
         try:
             fub_note = (
@@ -3052,6 +3143,9 @@ class RuleEngine:
         Returns: 'sent', 'dry_run_sent', 'skipped', 'suppressed', or 'error'
         """
         person_id = int(person["id"])
+        if has_portal_provenance(person):
+            self.db.log(SELLER_NURTURE_AUDIT_ACTION, "suppressed", person_id, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
 
         # ── Suppression checks ──
         # Seller track suppression: all standard tags EXCEPT 'dnc' (email-only track, DNC only blocks non-email)
@@ -3228,7 +3322,7 @@ class RuleEngine:
                 "to avoid a duplicate send", emails_sent + 1, person_id)
             return "skipped"
         try:
-            self.email.send(
+            decision = self._send_contact_email(person_id, person,
                 to_email,
                 subject,
                 seller_plaintext,
@@ -3237,6 +3331,9 @@ class RuleEngine:
                 html_body=seller_html,
                 bcc=bcc_list,
             )
+            if not decision.allowed:
+                self.db.release_seller_send_claim(person_id, emails_sent)
+                return self._portal_refusal_status(decision)
         except Exception:
             # The send raised, so nothing was delivered — release the claim so
             # this email is retried. (A hard crash keeps the claim on purpose.)
@@ -3560,7 +3657,7 @@ class RuleEngine:
                     break
             
             scanned_count += 1
-            if self.is_excluded(person):
+            if self.is_excluded(person, portal_exclusion=False):
                 continue
                 
             if cap and reassigned_count >= cap:
@@ -3760,7 +3857,7 @@ class RuleEngine:
             person_id = int(person["id"])
             
             # Skip if already excluded (trash, opt-out, suppressed, etc.)
-            if self.is_excluded(person):
+            if self.is_excluded(person, portal_exclusion=False):
                 continue
             
             # Skip leads already in Pond — those are handled by scan_pond_responses_for_intent
@@ -3929,7 +4026,7 @@ class RuleEngine:
 
         for person in candidates:
             person_id = int(person["id"])
-            if self.is_excluded(person):
+            if self.is_excluded(person, portal_exclusion=False):
                 continue
             try:
                 emails = self.fub.get_emails(person_id, limit=15)
@@ -4037,7 +4134,7 @@ class RuleEngine:
         reminders_by_agent: Dict[int, List[dict]] = {}
         _excluded_agent_ids: set = set(getattr(self.rules, "excluded_user_ids", []))
         for person in candidates:
-            if self.is_excluded(person) or person.get("assignedPondId"):
+            if self.is_excluded(person, portal_exclusion=False) or person.get("assignedPondId"):
                 continue
             assigned_user_id = person.get("assignedUserId")
             if not assigned_user_id:
@@ -4625,17 +4722,22 @@ class RuleEngine:
 
     def process_reengagement_candidate(self, person: dict) -> str:
         person_id = int(person["id"])
+        # Portal policy is email-only; preserve the existing optional SMS lane.
+        portal_email_only = not self.rules.pond_nurture_sms_enabled
+        if portal_email_only and has_portal_provenance(person):
+            self.db.log("pond_nurture", "suppressed", person_id, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
         # ── CHEAP LOCAL CHECKS FIRST (no API calls) ──────────────────────────────
         # These eliminate the majority of candidates without touching the FUB API,
         # keeping the run fast and well under the workflow timeout.
-        if self.is_excluded(person) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags):
+        if self.is_excluded(person, portal_exclusion=portal_email_only) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags):
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "excluded stage/tag or manual suppression tag"})
             return "suppressed"
         if not self.qualifies_for_reengagement(person):
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": "not in configured pond"})
             return "suppressed"
         # Source-based exclusion (cheap local check)
-        excluded_src = self._is_excluded_source(person)
+        excluded_src = self._is_excluded_source(person, portal_exclusion=portal_email_only)
         if excluded_src:
             self.db.log("pond_nurture", "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
             return "suppressed"
@@ -4837,11 +4939,12 @@ class RuleEngine:
             self.db.log("pond_nurture", "deferred", person_id, {"reason": "date_grounding_failed", "problems": exc.problems})
             return "deferred"
         sent_channels = []
+        decision = None
         if self.rules.email_outreach_enabled and emails and not self.has_any_tag(person, self.rules.email_opt_out_tags):
             from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
             to_email = emails[0].get("value") or emails[0].get("email")
             if to_email:
-                self.email.send(
+                decision = self._send_contact_email(person_id, person,
                     to_email,
                     generated["subject"],
                     append_email_footer(generated["email_body"], self.rules),
@@ -4849,7 +4952,10 @@ class RuleEngine:
                     reply_to=self.rules.owner_email,
                     html_body=build_pond_email_html(generated["email_body"], self.rules),
                 )
-                sent_channels.append("email")
+                if not decision.allowed and portal_email_only:
+                    return self._portal_refusal_status(decision)
+                if decision.allowed:
+                    sent_channels.append("email")
         if self.rules.pond_nurture_sms_enabled and not self.has_any_tag(person, self.rules.sms_opt_out_tags):
             phones = person.get("phones") or []
             to_number = None
@@ -4902,6 +5008,8 @@ class RuleEngine:
             if used_angle:
                 self.db.upsert_email_angle(person_id, used_angle)
             return _send_status
+        if decision is not None and not decision.allowed:
+            return self._portal_refusal_status(decision)
         self.db.log("pond_nurture", "suppressed", person_id, {"reason": "no eligible email channel or email outreach disabled"})
         return "suppressed"
 
@@ -5072,14 +5180,14 @@ class RuleEngine:
         if stage.lower() in {s.lower() for s in self.rules.stale_reassignment_excluded_stages}:
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "protected stage", "stage": stage})
             return "suppressed"
-        if self.is_excluded(person) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags) or person.get("assignedPondId"):
+        if self.is_excluded(person, portal_exclusion=False) or self.has_any_tag(person, self.rules.phase2_manual_suppression_tags) or person.get("assignedPondId"):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "excluded/manual suppression/already in pond"})
             return "suppressed"
         if not person.get("assignedUserId"):
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": "no assigned agent"})
             return "suppressed"
         # Source-based exclusion (cheap local check)
-        excluded_src = self._is_excluded_source(person)
+        excluded_src = self._is_excluded_source(person, portal_exclusion=False)
         if excluded_src:
             self.db.log("stale_agent_pond_reassignment", "suppressed", person_id, {"reason": f"excluded source: {excluded_src}"})
             return "suppressed"
@@ -6007,7 +6115,7 @@ class RuleEngine:
         try:
             pond_candidates = self.fub.get_people(assignedPondId=2)
             # Filter out excluded/unsubscribed leads
-            pond_eligible = [p for p in pond_candidates if not self.is_excluded(p)]
+            pond_eligible = [p for p in pond_candidates if not self.is_excluded(p, portal_exclusion=False)]
             if pond_eligible:
                 # Select up to 5 candidates (prioritizing recently active or random)
                 import random
@@ -6384,7 +6492,7 @@ class RuleEngine:
             if not agent_user or agent_user.get("status") != "Active":
                 _skip("inactive_agent")
                 continue
-            if self.is_excluded(person):
+            if self.is_excluded(person, portal_exclusion=False):
                 _skip("excluded_lead")
                 continue
 
@@ -6685,7 +6793,7 @@ class RuleEngine:
 
                 if watch is None:
                     # Baseline: record the pair so the NEXT change diffs.
-                    if not stub.get("assignedPondId") and not self.is_excluded(stub):
+                    if not stub.get("assignedPondId") and not self.is_excluded(stub, portal_exclusion=False):
                         self.db.upsert_assignment_watch(person_id, assigned)
                     continue
                 if int(watch["assigned_user_id"]) == assigned:
@@ -6704,7 +6812,7 @@ class RuleEngine:
                     reason = "assigned_to_peter"
                 elif assigned in excluded_agent_ids:
                     reason = "excluded_agent"
-                elif self.is_excluded(stub):
+                elif self.is_excluded(stub, portal_exclusion=False):
                     reason = "excluded_stage_or_tag"
                 elif person_id in active_timer_people:
                     reason = "timer_already_active"
@@ -6888,10 +6996,10 @@ class RuleEngine:
             person_id = int(person["id"])
             if person_id in active_timers or person_id in processed_timers:
                 continue
-            if self.is_excluded(person):
+            if self.is_excluded(person, portal_exclusion=False):
                 continue
             # Source-based exclusion (cheap local check)
-            excluded_src = self._is_excluded_source(person)
+            excluded_src = self._is_excluded_source(person, portal_exclusion=False)
             if excluded_src:
                 LOGGER.debug("Speed-to-lead: skipping person %s — excluded source: %s", person_id, excluded_src)
                 continue
@@ -7076,7 +7184,9 @@ class RuleEngine:
         except Exception as mail_exc:
             LOGGER.warning("Failed to send reassignment email to Peter for lead %s: %s", person_id, mail_exc)
 
-    def is_excluded(self, person: dict) -> bool:
+    def is_excluded(self, person: dict, *, portal_exclusion: bool = True) -> bool:
+        if portal_exclusion and has_portal_provenance(person):
+            return True
         # 0. A RECRUIT is never on a lead path. Contacts from a recruiting
         # source (rules.yaml recruiting_sources) are licensed agents answering
         # recruiting posts: every lead path that asks this gate — pond, drips,
@@ -7118,20 +7228,14 @@ class RuleEngine:
         }
         # Merge with rules.excluded_tags to be absolutely thorough
         all_excluded_tags = unsubscribe_tags.union({t.lower() for t in self.rules.excluded_tags})
+        if not portal_exclusion:
+            all_excluded_tags -= set(PORTAL_TAGS)
         return self.has_any_tag(person, all_excluded_tags)
 
-    def _is_excluded_source(self, person: dict) -> Optional[str]:
-        """Check if a lead's source is in the excluded_sources list (case-insensitive CONTAINS).
-
-        CONTAINS, not equality. FUB sources carry channel/campaign suffixes
-        ("Lease Listing Inquiry - Web", "Zillow Rentals - Austin"), and exact
-        matching silently let every one of those variants through.
-
-        Direction is load-bearing: `excluded in source`, never the reverse.
-        "zillow" does NOT contain "zillow rentals", so the legit Zillow buyer
-        source stays unsuppressed, while "Zillow Rentals - Austin" is caught.
-
-        Returns the matched source string or None."""
+    def _is_excluded_source(self, person: dict, *, portal_exclusion: bool = True) -> Optional[str]:
+        """Email portal evidence first; False retains only prepatch source rules."""
+        if portal_exclusion and has_portal_provenance(person):
+            return PORTAL_EXCLUDED
         source = str(person.get("source") or person.get("leadSource") or "").lower().strip()
         if not source:
             return None
@@ -7140,6 +7244,10 @@ class RuleEngine:
         # only excluded_sources).
         recruiting = getattr(self.rules, "recruiting_sources", None) or []
         for excluded in [*self.rules.excluded_sources, *recruiting]:
+            # Portal entries use semantic matching above, not raw substring.
+            # This also prevents aliases leaking into portal-independent lanes.
+            if excluded.lower() in PORTAL_TAGS:
+                continue
             if excluded and excluded in source:
                 return person.get("source") or person.get("leadSource") or source
         return None
@@ -7166,7 +7274,7 @@ class RuleEngine:
     #: Tags that describe what a recruit IS — never a reason to skip one.
     _RECRUIT_IDENTITY_TAGS = frozenset({"realtor", "agent"})
 
-    def recruiting_suppressed(self, person: dict) -> Optional[str]:
+    def recruiting_suppressed(self, person: dict, *, portal_exclusion: bool = True) -> Optional[str]:
         """Why the recruiting track must not email this recruit, or None.
 
         is_excluded() refuses every recruit by design, so the track asks this
@@ -7176,6 +7284,8 @@ class RuleEngine:
         silence and the reply pause — except the "realtor"/"agent" tags,
         which on a recruit are a description, not an objection.
         """
+        if portal_exclusion and has_portal_provenance(person):
+            return PORTAL_EXCLUDED
         if self._is_opted_out(person):
             return "opted out (ledger)"
         if (person.get("unsubscribed") or person.get("emailOptOut")
@@ -7195,6 +7305,8 @@ class RuleEngine:
             "manual review", "no ai email", "spam", "replied - paused",
         } | {t.lower() for t in self.rules.excluded_tags}
         suppress -= self._RECRUIT_IDENTITY_TAGS
+        if not portal_exclusion:
+            suppress -= set(PORTAL_TAGS)
         if self.has_any_tag(person, suppress):
             return "suppression tag"
         soi = self._is_soi_silenced(person)
@@ -7205,6 +7317,8 @@ class RuleEngine:
     def _never_a_lead_email(self, person: dict) -> Optional[str]:
         """The two refusals every lead email owes, for the paths that do not
         ask is_excluded(): a recruit, and a recorded opt-out. None = neither."""
+        if has_portal_provenance(person):
+            return PORTAL_EXCLUDED
         recruit = self.recruiting_source(person)
         if recruit:
             return f"recruiting source: {recruit}"
@@ -7221,8 +7335,8 @@ class RuleEngine:
         — trashed and written to the opt-out ledger.
         """
         if self.recruiting_source(person):
-            return self.recruiting_suppressed(person) is not None
-        return self.is_excluded(person)
+            return self.recruiting_suppressed(person, portal_exclusion=False) is not None
+        return self.is_excluded(person, portal_exclusion=False)
 
     def _is_soi_silenced(self, person: dict) -> Optional[str]:
         """Check if a lead is SOI-silenced (total silence from ALL automation).
@@ -7368,7 +7482,7 @@ class RuleEngine:
         valid_pond_ids = {int(pid) for pid in self.rules.pond_ids}
         return int(assigned_pond_id) in valid_pond_ids
 
-    def send_instant_welcome_email(self, person_id: int) -> str:
+    def send_instant_welcome_email(self, person_id: int, already_loaded_provenance: object = None) -> str:
         """Immediately generates and sends a personalized welcome email to a newly created lead."""
         try:
             person = self.fub.get_person(person_id)
@@ -7376,6 +7490,10 @@ class RuleEngine:
                 LOGGER.warning("Could not fetch FUB details for welcome email: lead %s not found", person_id)
                 return "skipped"
                 
+            if has_portal_provenance((person, already_loaded_provenance)):
+                self.db.log("instant_welcome_email", "suppressed", person_id,
+                            {"reason": PORTAL_EXCLUDED})
+                return "suppressed"
             if self.is_excluded(person):
                 LOGGER.info("Welcome email skipped for lead %s: lead is excluded (trash/active/under-contract/unsubscribed)", person_id)
                 self.db.log("instant_welcome_email", "skipped", person_id, {"reason": "excluded stage, tag, or unsubscribe"})
@@ -7404,7 +7522,7 @@ class RuleEngine:
             
             from_display = f"Lifestyle Design Realty <{self.rules.team_email}>"
             if to_email:
-                self.email.send(
+                decision = self._send_contact_email(person_id, (person, already_loaded_provenance),
                     to_email,
                     generated["subject"],
                     append_email_footer(generated["email_body"], self.rules),
@@ -7413,6 +7531,8 @@ class RuleEngine:
                     html_body=build_pond_email_html(generated["email_body"], self.rules),
                     bcc=[self.rules.owner_email] if to_email.lower() != self.rules.owner_email.lower() else [],
                 )
+                if not decision.allowed:
+                    return self._portal_refusal_status(decision)
                 # Log a note in FUB so agents can see the welcome email went out
                 # Peter requested notes on EVERYTHING to lead by example
                 try:
@@ -7813,6 +7933,9 @@ class RuleEngine:
     def _send_recruiting_email(self, person: dict, row: dict, now: dt.datetime) -> str:
         """One recruiting email to one recruit. 'sent', 'dry_run_sent', 'suppressed' or 'skipped'."""
         pid = int(person["id"])
+        if has_portal_provenance(person):
+            self.db.log(RECRUITING_AUDIT_ACTION, "suppressed", pid, {"reason": PORTAL_EXCLUDED})
+            return "suppressed"
         source = self.recruiting_source(person)
         if not source:
             # The source changed in FUB since enrollment: not a recruit any more.
@@ -7849,13 +7972,16 @@ class RuleEngine:
                         {"reason": f"recruiting email {email_number} already claimed"})
             return "skipped"
         try:
-            self.email.send(
+            decision = self._send_contact_email(pid, (person, {"source": row.get("source")}),
                 to_email,
                 subject,
                 full_body,
                 from_email=f"{self.rules.peter_name} <{self.rules.owner_email}>",
                 reply_to=self.rules.owner_email,
             )
+            if not decision.allowed:
+                self.db.release_recruiting_send_claim(pid, email_number)
+                return self._portal_refusal_status(decision)
         except Exception:
             self.db.release_recruiting_send_claim(pid, email_number)
             raise
@@ -9000,7 +9126,8 @@ def create_app() -> FastAPI:
                                                 **verdict.details()})
 
                 # Queue immediate welcome email background task
-                background_tasks.add_task(engine.send_instant_welcome_email, int(person_id))
+                background_tasks.add_task(engine.send_instant_welcome_email, int(person_id),
+                                          (person, payload.data))
         elif payload.event in {"callsCreated", "emailsCreated", "textMessagesCreated", "notesCreated", "tasksCreated", "peopleUpdated"}:
             for person_id in payload.resourceIds:
                 # For notesCreated: skip canceling if the note was written by the automation

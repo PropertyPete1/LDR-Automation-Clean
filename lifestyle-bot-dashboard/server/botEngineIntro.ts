@@ -251,6 +251,7 @@ export async function sendEngineIntroEmail(botSlug: string): Promise<boolean> {
   const recipients = [PETER_EMAIL, STEVEN_EMAIL, agentEmail].filter((e, i, arr) => arr.indexOf(e) === i);
 
   await sendEmail({
+    kind: "internal",
     to: recipients,
     subject,
     html,

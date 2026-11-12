@@ -140,6 +140,10 @@ export async function runEngineForAgent(botSlug: string): Promise<{
       const skipCheck = await shouldSkipLead(person);
       if (skipCheck.skip) {
         skipped++;
+        if (skipCheck.reason === "PORTAL_SOURCE") {
+          console.info("PORTAL_SOURCE");
+          continue;
+        }
         await postFubNote(
           personId,
           `[${agent.botName}] Skipped automated follow-up. Reason: ${skipCheck.reason ?? "Notes indicate no follow-up needed"}`
@@ -156,29 +160,41 @@ export async function runEngineForAgent(botSlug: string): Promise<{
       const staleDays = daysStale(person);
       const stage = person.stage ?? "Lead";
       const leadEmail = extractEmail(person);
+      // No recipient means no delivery: preserve retry eligibility and sent records.
+      if (typeof leadEmail !== "string" || !leadEmail.trim()) {
+        skipped++;
+        continue;
+      }
 
       // Generate highly intelligent, context-aware follow-up message
-      const { body: message, subject: emailSubject } = await generateFollowUpMessage({
+      const { body: message, subject: emailSubject, recordDelivery } = await generateFollowUpMessage({
         agentFirstName: agent.agentFirstName,
         agentLastName: agent.agentLastName,
         leadFirstName: person.firstName ?? null,
         daysStale: staleDays,
         stage,
         person, // pass full person for notes context
+        deferSentRecord: true,
       });
 
       // Send email to lead from agent's email address
-      if (leadEmail) {
-        await sendLeadFollowUpEmail({
-          agentEmail: agent.agentEmail,
-          agentFirstName: agent.agentFirstName,
-          agentLastName: agent.agentLastName,
-          leadEmail,
-          leadFirstName: person.firstName ?? null,
-          messageBody: message,
-          subject: emailSubject,
-        });
+      const delivery = await sendLeadFollowUpEmail({
+        personId,
+        provenance: person,
+        agentEmail: agent.agentEmail,
+        agentFirstName: agent.agentFirstName,
+        agentLastName: agent.agentLastName,
+        leadEmail,
+        leadFirstName: person.firstName ?? null,
+        messageBody: message,
+        subject: emailSubject,
+      });
+      if (!delivery.sent) {
+        skipped++;
+        continue;
       }
+
+      await recordDelivery?.();
 
       // Log FUB note
       await postFubNote(
@@ -239,7 +255,8 @@ export async function sendEngineClockinForAgent(botSlug: string): Promise<void> 
   try {
     const alreadySent = await getSmsSentTodayIds();
     const leads = await fetchLeadsForAgent(agent.fubUserId);
-    leadsQueued = leads.filter(p => !alreadySent.has(p.id) && isEligible(p)).length;
+    // Internal clock-in metrics retain prepatch eligibility, not email-only portal exclusions.
+    leadsQueued = leads.filter(p => !alreadySent.has(p.id) && isEligible(p, false)).length;
   } catch { leadsQueued = 0; }
 
   const pqName = agent.powerQueueName ?? agent.agentFirstName;

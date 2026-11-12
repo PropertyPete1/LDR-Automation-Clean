@@ -60,6 +60,7 @@ function fubPerson(overrides: Record<string, unknown> = {}) {
   return {
     id: 999,
     firstName: "Jamie",
+    source: "", // explicit synthetic current source; tags-only is now fail-closed
     tags: ["Annual Nurture Only"],
     emails: [{ value: "jamie@example.com" }],
     ...overrides,
@@ -72,7 +73,8 @@ function primeFub(person: Record<string, unknown>) {
     ok: true,
     status: 200,
     headers: { get: () => null },
-    json: async () => (init?.method === "POST" ? { id: 1 } : person),
+    json: async () => (init?.method === "POST" ? { id: 1 } : new URL(url).pathname === "/v1/events"
+      ? { events: [], _metadata: { collection: "events", total: 0 } } : person),
   }));
 }
 

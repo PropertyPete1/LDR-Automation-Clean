@@ -21,6 +21,8 @@ import json
 
 import pytest
 
+from portal_history_fakes import complete_history
+
 from fub_automation import recruiting as rt
 from fub_automation import telemetry
 from fub_automation.mailbox import strip_quoted_reply
@@ -66,6 +68,7 @@ def track(engine, monkeypatch):
 
     monkeypatch.setattr(engine.fub, "get_people", get_people)
     monkeypatch.setattr(engine.fub, "get_person", lambda pid: book.get(int(pid)))
+    monkeypatch.setattr(engine.fub, "get_email_portal_event_page", complete_history)
     engine.sent = sent
     engine.book = book
     return engine
@@ -108,7 +111,7 @@ def test_the_central_gate_refuses_a_recruit_however_clean(engine):
     recruit = person(7, "Agent Scouting")
     assert engine.is_excluded(recruit) is True
     assert engine._is_excluded_source(recruit)
-    assert engine.is_excluded(person(8, "Zillow")) is False
+    assert engine.is_excluded(person(8, "Zillow")) is True
 
 
 def test_pond_nurture_never_emails_a_recruit(track):
@@ -146,7 +149,7 @@ def test_speed_to_lead_never_arms_a_timer_for_a_recruit(track, tmp_db):
     track.book[7] = person(7, "Agent Scouting", created_days_ago=0.01)
     # The control is a lead Peter added and assigned — the only kind the
     # speed-to-lead gate (2026-09-27) arms for.
-    track.book[8] = person(8, "Zillow", created_days_ago=0.01,
+    track.book[8] = person(8, "Website Form", created_days_ago=0.01,
                            updated=(NOW - dt.timedelta(days=0.01)).isoformat(),
                            createdVia="Manually", createdById=2, updatedById=2)
     track.poll_new_leads()

@@ -1,3 +1,4 @@
+import { withCompleteHistory } from "./portalHistoryTestSupport";
 /**
  * bugfix-behavioral.test.ts — Behavioral regression tests for:
  *   Bug 1: Lead-facing emails must NEVER contain a bot persona name (e.g. "Rue").
@@ -210,15 +211,21 @@ describe("Bug 1 (behavioral): sendLeadFollowUpEmail rendered output contains age
   it("sendLeadFollowUpEmail for Stefanie produces From/subject/signature with 'Stefanie', never 'Rue'", async () => {
     const { sendLeadFollowUpEmail } = await import("./botHelpers");
 
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(withCompleteHistory({
+      ok: true, status: 200, json: async () => ({ id: 990001, source: "Website Form" }),
+    })));
     await sendLeadFollowUpEmail({
+      personId: 990001,
+      provenance: { source: "Website Form" },
       agentEmail: "Stefanie@lifestyledesignrealty.com",
       agentFirstName: "Stefanie",
       agentLastName: "Graham",
-      leadEmail: "lead@example.com",
-      leadFirstName: "Maria",
-      messageBody: "Hey Maria,\nDid you get a chance to look at those listings?\nStefanie",
-      subject: "Those Alamo Heights listings — Stefanie Graham",
+      leadEmail: "fixture@example.invalid",
+      leadFirstName: null,
+      messageBody: "Synthetic body",
+      subject: "Synthetic subject — Stefanie Graham",
     });
+    vi.unstubAllGlobals();
 
     expect(capturedEmails.length).toBe(1);
     const email = capturedEmails[0];

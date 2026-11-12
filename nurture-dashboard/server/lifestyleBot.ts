@@ -250,7 +250,7 @@ async function getPondLeadsForBot(peterUserId: number, alreadySentToday: Set<num
     const stage = (p.stage || "").toLowerCase().trim();
     if (stage && SKIP_STAGES.has(stage)) return false;
     // Skip leads tagged with any shared suppression tag (single source of truth)
-    const suppressionTags = getSharedSuppressionTags();
+    const suppressionTags = getSharedSuppressionTags(false); // SMS drafts retain baseline policy
     const tags: any[] = p.tags || [];
     const hasSuppressTag = tags.some((t: any) => {
       const name = (t.name || "").toLowerCase();
@@ -1045,7 +1045,7 @@ export async function sendBotClockinEmail(): Promise<ClockinEmailResult> {
         const stage = (p.stage || "").toLowerCase().trim();
         if (stage && SKIP_STAGES.has(stage)) return false;
         const tags: any[] = p.tags || [];
-        const suppressionTags2 = getSharedSuppressionTags();
+        const suppressionTags2 = getSharedSuppressionTags(false); // internal preview retains baseline policy
         const hasSuppressTag2 = tags.some((t: any) => {
           const name = (t.name || "").toLowerCase();
           return suppressionTags2.some(st => name.includes(st));

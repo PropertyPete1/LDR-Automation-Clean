@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from portal_history_fakes import complete_history
+
 from fub_automation import telemetry as tel
 
 CT = ZoneInfo("America/Chicago")
@@ -638,6 +640,8 @@ def live_engine(m, engine, monkeypatch):
     monkeypatch.setattr(engine.content, "_llm_call",
                         lambda **kw: '{"subject": "Your home", "email_body": "Hey there."}')
     monkeypatch.setattr(engine.fub, "add_note", lambda *a, **k: None)
+    monkeypatch.setattr(engine.fub, "get_person", lambda pid: {"id": pid, "source": "", "tags": []})
+    monkeypatch.setattr(engine.fub, "get_email_portal_event_page", complete_history)
     return engine
 
 

@@ -32,11 +32,25 @@ import {
   HARD_OPT_OUT_TAGS,
 } from "./botHelpers";
 import { isLeadSuppressed } from "./compliance";
+import { hasPortalProvenance, inspectPortalProvenance, isUsablePortalPerson, portalEmailGate, type PortalProvenance } from "./portalEmailGate";
 
 const FUB_BASE = "https://api.followupboss.com/v1";
 const FUB_REQUEST_TIMEOUT_MS = 15_000;
 const MAX_EMAILS_PER_RUN = 20;
 const DAYS_BETWEEN_EMAILS = 365;
+
+/** Enrollment.source is the ENROLLING SYSTEM, not a persisted acquisition source.
+ * Only explicitly supplied source provenance is evidence; normal due rows do not
+ * store historical origin, and triggerSnippet is never used to reconstruct it. */
+function enrollmentProvenance(lead: PortalProvenance): PortalProvenance | null {
+  const evidence: PortalProvenance = {};
+  for (const field of ["originalSource", "eventSource", "original", "event",
+    "originalProvenance", "eventProvenance", "provenance", "events"]) {
+    const descriptor = Object.getOwnPropertyDescriptor(lead, field);
+    if (descriptor) Object.defineProperty(evidence, field, descriptor);
+  }
+  return Object.getOwnPropertyNames(evidence).length ? evidence : null;
+}
 
 // ── Suppression gate (audit P0-2) ────────────────────────────────────────────
 // Annual nurture honours the SAME suppression set as every other sender. The
@@ -56,6 +70,12 @@ export async function annualSuppressionVerdict(
   fubData: any,
   lowerTags: string[]
 ): Promise<SuppressionVerdict | null> {
+  if (hasPortalProvenance(fubData)) {
+    return { reason: "PORTAL_SOURCE_EXCLUDED", deactivate: false };
+  }
+  if (!inspectPortalProvenance(fubData).metadataUsable) {
+    return { reason: "PORTAL_PROVENANCE_UNUSABLE", deactivate: false };
+  }
   // 1. The compliance registry — the strongest signal we own.
   if (await isLeadSuppressed(personId)) {
     return { reason: "compliance registry (suppressedLeads)", deactivate: true };
@@ -288,17 +308,28 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
       try {
         // Verify lead still exists in FUB and has the tag
         const fubData = await fubGet(`/people/${lead.personId}`);
-        if (!fubData || !fubData.id) {
+        const enrollmentEvidence = enrollmentProvenance(lead);
+        if (hasPortalProvenance(enrollmentEvidence) || hasPortalProvenance(fubData)) {
           result.skipped++;
-          result.details.push(`SKIPPED (not in FUB): ${lead.leadName}`);
-          // Deactivate this record
-          await db.update(annualNurtureLeads)
-            .set({ active: false })
-            .where(eq(annualNurtureLeads.id, lead.id));
+          result.details.push("PORTAL_SOURCE_EXCLUDED");
+          console.info("PORTAL_SOURCE_EXCLUDED");
+          continue;
+        }
+        if (!isUsablePortalPerson(fubData, lead.personId)) {
+          result.skipped++;
+          result.details.push("PORTAL_FRESH_PERSON_UNUSABLE");
+          console.info("PORTAL_FRESH_PERSON_UNUSABLE");
           continue;
         }
 
-        const tags = (fubData.tags ?? []).map((t: string) => t.toLowerCase());
+        if (!inspectPortalProvenance(enrollmentEvidence).metadataUsable) {
+          result.skipped++;
+          result.details.push("PORTAL_PROVENANCE_UNUSABLE");
+          console.info("PORTAL_PROVENANCE_UNUSABLE");
+          continue;
+        }
+        const tags = (fubData.tags ?? []).map((t: string | { name: string }) =>
+          (typeof t === "string" ? t : t.name).toLowerCase());
         if (!tags.includes("annual nurture only")) {
           result.skipped++;
           result.details.push(`SKIPPED (tag removed): ${lead.leadName}`);
@@ -361,6 +392,12 @@ export async function runAnnualNurture(): Promise<AnnualNurtureResult> {
         // Send email — always with the standard compliance footer
         // (unsubscribe instruction + TREC IABS/CPN links + postal address),
         // the same footer every Python sender ships.
+        const gate = await portalEmailGate(lead.personId, { originalProvenance: fubData, eventProvenance: enrollmentEvidence });
+        if (!gate.allowed) {
+          result.skipped++;
+          result.details.push(gate.reason);
+          continue;
+        }
         await transporter.sendMail({
           from: `"Peter Allen - Lifestyle Design Realty" <${fromEmail}>`,
           to: leadEmail,

@@ -40,10 +40,10 @@ def poll_gate_verdict(engine, person: dict, created_cutoff: dt.datetime) -> str:
     created = parse_fub_datetime(person.get("created"))
     if not created or created < created_cutoff:
         return "GATE createdAfter-24h: not a recently created lead — invisible to polling"
-    if engine.is_excluded(person):
+    if engine.is_excluded(person, portal_exclusion=False):
         return "GATE is_excluded: stage/tag exclusion"
-    if engine._is_excluded_source(person):
-        return f"GATE excluded source: {engine._is_excluded_source(person)}"
+    if engine._is_excluded_source(person, portal_exclusion=False):
+        return f"GATE excluded source: {engine._is_excluded_source(person, portal_exclusion=False)}"
     if engine._is_soi_silenced(person):
         return "GATE SOI silenced"
     assigned = person.get("assignedUserId")
