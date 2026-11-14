@@ -1,5 +1,12 @@
 [
   {
+    "ts": "2026-11-14T06:03:39Z",
+    "type": "needs_reply",
+    "contact_name": "Tay Thornton",
+    "detail": "replied by email — awaiting a human",
+    "track": "recruiting"
+  },
+  {
     "ts": "2026-11-13T20:01:31Z",
     "type": "sent",
     "contact_name": "Lang Seaton",
@@ -592,11 +599,5 @@
     "type": "sent",
     "contact_name": "Ailine Gomez",
     "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:24:43Z",
-    "type": "sent",
-    "contact_name": "Armstrong_walker",
-    "detail": "pond nurture email — Austin"
   }
 ]
