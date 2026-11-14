@@ -1,603 +1,602 @@
 [
   {
-    "ts": "2026-11-14T06:03:39Z",
-    "type": "needs_reply",
-    "contact_name": "Tay Thornton",
-    "detail": "replied by email — awaiting a human",
-    "track": "recruiting"
-  },
-  {
-    "ts": "2026-11-13T20:01:31Z",
+    "ts": "2026-11-14T18:47:11Z",
     "type": "sent",
-    "contact_name": "Lang Seaton",
+    "contact_name": "Frida Itzel Mendoza",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:58:52Z",
+    "ts": "2026-11-14T18:47:05Z",
     "type": "sent",
-    "contact_name": "Ulisses Martinez",
+    "contact_name": "Stephanie Samon",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:58:03Z",
+    "ts": "2026-11-14T18:46:57Z",
     "type": "sent",
-    "contact_name": "No name Windrow",
+    "contact_name": "Minah Simone",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:57:55Z",
+    "ts": "2026-11-14T18:46:50Z",
     "type": "sent",
-    "contact_name": "Carlos Cordero",
+    "contact_name": "Silvia A Mendez",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:57:39Z",
+    "ts": "2026-11-14T18:46:44Z",
     "type": "sent",
-    "contact_name": "Adelman Martinez",
+    "contact_name": "Virginia Escamilla",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:57:24Z",
+    "ts": "2026-11-14T18:46:36Z",
     "type": "sent",
-    "contact_name": "Kayla Holub",
+    "contact_name": "Prithvi Gosala",
+    "detail": "pond nurture email — Austin"
+  },
+  {
+    "ts": "2026-11-14T18:46:28Z",
+    "type": "sent",
+    "contact_name": "Jennifer Santiago-Branch",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:46:02Z",
+    "type": "sent",
+    "contact_name": "Jeané Murphy",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:45:25Z",
+    "type": "sent",
+    "contact_name": "Rozella Puente",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:45:14Z",
+    "type": "sent",
+    "contact_name": "John Untalan",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:45:07Z",
+    "type": "sent",
+    "contact_name": "Miguel Delafuente",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:59Z",
+    "type": "sent",
+    "contact_name": "Mer Ced",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:52Z",
+    "type": "sent",
+    "contact_name": "Ramzan Lakhani",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:45Z",
+    "type": "sent",
+    "contact_name": "Robert Rush",
+    "detail": "pond nurture email — Converse"
+  },
+  {
+    "ts": "2026-11-14T18:44:36Z",
+    "type": "sent",
+    "contact_name": "Larissa Ortiz",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:27Z",
+    "type": "sent",
+    "contact_name": "Aaminah Osman",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:18Z",
+    "type": "sent",
+    "contact_name": "Emily DeLuna",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:11Z",
+    "type": "sent",
+    "contact_name": "Mukesh Reddy",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:44:02Z",
+    "type": "sent",
+    "contact_name": "Ana Buia",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:50Z",
+    "type": "sent",
+    "contact_name": "Bryanna Chandler",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:43Z",
+    "type": "sent",
+    "contact_name": "Jason Patteson",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:36Z",
+    "type": "sent",
+    "contact_name": "Nicole Digiuseppe",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:29Z",
+    "type": "sent",
+    "contact_name": "Wilson Saberon",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:22Z",
+    "type": "sent",
+    "contact_name": "Eriusel Olmos",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:15Z",
+    "type": "sent",
+    "contact_name": "Jeremy Thompson",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:43:07Z",
+    "type": "sent",
+    "contact_name": "Tj M",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:59Z",
+    "type": "sent",
+    "contact_name": "Roberto Hudson",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:50Z",
+    "type": "sent",
+    "contact_name": "Ethan Prescott",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:43Z",
+    "type": "sent",
+    "contact_name": "Serena Ortega",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:36Z",
+    "type": "sent",
+    "contact_name": "Rodolfo Loera",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:28Z",
+    "type": "sent",
+    "contact_name": "Cristina Perez",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:21Z",
+    "type": "sent",
+    "contact_name": "Melissa De Leon",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:07Z",
+    "type": "sent",
+    "contact_name": "Ashley Mwchaley",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:42:01Z",
+    "type": "sent",
+    "contact_name": "Mike Gray",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:55Z",
+    "type": "sent",
+    "contact_name": "Suzette Santiago",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:47Z",
+    "type": "sent",
+    "contact_name": "Ally Bergeron",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:38Z",
+    "type": "sent",
+    "contact_name": "LexusLex Espinosa",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:31Z",
+    "type": "sent",
+    "contact_name": "Juan Castro",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:25Z",
+    "type": "sent",
+    "contact_name": "Saul Fortes",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:18Z",
+    "type": "sent",
+    "contact_name": "Robert Carpenter",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:11Z",
+    "type": "sent",
+    "contact_name": "Katie Palmer",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:41:04Z",
+    "type": "sent",
+    "contact_name": "Nithyanjali Reddy",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:53Z",
+    "type": "sent",
+    "contact_name": "Jennifer Watts",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:46Z",
+    "type": "sent",
+    "contact_name": "Karen Jiménez",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:40Z",
+    "type": "sent",
+    "contact_name": "Zhai Smith",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:34Z",
+    "type": "sent",
+    "contact_name": "Angie Alfa",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:19Z",
+    "type": "sent",
+    "contact_name": "Shawn Dunn",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:11Z",
+    "type": "sent",
+    "contact_name": "Julius Williams-Cox",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:40:05Z",
+    "type": "sent",
+    "contact_name": "Casey Espinola Ramirez",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:56Z",
+    "type": "sent",
+    "contact_name": "Josie B Valentine ♛",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:50Z",
+    "type": "sent",
+    "contact_name": "Shruthi Kasala",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:42Z",
+    "type": "sent",
+    "contact_name": "Jackie Maldo",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:35Z",
+    "type": "sent",
+    "contact_name": "Lupe Campos",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:29Z",
+    "type": "sent",
+    "contact_name": "Colleen Kipferl",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:20Z",
+    "type": "sent",
+    "contact_name": "Melissa Portales",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:14Z",
+    "type": "sent",
+    "contact_name": "Donna Day",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:07Z",
+    "type": "sent",
+    "contact_name": "Julie Green-Keenan",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:39:00Z",
+    "type": "sent",
+    "contact_name": "Jose Blanco",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:53Z",
+    "type": "sent",
+    "contact_name": "Drew Vasquez",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:46Z",
+    "type": "sent",
+    "contact_name": "Monica Silva",
+    "detail": "pond nurture email — Austin"
+  },
+  {
+    "ts": "2026-11-14T18:38:38Z",
+    "type": "sent",
+    "contact_name": "Barbara Echevarria",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:31Z",
+    "type": "sent",
+    "contact_name": "Melanie Cervantes",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:23Z",
+    "type": "sent",
+    "contact_name": "Cynthia Maria Garza E.",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:15Z",
+    "type": "sent",
+    "contact_name": "Karlie Sanderson",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:09Z",
+    "type": "sent",
+    "contact_name": "Hallary Sandoval",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:38:01Z",
+    "type": "sent",
+    "contact_name": "Kris Mejias",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:53Z",
+    "type": "sent",
+    "contact_name": "Fidel Moreno",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:46Z",
+    "type": "sent",
+    "contact_name": "Sabrina",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:39Z",
+    "type": "sent",
+    "contact_name": "Kate Lewis",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:32Z",
+    "type": "sent",
+    "contact_name": "Jaylan Trowell",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:25Z",
+    "type": "sent",
+    "contact_name": "Elaina Sconiers",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:18Z",
+    "type": "sent",
+    "contact_name": "Mark Olguin",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:10Z",
+    "type": "sent",
+    "contact_name": "Peter",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:37:03Z",
+    "type": "sent",
+    "contact_name": "Angelita Aragon",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:48Z",
+    "type": "sent",
+    "contact_name": "Alexander",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:41Z",
+    "type": "sent",
+    "contact_name": "Madison Rudy",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:34Z",
+    "type": "sent",
+    "contact_name": "Adalih Martinez",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:27Z",
+    "type": "sent",
+    "contact_name": "Casandra Pamela Sanchez Muñoz",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:19Z",
+    "type": "sent",
+    "contact_name": "Haille Lane",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:10Z",
+    "type": "sent",
+    "contact_name": "Samantha Holindrake",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:36:03Z",
+    "type": "sent",
+    "contact_name": "Ana Marajo",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:35:56Z",
+    "type": "sent",
+    "contact_name": "Mrs Adamcik",
+    "detail": "pond nurture email — San Antonio"
+  },
+  {
+    "ts": "2026-11-14T18:35:42Z",
+    "type": "sent",
+    "contact_name": "Shawn Sartin",
     "detail": "pond nurture email — New Braunfels"
   },
   {
-    "ts": "2026-11-13T19:57:04Z",
+    "ts": "2026-11-14T18:35:32Z",
     "type": "sent",
-    "contact_name": "Kristi Wyatt",
+    "contact_name": "Heather Kiefer",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:49:36Z",
+    "ts": "2026-11-14T18:35:20Z",
     "type": "sent",
-    "contact_name": "Irma Majano",
+    "contact_name": "David Chin",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-13T19:49:23Z",
+    "ts": "2026-11-14T18:35:12Z",
     "type": "sent",
-    "contact_name": "Fransheska Fuentes",
+    "contact_name": "William Moreno",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:37:34Z",
+    "ts": "2026-11-14T18:35:05Z",
     "type": "sent",
-    "contact_name": "Tony Dias",
+    "contact_name": "Alyssa Tristan",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:37:25Z",
+    "ts": "2026-11-14T18:34:59Z",
     "type": "sent",
-    "contact_name": "Amanda De Jesus",
+    "contact_name": "Katia Lui",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:37:17Z",
+    "ts": "2026-11-14T18:34:52Z",
     "type": "sent",
-    "contact_name": "Gina Barbosa",
+    "contact_name": "Melissa Osen",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:37:10Z",
+    "ts": "2026-11-14T18:34:45Z",
     "type": "sent",
-    "contact_name": "Bryce Duncan",
+    "contact_name": "Marissa Monday",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:36:58Z",
+    "ts": "2026-11-14T18:34:38Z",
     "type": "sent",
-    "contact_name": "Ian Locke",
+    "contact_name": "Colleen Trevino-Chavez",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:36:50Z",
+    "ts": "2026-11-14T18:34:29Z",
     "type": "sent",
-    "contact_name": "Chandler Bruns",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:43Z",
-    "type": "sent",
-    "contact_name": "Sebastien Goillandeau",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:36Z",
-    "type": "sent",
-    "contact_name": "Heba Al Gebaly",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:29Z",
-    "type": "sent",
-    "contact_name": "Misty Pierce",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:22Z",
-    "type": "sent",
-    "contact_name": "Curtis Simpson",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:14Z",
-    "type": "sent",
-    "contact_name": "Soma Tanveer",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:36:07Z",
-    "type": "sent",
-    "contact_name": "Dael Eller",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:59Z",
-    "type": "sent",
-    "contact_name": "Luis Carlos",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:49Z",
-    "type": "sent",
-    "contact_name": "Ronke Lee",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:41Z",
-    "type": "sent",
-    "contact_name": "Shirley Tey",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:34Z",
-    "type": "sent",
-    "contact_name": "Rita Nichols",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:26Z",
-    "type": "sent",
-    "contact_name": "Lou Briseno",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:19Z",
-    "type": "sent",
-    "contact_name": "Jazlyn Lopez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:12Z",
-    "type": "sent",
-    "contact_name": "Tammi",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:35:05Z",
-    "type": "sent",
-    "contact_name": "Rebecca Loyola",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:58Z",
-    "type": "sent",
-    "contact_name": "Holly Richardson",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:51Z",
-    "type": "sent",
-    "contact_name": "Pragya Tak",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:36Z",
-    "type": "sent",
-    "contact_name": "Stephanie Flores Reyes",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:29Z",
-    "type": "sent",
-    "contact_name": "Chaz Henderson",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:22Z",
-    "type": "sent",
-    "contact_name": "Dewey Matthews",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:34:15Z",
-    "type": "sent",
-    "contact_name": "Augustin Christophe",
-    "detail": "pond nurture email — Dallas"
-  },
-  {
-    "ts": "2026-11-12T20:34:03Z",
-    "type": "sent",
-    "contact_name": "Anthony Tran",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:56Z",
-    "type": "sent",
-    "contact_name": "Tarsem Singh",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:48Z",
-    "type": "sent",
-    "contact_name": "Louvetta McGregor",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:40Z",
-    "type": "sent",
-    "contact_name": "Balamurugan Vijayakumar",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:31Z",
-    "type": "sent",
-    "contact_name": "Devaka Randeniya",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:23Z",
-    "type": "sent",
-    "contact_name": "Priscilla Rhabbles",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:16Z",
-    "type": "sent",
-    "contact_name": "Marissa Jones",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:33:08Z",
-    "type": "sent",
-    "contact_name": "Emiliano Reynoso",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:59Z",
-    "type": "sent",
-    "contact_name": "Officer Omosor",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:49Z",
-    "type": "sent",
-    "contact_name": "Antonio Valencia",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:42Z",
-    "type": "sent",
-    "contact_name": "Ariel Farmer",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:30Z",
-    "type": "sent",
-    "contact_name": "Miguel Hernandez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:19Z",
-    "type": "sent",
-    "contact_name": "Nasaria Pena",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:32:05Z",
-    "type": "sent",
-    "contact_name": "Matthew Guidry",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:31:53Z",
-    "type": "sent",
-    "contact_name": "Ashleigh Bryant",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:31:46Z",
-    "type": "sent",
-    "contact_name": "Steve",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:31:38Z",
-    "type": "sent",
-    "contact_name": "Airam Cruz",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:31:31Z",
-    "type": "sent",
-    "contact_name": "Monica Pena",
-    "detail": "pond nurture email — San Antonio"
+    "contact_name": "Francisco Castellanos",
+    "detail": "pond nurture email — Austin"
   },
   {
-    "ts": "2026-11-12T20:31:15Z",
+    "ts": "2026-11-14T18:34:17Z",
     "type": "sent",
-    "contact_name": "Abigail Blount",
-    "detail": "pond nurture email — New Braunfels"
-  },
-  {
-    "ts": "2026-11-12T20:30:31Z",
-    "type": "sent",
-    "contact_name": "John Jason Velez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:30:24Z",
-    "type": "sent",
-    "contact_name": "Guillermo Rivera",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:30:17Z",
-    "type": "sent",
-    "contact_name": "Martha Gres",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:30:06Z",
-    "type": "sent",
-    "contact_name": "Lisa Graham",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:54Z",
-    "type": "sent",
-    "contact_name": "Jesus Sanchez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:47Z",
-    "type": "sent",
-    "contact_name": "David Kalantar",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:39Z",
-    "type": "sent",
-    "contact_name": "Jahnavi M",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:32Z",
-    "type": "sent",
-    "contact_name": "Jose Lara",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:25Z",
-    "type": "sent",
-    "contact_name": "Rania Amin",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:18Z",
-    "type": "sent",
-    "contact_name": "Ramya Tiyyagura",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:10Z",
-    "type": "sent",
-    "contact_name": "Tommy Chong",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:29:03Z",
-    "type": "sent",
-    "contact_name": "Maria Salgado",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:56Z",
-    "type": "sent",
-    "contact_name": "Cyana Drew",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:48Z",
-    "type": "sent",
-    "contact_name": "Oluwagbenga Opanuga",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:41Z",
-    "type": "sent",
-    "contact_name": "Shanay Quintero",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:34Z",
-    "type": "sent",
-    "contact_name": "Christopher Rosario",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:27Z",
-    "type": "sent",
-    "contact_name": "Crystal Reyes",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:19Z",
-    "type": "sent",
-    "contact_name": "Amina Benhlima",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:10Z",
-    "type": "sent",
-    "contact_name": "Judith Jones",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:28:04Z",
-    "type": "sent",
-    "contact_name": "Jeannette Nellis",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:56Z",
-    "type": "sent",
-    "contact_name": "Leo F Gutierrez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:49Z",
-    "type": "sent",
-    "contact_name": "Mindy Barragan",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:42Z",
-    "type": "sent",
-    "contact_name": "Gean Anthony Huertas",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:35Z",
-    "type": "sent",
-    "contact_name": "Mike Charles",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:28Z",
-    "type": "sent",
-    "contact_name": "Wajeedah Fisher",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:21Z",
-    "type": "sent",
-    "contact_name": "Revathi Kallandi",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:12Z",
-    "type": "sent",
-    "contact_name": "Manoel Luna",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:27:05Z",
-    "type": "sent",
-    "contact_name": "Kiki Gonz",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:58Z",
-    "type": "sent",
-    "contact_name": "Jaime M Gonzalez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:49Z",
-    "type": "sent",
-    "contact_name": "Nick E Martinez",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:41Z",
-    "type": "sent",
-    "contact_name": "Charlotte",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:34Z",
-    "type": "sent",
-    "contact_name": "Christi Rivera",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:27Z",
-    "type": "sent",
-    "contact_name": "Tyler Renfroe",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:19Z",
-    "type": "sent",
-    "contact_name": "Wii Cholymay",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:12Z",
-    "type": "sent",
-    "contact_name": "Bruce Tompkins",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:26:05Z",
-    "type": "sent",
-    "contact_name": "Marisa Hendrickson",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:25:57Z",
-    "type": "sent",
-    "contact_name": "John Mc",
+    "contact_name": "Johnny Stewart",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:25:49Z",
+    "ts": "2026-11-14T18:34:11Z",
     "type": "sent",
-    "contact_name": "Ahmed Ghonim",
+    "contact_name": "Tracy Dyson",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:25:42Z",
+    "ts": "2026-11-14T18:34:01Z",
     "type": "sent",
-    "contact_name": "Rodolfo Cano",
+    "contact_name": "Kathy Ferry",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:25:36Z",
+    "ts": "2026-11-14T18:33:54Z",
     "type": "sent",
-    "contact_name": "Carlos Cardona",
+    "contact_name": "Jasmina Filca",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:25:26Z",
+    "ts": "2026-11-14T18:33:41Z",
     "type": "sent",
-    "contact_name": "Nancy Ledesma",
-    "detail": "pond nurture email — San Antonio"
-  },
-  {
-    "ts": "2026-11-12T20:25:20Z",
-    "type": "sent",
-    "contact_name": "Norman L Benson II",
-    "detail": "pond nurture email — San Antonio"
+    "contact_name": "Jay Gore",
+    "detail": "pond nurture email — Austin"
   },
   {
-    "ts": "2026-11-12T20:25:10Z",
+    "ts": "2026-11-14T18:33:35Z",
     "type": "sent",
-    "contact_name": "Est Aug 2021",
+    "contact_name": "Daichavonne McBride",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:25:01Z",
+    "ts": "2026-11-14T18:33:27Z",
     "type": "sent",
-    "contact_name": "Hue Thi Crawford RN",
+    "contact_name": "Brice Everson",
     "detail": "pond nurture email — San Antonio"
   },
   {
-    "ts": "2026-11-12T20:24:53Z",
+    "ts": "2026-11-14T18:33:19Z",
     "type": "sent",
-    "contact_name": "Ailine Gomez",
+    "contact_name": "Dj",
     "detail": "pond nurture email — San Antonio"
   }
 ]
