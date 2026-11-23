@@ -82,11 +82,26 @@ def audit(db, action, since_days=60):
 
 def test_the_rules_file_names_both_sources_and_peters_number(rules):
     assert rules.recruiting_sources == ["new agent inquiry", "agent scouting"]
-    assert rules.recruiting_track_enabled is True
+    # Switched off 2026-11-23: Peter stopped the recruiting follow-up emails.
+    assert rules.recruiting_track_enabled is False
     assert rules.recruiting_cadence_days == 21
     assert rules.recruiting_first_send_window_days == 30
     assert rules.recruiting_daily_cap_ramp == [50, 100, 150]
     assert rules.owner_phone == PHONE
+
+
+def test_the_track_sends_nothing_while_switched_off(engine, monkeypatch):
+    # conftest's engine has the track on; switch it off as the live file does.
+    monkeypatch.setattr(engine.rules, "recruiting_track_enabled", False)
+    sent: list = []
+    monkeypatch.setattr(engine.email, "send", lambda *a, **k: sent.append(a))
+
+    def no_fub(**params):
+        raise AssertionError("the switched-off track must not read FUB")
+
+    monkeypatch.setattr(engine.fub, "get_people", no_fub)
+    engine.scan_recruiting_track(now=NOW)
+    assert sent == []
 
 
 def test_a_recruiting_source_is_matched_the_bots_contains_way(engine):

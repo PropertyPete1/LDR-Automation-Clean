@@ -230,7 +230,7 @@ untouched_assignment_max_alerts_per_run: 10
 recruiting_sources:
   - "New Agent Inquiry"
   - "Agent Scouting"
-recruiting_track_enabled: true
+recruiting_track_enabled: false  # 2026-11-23: Peter stopped the recruiting follow-up emails
 # One email every 3 weeks per recruit, from Peter (owner_email), plain text.
 recruiting_cadence_days: 21
 # The first send goes to recruits ADDED in the last N days who have never had a

@@ -6,6 +6,7 @@
   (method, full URL, params, json) and returns canned responses — the whole
   suite runs with mocked HTTP only; no live calls, no secrets.
 """
+import copy
 import os
 import sys
 from pathlib import Path
@@ -115,5 +116,12 @@ def tmp_db(m, tmp_path):
 
 @pytest.fixture()
 def engine(m, settings, rules, fub, tmp_db):
-    """A real RuleEngine wired to the fake transport and a temp DB."""
-    return m.RuleEngine(settings, rules, fub, tmp_db)
+    """A real RuleEngine wired to the fake transport and a temp DB.
+
+    The live rules file has the recruiting track switched off (Peter,
+    2026-11-23). The engine's tests still pin how the track behaves when it is
+    switched on, so the engine gets its own copy of the rules with it on.
+    """
+    engine_rules = copy.copy(rules)
+    engine_rules.recruiting_track_enabled = True
+    return m.RuleEngine(settings, engine_rules, fub, tmp_db)
